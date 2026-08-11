@@ -18,6 +18,7 @@ EXPECTED_BUSINESS_TABLES = {
     "chat_messages",
     "agent_sessions",
     "agent_tool_call_logs",
+    "auth_sessions",
     "projects",
     "archive_documents",
     "parsed_snapshots",
@@ -50,6 +51,6 @@ def test_postgres_upgrade_reaches_head_without_leave_domain() -> None:
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0009_chroma_vector_comments"
+    assert revision == "0010_account_auth"
     command.check(build_alembic_config(POSTGRES_TEST_URL))
     engine.dispose()

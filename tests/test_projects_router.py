@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -12,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.db import get_session
 from app.main import app
 from app.models import ChecklistItem, Document, KnowledgeBase, Project, User
+from tests.auth_support import auth_headers
 
 
 @pytest.fixture
@@ -22,6 +24,12 @@ def project_api() -> Generator[tuple[TestClient, Engine], None, None]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def enable_sqlite_foreign_keys(dbapi_connection, _) -> None:
+        """让隔离测试执行与 PostgreSQL 一致的外键约束。"""
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     SQLModel.metadata.create_all(engine)
 
     def override_get_session() -> Generator[Session, None, None]:
@@ -50,6 +58,7 @@ def create_user(engine: Engine, name: str) -> UUID:
 
 def create_project(
     client: TestClient,
+    engine: Engine,
     user_id: UUID,
     *,
     name: str = "示例工程",
@@ -58,7 +67,7 @@ def create_project(
     """经 HTTP 创建项目，供各测试复用。"""
     response = client.post(
         "/projects",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={
             "name": name,
             "description": "用于路由测试的虚构项目。",
@@ -78,7 +87,7 @@ def test_create_project_creates_private_knowledge_base_and_demo_checklist(
 
     response = client.post(
         "/projects",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={
             "name": "  示例工程  ",
             "description": "虚构演示项目",
@@ -139,11 +148,11 @@ def test_project_name_is_trimmed_and_unique_within_one_user(
     """同一用户的去首尾空格同名项目必须返回稳定冲突。"""
     client, engine = project_api
     user_id = create_user(engine, "owner")
-    create_project(client, user_id, name="示例工程")
+    create_project(client, engine, user_id, name="示例工程")
 
     response = client.post(
         "/projects",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"name": "  示例工程  ", "use_demo_checklist": False},
     )
 
@@ -158,13 +167,13 @@ def test_project_list_only_returns_current_users_projects(
     client, engine = project_api
     owner_id = create_user(engine, "owner")
     other_id = create_user(engine, "other")
-    create_project(client, owner_id, name="项目 A")
-    create_project(client, owner_id, name="项目 B")
-    create_project(client, other_id, name="其他用户项目")
+    create_project(client, engine, owner_id, name="项目 A")
+    create_project(client, engine, owner_id, name="项目 B")
+    create_project(client, engine, other_id, name="其他用户项目")
 
     response = client.get(
         "/projects?page=1&page_size=20",
-        headers={"X-User-ID": str(owner_id)},
+        headers=auth_headers(engine, owner_id),
     )
 
     assert response.status_code == 200
@@ -181,11 +190,11 @@ def test_update_project_checks_version_and_keeps_newer_value(
     """项目更新必须使用乐观锁，旧版本不能覆盖较新的项目字段。"""
     client, engine = project_api
     user_id = create_user(engine, "owner")
-    project = create_project(client, user_id)
+    project = create_project(client, engine, user_id)
 
     update_response = client.patch(
         f"/projects/{project['id']}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={
             "name": "已更名工程",
             "description": "更新后的说明",
@@ -199,7 +208,7 @@ def test_update_project_checks_version_and_keeps_newer_value(
 
     stale_response = client.patch(
         f"/projects/{project['id']}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"description": "不能覆盖", "expected_version": 1},
     )
 
@@ -207,7 +216,7 @@ def test_update_project_checks_version_and_keeps_newer_value(
     assert stale_response.json()["error"]["code"] == "VERSION_CONFLICT"
     detail_response = client.get(
         f"/projects/{project['id']}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
     assert detail_response.json()["description"] == "更新后的说明"
 
@@ -221,13 +230,13 @@ def test_other_user_cannot_access_project(
     client, engine = project_api
     owner_id = create_user(engine, "owner")
     other_id = create_user(engine, "other")
-    project = create_project(client, owner_id)
+    project = create_project(client, engine, owner_id)
     request_json = {"description": "越权修改", "expected_version": 1} if method == "patch" else None
 
     response = client.request(
         method,
         f"/projects/{project['id']}",
-        headers={"X-User-ID": str(other_id)},
+        headers=auth_headers(engine, other_id),
         json=request_json,
     )
 
@@ -241,7 +250,7 @@ def test_delete_empty_project_keeps_its_orphaned_knowledge_base(
     """删除空项目只清理项目级数据，不得删除可能承载旧资料的知识库。"""
     client, engine = project_api
     user_id = create_user(engine, "owner")
-    project_payload = create_project(client, user_id, use_demo_checklist=True)
+    project_payload = create_project(client, engine, user_id, use_demo_checklist=True)
 
     with Session(engine) as session:
         project = session.get(Project, UUID(project_payload["id"]))
@@ -250,7 +259,7 @@ def test_delete_empty_project_keeps_its_orphaned_knowledge_base(
 
     response = client.delete(
         f"/projects/{project_payload['id']}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 204
@@ -270,7 +279,7 @@ def test_delete_project_with_any_document_is_rejected_without_mutation(
     """项目只要有现存文档记录，就禁止删除且不能影响原有资源。"""
     client, engine = project_api
     user_id = create_user(engine, "owner")
-    project_payload = create_project(client, user_id)
+    project_payload = create_project(client, engine, user_id)
     project_id = UUID(project_payload["id"])
 
     with Session(engine) as session:
@@ -289,7 +298,7 @@ def test_delete_project_with_any_document_is_rejected_without_mutation(
 
     response = client.delete(
         f"/projects/{project_id}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 409

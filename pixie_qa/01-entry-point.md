@@ -1,5 +1,9 @@
 # Entry Point & Execution Flow
 
+> **历史评测输入快照：** 本文中的请假接口、`decisions` 接口与 SQLite 业务库描述
+> 已不代表当前项目。它们仅用于解释历史评测材料，不得作为当前 API 或部署依据。
+> 当前范围见 `AGENTS.md` 与 `docs/api-design.md`。
+
 ## How to run
 
 项目使用 Python 3.11 和 FastAPI。在项目根目录先执行 Alembic 迁移，再运行服务器：

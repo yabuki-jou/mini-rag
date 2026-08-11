@@ -4,16 +4,17 @@
 
 | 项目 | 内容 |
 |---|---|
-| 对应基线 | `docs/requirements.md` V1.2 的 FR-030～FR-041、BR-008～BR-029、NFR-011～NFR-020；`docs/architecture.md` 已确认架构基线 |
-| 文档状态 | 数据库设计基线已实现于 AV1-P03：归档模型及 `0005_archive_v1_schema`～`0008_legacy_business_comments` 已在空 PostgreSQL 实际前向迁移；`0009_chroma_vector_comments` 待真实库迁移验证；Chroma 代码/离线单测迁移已完成，归档 API 尚未实现 |
-| 更新日期 | 2026-08-07 |
+| 对应基线 | `docs/requirements.md` V1.2 的 FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020；`docs/architecture.md` 已确认架构基线 |
+| 文档状态 | AV1-P03 归档模型已实现；AV1-A01 已新增用户凭据、认证会话模型与 `0010` 前向迁移，真实 PostgreSQL 迁移待显式验证；归档 API 尚未实现 |
+| 更新日期 | 2026-08-10 |
 | PostgreSQL 角色 | 归档业务事实的唯一来源 |
 | Chroma 角色 | 仅保存可重建的、已确认档案 Final Chunk 索引 |
 
 本文件定义智慧档案 V1 的逻辑表、约束、索引、跨存储标识和迁移边界。当前 PostgreSQL
 已通过 `0005_archive_v1_schema` 创建归档表；`0006_archive_jsonb_and_comments` 将归档 JSON
 结构标准化为 JSONB 并写入归档表/字段注释，`0007_project_version_comment` 补齐项目乐观锁
-字段注释，`0008_legacy_business_comments` 补齐既有 RAG、聊天和 Agent 业务表注释。这些迁移
+字段注释，`0008_legacy_business_comments` 补齐既有 RAG、聊天和 Agent 业务表注释，`0010_account_password_authentication`
+增加认证凭据、会话表及其注释。这些迁移
 不转换既有企业制度检索 Agent 的文档数据，也不表示归档业务 API 已经实现。
 
 ## 2. 设计原则与存储边界
@@ -42,8 +43,8 @@
 ### 3.1 保留的旧表
 
 `users`、`knowledge_bases`、`documents`、聊天表、旧 Agent 会话表和工具日志表继续
-存在。它们服务于当前企业知识库/制度检索基座，不能因新增智慧档案而被删除或改变
-其历史含义。
+存在。`users` 在 AV1-A01 中受控增加登录标识与密码哈希，新增 `auth_sessions` 保存可撤销的
+Refresh Token 会话；旧用户仍保留但可没有凭据。其余历史含义与业务归属不得改变。
 
 ### 3.2 `documents` 的受控改造
 
@@ -70,6 +71,7 @@
 ```mermaid
 erDiagram
     USERS ||--o{ PROJECTS : owns
+    USERS ||--o{ AUTH_SESSIONS : authenticates
     KNOWLEDGE_BASES ||--o| PROJECTS : is_bound_to
     PROJECTS ||--o{ DOCUMENTS : scopes
     DOCUMENTS ||--o| ARCHIVE_DOCUMENTS : extends
@@ -105,6 +107,25 @@ erDiagram
 数据库中保存稳定英文枚举值；Swagger/API 负责映射需求文档中的中文资料类型和阶段名称。
 
 ## 6. 表设计
+
+### 6.0 `users` 与 `auth_sessions`
+
+`users.username` 是全局唯一、统一小写的登录标识；`users.name` 继续作为显示名。为兼容历史
+用户，`username` 与 `password_hash` 初始允许为空；无完整凭据的用户不能登录。
+
+| 表/字段 | 类型/约束 | 说明 |
+|---|---|---|
+| `users.username` | VARCHAR(50) NULL，UNIQUE | 账号登录标识；新注册用户必填 |
+| `users.password_hash` | TEXT NULL | Argon2 密码哈希；绝不保存明文密码 |
+| `auth_sessions.id` | UUID PK | 认证会话 ID，同时写入 JWT `sid` 声明 |
+| `auth_sessions.user_id` | UUID NOT NULL FK → `users.id` | 会话所属用户 |
+| `auth_sessions.refresh_token_hash` | CHAR(64) NOT NULL，UNIQUE | Refresh Token 的 SHA-256 哈希，不保存原 Token |
+| `auth_sessions.expires_at` | TIMESTAMPTZ NOT NULL | Refresh Token 到期时间 |
+| `auth_sessions.revoked_at` | TIMESTAMPTZ NULL | 注销后的撤销时间；非空时不可刷新 |
+| `auth_sessions.created_at` / `updated_at` | TIMESTAMPTZ NOT NULL | 会话创建与最后更新 UTC 时间 |
+
+索引：`auth_sessions(user_id, revoked_at, expires_at)`。Access Token 不落库；其签名、用途、到期和
+会话状态共同决定请求是否可用。
 
 ### 6.1 `projects`
 
@@ -484,7 +505,7 @@ Collection 初始化、健康检查和重建验证必须随部署说明单独执
 
 ## 11. 迁移策略
 
-已在现有 `0004_remove_leave_domain` 后新增 `0005_archive_v1_schema`，建立 V1 所需结构与约束；随后通过 `0006_archive_jsonb_and_comments` 标准化 JSONB 列并补齐归档 PostgreSQL 表/字段注释，`0007_project_version_comment` 补齐项目版本字段注释，`0008_legacy_business_comments` 补齐既有业务表和字段注释。迁移不把旧知识库文档自动变为项目档案。
+已在现有 `0004_remove_leave_domain` 后新增 `0005_archive_v1_schema`，建立 V1 所需结构与约束；随后通过 `0006_archive_jsonb_and_comments` 标准化 JSONB 列并补齐归档 PostgreSQL 表/字段注释，`0007_project_version_comment` 补齐项目版本字段注释，`0008_legacy_business_comments` 补齐既有业务表和字段注释。`0009_chroma_vector_comments` 后的 `0010_account_password_authentication` 已新增 `users.username`、`users.password_hash` 与 `auth_sessions` 的前向迁移及 PostgreSQL 注释；它不把旧知识库文档自动变为项目档案，也不为旧用户伪造密码。`0010` 尚待在真实 PostgreSQL 开发库显式执行验证。
 
 迁移顺序：
 
@@ -495,6 +516,8 @@ Collection 初始化、健康检查和重建验证必须随部署说明单独执
 4. 创建字段、证据、清单、关联、操作和审计表及其索引。
 5. 创建 `archive_final_chunks` 所需的 Chroma 初始化/校验逻辑；它不是 Alembic 表，
    但必须与 PostgreSQL 迁移版本在部署说明中配套验证。
+6. 在不删除既有 `users` 数据的前提下，新增可空的登录标识和密码哈希字段，并创建只保存
+   Refresh Token 哈希的 `auth_sessions`；旧用户默认没有完整凭据，不能登录。
 
 回滚只允许在尚未写入 V1 业务数据的本地开发环境执行。已有归档数据时不得通过删除
 迁移或 `alembic stamp` 掩盖状态，应使用新的前向迁移处理。

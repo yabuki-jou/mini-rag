@@ -125,7 +125,7 @@ API 默认地址为 `http://127.0.0.1:8000`，Swagger 为 `/docs`。
 
 ## 核心接口
 
-1. `POST /users`
+1. `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`
 2. `POST/GET /knowledge-bases`
 3. `POST/GET /knowledge-bases/{kb_id}/documents`
 4. `POST /knowledge-bases/{kb_id}/documents/{document_id}/parse`
@@ -136,8 +136,27 @@ API 默认地址为 `http://127.0.0.1:8000`，Swagger 为 `/docs`。
 9. `GET /agent-sessions/{session_id}/messages`
 10. `GET /agent-sessions/{session_id}/tool-calls`
 
-受保护接口当前使用 `X-User-ID`，仅适合学习演示。项目没有
-`/agent-sessions/{session_id}/decisions`。
+除注册、登录、刷新和健康检查外，受保护接口必须使用
+`Authorization: Bearer <Access Token>`。`X-User-ID` 不再被接受。首次运行认证前，
+请在本地 `.env` 手动配置 `AUTH_JWT_SECRET`，再运行 `python -m alembic upgrade head`；
+项目不会读取、打印或覆盖你的真实 `.env`。项目没有 `/agent-sessions/{session_id}/decisions`。
+
+### 账号密码登录流程
+
+1. 在 Swagger 调用 `POST /auth/register` 创建新用户；`username` 是全局唯一的小写登录标识，
+   `name` 仅作显示。
+2. 调用 `POST /auth/login` 获得 Access Token（30 分钟）和 Refresh Token（7 天）。在 Swagger 的
+   `Authorize` 中填写 Access Token 后，再调用知识库、项目、聊天或 Agent 等受保护接口。
+3. Access Token 到期时，调用 `POST /auth/refresh` 并提交 Refresh Token；该接口只返回新的
+   Access Token，不轮换 Refresh Token。
+4. 调用 `POST /auth/logout` 撤销当前会话；之后该会话的 Access Token 与 Refresh Token 均不可继续使用。
+
+旧 `users` 记录保留原有数据，但默认不能登录。仅在操作者已知目标用户 UUID、且具备本地数据库
+访问权限时，才可运行下列本地命令初始化凭据；脚本交互读取两次密码，不提供 HTTP 后门，也不输出密码：
+
+```powershell
+C:\D\venvs\mrh\Scripts\python.exe scripts\initialize_user_password.py --user-id <用户UUID> --username <小写用户名>
+```
 
 ## 测试
 
@@ -156,7 +175,7 @@ docker compose config --quiet
 
 ## 已知限制
 
-- 尚未实现 JWT，`X-User-ID` 可伪造。
+- 已实现 Argon2 账号密码、JWT 与单会话注销；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对认证表结构，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
 - Checkpoint SQLite 只适合单机运行。
 - 同步解析不适合大文件和高并发。
 - 没有 OCR、表格专用解析、混合检索、Rerank、多 Agent 或任务队列。

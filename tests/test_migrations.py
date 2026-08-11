@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, SQLModel
@@ -31,6 +32,7 @@ EXPECTED_BUSINESS_TABLES = {
     "chat_messages",
     "agent_sessions",
     "agent_tool_call_logs",
+    "auth_sessions",
     "projects",
     "archive_documents",
     "parsed_snapshots",
@@ -72,8 +74,15 @@ def test_upgrade_creates_current_schema_in_empty_database(tmp_path) -> None:
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0009_chroma_vector_comments"
+    assert revision == "0010_account_auth"
     engine.dispose()
+
+
+def test_revision_ids_fit_default_alembic_version_column() -> None:
+    """所有 revision 必须能写入 Alembic 默认的 VARCHAR(32) 版本列。"""
+    revisions = ScriptDirectory.from_config(build_alembic_config()).walk_revisions()
+
+    assert all(len(revision.revision) <= 32 for revision in revisions)
 
 
 def test_upgrade_preserves_data_in_legacy_schema(tmp_path) -> None:
@@ -86,9 +95,21 @@ def test_upgrade_preserves_data_in_legacy_schema(tmp_path) -> None:
     engine = create_engine(target_url)
 
     user_id = uuid4()
-    with Session(engine) as session:
-        session.add(User(id=user_id, name="迁移测试用户"))
-        session.commit()
+    # 该库仍处于 0004，不能通过包含新增字段的当前 User 模型插入数据。
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, name, created_at, updated_at) "
+                "VALUES (:id, :name, :created_at, :updated_at)"
+            ),
+            {
+                # SQLAlchemy 的 SQLite UUID 绑定使用无连字符的 32 位十六进制值。
+                "id": user_id.hex,
+                "name": "迁移测试用户",
+                "created_at": "2026-08-10 00:00:00",
+                "updated_at": "2026-08-10 00:00:00",
+            },
+        )
     engine.dispose()
 
     upgrade_database(target_url)
@@ -98,6 +119,8 @@ def test_upgrade_preserves_data_in_legacy_schema(tmp_path) -> None:
         migrated_user = session.get(User, user_id)
     assert migrated_user is not None
     assert migrated_user.name == "迁移测试用户"
+    assert migrated_user.username is None
+    assert migrated_user.password_hash is None
     assert "alembic_version" in inspect(migrated_engine).get_table_names()
     migrated_engine.dispose()
 
@@ -133,6 +156,16 @@ def test_migration_head_matches_sqlmodel_metadata(tmp_path) -> None:
         "current_snapshot_id",
         "final_index_snapshot_hash",
     } <= {column["name"] for column in inspector.get_columns("archive_documents")}
+    assert {"username", "password_hash"} <= {
+        column["name"] for column in inspector.get_columns("users")
+    }
+    assert {
+        "id",
+        "user_id",
+        "refresh_token_hash",
+        "expires_at",
+        "revoked_at",
+    } <= {column["name"] for column in inspector.get_columns("auth_sessions")}
     engine.dispose()
 
 

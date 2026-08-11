@@ -36,15 +36,16 @@ PostgreSQL。SQLite 单元测试只作为快速隔离测试，不能替代 Postg
 结构化、检索与原文追溯；当前不推进标书投标、标书解析生成或投标合规审查。
 需求、架构、数据库与 API 设计基线已确认，实施计划见
 `docs/archive-v1-implementation-plan.md`。已完成 AV1-P01 Parser 规则冻结、AV1-P02
-虚构验收资料与 Ground Truth、AV1-P03 PostgreSQL 迁移/模型/公共授权基础，以及 P04
-前置模型分层调整，以及 P04.1 FR-030 项目 CRUD/模板复制 API。尚未实现清单项 API、
+虚构验收资料与 Ground Truth、AV1-P03 PostgreSQL 迁移/模型/公共授权基础、P04
+前置模型分层调整、P04.1 FR-030 项目 CRUD/模板复制 API，以及 AV1-A01 账号密码、JWT
+会话与 Bearer 身份切换的隔离验证。尚未实现清单项 API、
 正式归档状态机、Final Collection、正式检索问答或端到端验收。已确认以 Chroma 单机
 服务替换 Milvus，详见 `docs/chroma-migration-decision.md`；AV1-C01 已完成 Chroma 独立验证，
-AV1-C02 已完成代码/离线单测迁移，当前正在等待 **AV1-C02 云端完整栈验证**，P04.2 在 C02 后继续。
+AV1-C02 已完成代码/离线单测迁移；云端完整栈验证随部署决策暂缓，当前进入 P04.2。
 
 ## 后续通用能力
 
-- C-01：JWT 登录，替换可伪造的 `X-User-ID`。
+- C-01：账号密码、JWT 与 Bearer 身份切换已完成隔离验证；真实 PostgreSQL `0010` 迁移待显式验证。
 - C-02：知识库修改与空库删除。
 - C-03：Checkpoint PostgreSQL 或其他共享存储（需要多实例部署时再实施）。
 - C-04：大文件异步解析与任务状态。

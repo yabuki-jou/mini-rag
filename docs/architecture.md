@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 |---|---|
-| 对应需求 | `docs/requirements.md` 的 FR-030～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
-| 文档状态 | 架构、数据库与 API 设计基线已确认；Chroma 代码/部署配置迁移已完成本地验证，完整云端应用栈验证待执行；已完成 AV1-P01～P03、P04 前置模型分层及 FR-030 项目 CRUD/模板复制 API，清单项与归档业务 API 尚未实现 |
-| 更新日期 | 2026-08-07 |
+| 对应需求 | `docs/requirements.md` 的 FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
+| 文档状态 | 架构、数据库与 API 设计基线已确认；AV1-A01 认证代码与隔离测试已完成，真实 PostgreSQL `0010` 迁移待显式验证；Chroma 代码/部署配置迁移已完成本地验证，完整云端应用栈验证待执行；清单项与归档业务 API 尚未实现 |
+| 更新日期 | 2026-08-10 |
 | 当前业务方向 | 智慧档案与企业文档智能 |
 | 架构风格 | 同步 FastAPI 模块化单体 |
 
@@ -60,7 +60,7 @@ Checkpoint 不是智慧档案 V1 的业务状态来源，也不应被误写为�
 
 | 现有模块 | 当前职责 | 智慧档案中的处理方式 |
 |---|---|---|
-| `app/dependencies/auth.py` | 验证 `X-User-ID` | 继续复用 |
+| `app/dependencies/auth.py` | 验证 Bearer Access Token 与可撤销会话 | 继续复用 |
 | `app/dependencies/resources.py` | 知识库、文档、会话所有权 | 扩展为项目上下文和项目资源校验 |
 | `app/services/file_service.py` | 保存、删除原文件和哈希 | 继续复用并增加 20 MB、100 份上限校验入口 |
 | `app/services/parser_service.py` | PDF/DOCX/TXT/MD 文本提取 | 改造为位置感知解析快照 |
@@ -200,12 +200,25 @@ flowchart LR
 
 ## 6. 项目访问与授权边界
 
+### 6.0 身份认证边界（AV1-A01）
+
+公开注册、登录和刷新位于 `/auth`，注销使用当前会话的 Bearer Access Token。密码在
+`auth_service` 中使用 Argon2 哈希；JWT 编解码与 Token 用途校验位于 `core/security`。Router
+不直接读取密码哈希或签名密钥；未配置有效 `AUTH_JWT_SECRET` 时安全拒绝签发或验证 Token，
+不回退到内置默认密钥。
+
+受保护请求先由 `CurrentUserDep` 验证 Bearer Access Token 的签名、用途、过期时间和关联会话，
+再将数据库中的用户注入项目、知识库、聊天和 Agent 所有权依赖。Refresh Token 仅可调用刷新接口；
+刷新只签发新的 Access Token，不轮换 Refresh Token；注销将对应 `auth_sessions` 记录标记为撤销。
+`X-User-ID` 不再构成身份后门。
+
 ### 6.1 ProjectContext
 
 每个项目级请求先执行以下动作：
 
 ```text
-X-User-ID
+Bearer Access Token
+→ 验证签名、用途、到期时间与未撤销会话
 → 查询真实 User
 → 查询 Project
 → 校验 Project.owner_id == current_user.id
@@ -674,7 +687,7 @@ DeepSeek 未配置或关闭时，ArchiveSuggestionService 和 ArchiveAnswerServi
 | PostgreSQL 集成测试 | 项目映射、唯一名称、外键/约束、迁移、正式目录 SQL 条件 |
 | 文件/解析集成测试 | 格式限制、20 MB、扫描 PDF、DOCX 段落、TXT/MD 行号和快照重建 |
 | Chroma 集成测试 | 精确删除、确认文档 ID 过滤、孤立向量不可见、跨项目隔离、重启后持久化 |
-| API 集成测试 | X-User-ID 所有权、处理列表与正式目录隔离、错误码、分页 |
+| API 集成测试 | Bearer 身份与所有权、处理列表与正式目录隔离、错误码、分页 |
 | 独立质量评测 | 12～18 份标注资料和 12 个固定问答问题 |
 
 ### 15.2 必须保留的回归用例
@@ -697,6 +710,7 @@ SQLite 隔离测试分别报告。
 
 | 需求 | 主要组件 | 主要存储 |
 |---|---|---|
+| FR-019～FR-021 | Auth Router、AuthService、Security、CurrentUserDep | PostgreSQL `users`/`auth_sessions` |
 | FR-030 | ProjectService、ProjectContext | PostgreSQL |
 | FR-031 | ChecklistService | PostgreSQL |
 | FR-032 | ArchiveDocumentService、FileService | PostgreSQL、文件系统 |
@@ -719,7 +733,7 @@ SQLite 隔离测试分别报告。
 | 100 份硬上限影响演示 | 上传前校验、稳定错误码、README 说明 | 上限是学习项目边界，不是生产容量方案 |
 | 同步确认阻塞请求 | 20 MB/100 份限制、阶段耗时日志 | 大文件和高并发仍需后续任务队列 |
 | PG/Chroma/文件无法原子提交 | Operation 记录、精确清理、PG 可见性闸门 | 需要恢复操作，不提供分布式事务 |
-| X-User-ID 可伪造 | 保持资源所有权校验 | 不适合生产认证，JWT 属于后续需求 |
+| 认证会话被盗用或撤销 | Argon2 密码哈希、短期 Access、Refresh 哈希与会话撤销 | 当前未实现多设备会话管理和 Refresh 轮换 |
 | 外部模型数据风险 | 只允许虚构/脱敏资料、最小片段输入、提示告知 | 无法替代真实企业数据治理 |
 | 检索阈值失真 | 使用固定验收集标定并冻结度量类型、分数方向和 `min_relevance_score` | 必须在第一条检索纵向链路后验证 |
 | 2 vCPU / 2 GB 部署压力 | AV1-C01 已验证 Chroma 独立服务；AV1-C02 实测完整栈资源 | 本地 BGE 与 PostgreSQL 同机可行性尚未验证 |

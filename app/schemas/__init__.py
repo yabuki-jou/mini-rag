@@ -1,9 +1,13 @@
 """统一导出 API Schema，保持路由层的导入入口稳定。"""
 
 from app.schemas.account import (
+    AuthAccessTokenRead,
+    AuthLoginRequest,
+    AuthRefreshRequest,
+    AuthRegisterRequest,
+    AuthTokenPairRead,
     KnowledgeBaseCreate,
     KnowledgeBaseRead,
-    UserCreate,
     UserRead,
 )
 from app.schemas.agent import (
@@ -41,6 +45,11 @@ __all__ = [
     "AgentSessionCreate",
     "AgentSessionRead",
     "AgentToolCallLogRead",
+    "AuthAccessTokenRead",
+    "AuthLoginRequest",
+    "AuthRefreshRequest",
+    "AuthRegisterRequest",
+    "AuthTokenPairRead",
     "ChatAnswerResponse",
     "ChatMessageRead",
     "ChatQuestionRequest",
@@ -59,6 +68,5 @@ __all__ = [
     "RetrievalTestRequest",
     "RetrievalTestResponse",
     "SourceRead",
-    "UserCreate",
     "UserRead",
 ]

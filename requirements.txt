@@ -4,6 +4,10 @@ uvicorn[standard]==0.51.0
 pydantic-settings==2.14.2
 python-multipart==0.0.32
 
+## 账号密码认证
+PyJWT==2.10.1
+pwdlib[argon2]==0.3.0
+
 ## 业务数据库与迁移
 sqlmodel==0.0.39
 alembic==1.18.5

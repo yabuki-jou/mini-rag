@@ -19,6 +19,7 @@ from app.models import Document, DocumentStatus, KnowledgeBase, User
 from app.routers import documents as documents_router
 from app.services import document_service
 from app.services import vector_service
+from tests.auth_support import auth_headers
 
 
 @pytest.fixture
@@ -124,7 +125,7 @@ def test_delete_document_endpoint_cleans_all_resources_and_is_idempotent(
     )
     url = f"/knowledge-bases/{kb_id}/documents/{document_id}"
     headers = {
-        "X-User-ID": str(user_id),
+        **auth_headers(engine, user_id),
         "X-Request-ID": "delete-test-request",
     }
 
@@ -171,7 +172,7 @@ def test_other_user_cannot_delete_document(
 
     response = client.delete(
         f"/knowledge-bases/{kb_id}/documents/{document_id}",
-        headers={"X-User-ID": str(other_user_id)},
+        headers=auth_headers(engine, other_user_id),
     )
 
     assert response.status_code == 403
@@ -204,7 +205,7 @@ def test_other_user_cannot_parse_document(
 
     response = client.post(
         f"/knowledge-bases/{kb_id}/documents/{document_id}/parse",
-        headers={"X-User-ID": str(other_user_id)},
+        headers=auth_headers(engine, other_user_id),
     )
 
     assert response.status_code == 403
@@ -232,7 +233,7 @@ def test_processing_document_cannot_be_deleted(
 
     response = client.delete(
         f"/knowledge-bases/{kb_id}/documents/{document_id}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 409
@@ -270,7 +271,7 @@ def test_file_delete_failure_marks_document_delete_failed(
 
     response = client.delete(
         f"/knowledge-bases/{kb_id}/documents/{document_id}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 500
@@ -306,7 +307,7 @@ def test_chroma_delete_failure_marks_document_delete_failed(
 
     response = client.delete(
         f"/knowledge-bases/{kb_id}/documents/{document_id}",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 503

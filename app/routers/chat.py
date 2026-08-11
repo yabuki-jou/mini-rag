@@ -40,7 +40,7 @@ def create_chat_session_endpoint(
 
     Args:
         payload: 包含目标知识库 UUID 的请求体。
-        current_user: 已通过 ``X-User-ID`` 身份校验的当前用户。
+        current_user: 已通过 Bearer Access Token 身份校验的当前用户。
         session: 当前请求使用的 SQLite Session。
 
     Returns:

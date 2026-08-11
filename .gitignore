@@ -6,6 +6,7 @@ __pycache__/
 *.db
 data/
 logs/
+embedding_models/
 tests/pytest_docs/
 docs/
 !docs/

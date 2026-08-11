@@ -1,6 +1,6 @@
 """统一导出数据库实体，保持业务代码的导入入口稳定。"""
 
-from app.models.account import KnowledgeBase, User
+from app.models.account import AuthSession, KnowledgeBase, User
 from app.models.archive import (
     ArchiveDocument,
     ArchiveDocumentStatus,
@@ -27,6 +27,7 @@ __all__ = [
     "AgentSession",
     "AgentToolCallLog",
     "AgentToolCallStatus",
+    "AuthSession",
     "ChatMessage",
     "ChatSession",
     "Document",

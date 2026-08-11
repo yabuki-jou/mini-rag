@@ -38,6 +38,9 @@ class Settings(BaseSettings):
         deepseek_api_key: DeepSeek API 密钥。
         deepseek_base_url: DeepSeek 的 OpenAI 兼容接口地址。
         deepseek_model: 生成回答所使用的模型名称。
+        auth_jwt_secret: 签发和验证 JWT 的本地机密；为空时认证接口安全地拒绝服务。
+        auth_access_token_minutes: Access Token 有效期，单位为分钟。
+        auth_refresh_token_days: Refresh Token 与认证会话有效期，单位为天。
         retrieval_top_k: Chroma 第一轮最多召回的候选 Chunk 数量。
         retrieval_top_n: 通过阈值后最多返回的 Chunk 数量。
         retrieval_distance_threshold: 可选的最大 Chroma cosine 距离；未标定时为 ``None``。
@@ -89,6 +92,11 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
+
+    # 认证密钥不得提供不安全默认值；部署者必须通过本地 .env 明确配置。
+    auth_jwt_secret: SecretStr | None = None
+    auth_access_token_minutes: int = Field(default=30, gt=0, le=24 * 60)
+    auth_refresh_token_days: int = Field(default=7, gt=0, le=31)
 
     # 检索时先召回 Top-K 个候选；距离阈值须经固定验收集标定后才启用。
     retrieval_top_k: int = Field(default=10, gt=0)

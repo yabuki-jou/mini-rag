@@ -24,6 +24,7 @@ from app.models import (
 from app.routers import chat as chat_router
 from app.schemas import ChatAnswerResponse, SourceRead
 from app.services.chat_service import serialize_sources
+from tests.auth_support import auth_headers
 
 
 @pytest.fixture
@@ -122,7 +123,7 @@ def test_create_chat_session_endpoint(
 
     response = client.post(
         "/chat-sessions",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"kb_id": str(kb_id)},
     )
 
@@ -158,7 +159,7 @@ def test_ask_question_endpoint(
 
     response = client.post(
         f"/chat-sessions/{session_id}/messages",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"question": "专业培训上限是多少？"},
     )
 
@@ -210,7 +211,7 @@ def test_read_chat_messages_endpoint(
 
     response = client.get(
         f"/chat-sessions/{session_id}/messages",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
 
     assert response.status_code == 200
@@ -245,7 +246,7 @@ def test_other_user_cannot_access_chat_session(
     response = client.request(
         method=method,
         url=f"/chat-sessions/{session_id}/messages",
-        headers={"X-User-ID": str(other_user_id)},
+        headers=auth_headers(engine, other_user_id),
         json=request_json,
     )
 

@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.migration_service import upgrade_database
-from app.routers import agent, chat, documents, health, knowledge_bases, projects, retrieval, users
+from app.routers import agent, auth, chat, documents, health, knowledge_bases, projects, retrieval
 
 
 @asynccontextmanager
@@ -52,7 +52,7 @@ app.add_middleware(RequestContextMiddleware)
 # 先安装统一异常响应，再按业务领域注册各组路由。
 register_exception_handlers(app)
 app.include_router(health.router)
-app.include_router(users.router)
+app.include_router(auth.router)
 app.include_router(knowledge_bases.router)
 app.include_router(projects.router)
 app.include_router(documents.router)

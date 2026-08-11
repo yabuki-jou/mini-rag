@@ -89,8 +89,8 @@ TXT/MD 换行与行号、空白 PDF、短文本 PDF、有效文本上下限和�
 
 补充环境验证：P01 验证时，安装 `psycopg[binary]==3.3.4` 后，以当前进程的 PostgreSQL
 格式 `DATABASE_URL` 运行全量测试，结果为 `76 passed, 1 skipped, 16 warnings in 12.97s`。
-P03 与 P04 前置模型分层调整完成后的最新全量回归为 `84 passed, 1 skipped, 16 warnings`；
-跳过项和警告属于既有测试环境，不是 Parser 验证失败。
+P03、P04 前置模型分层与后续 AV1-A01 认证调整完成后的最新全量回归为
+`111 passed, 1 skipped, 16 warnings`；跳过项和警告属于既有测试环境，不是 Parser 验证失败。
 
 ## 6. 已知边界与后续任务
 

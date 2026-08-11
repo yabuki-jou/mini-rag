@@ -29,8 +29,13 @@ def test_every_business_table_and_column_has_a_comment_specification() -> None:
     legacy_tables, legacy_columns = _load_migration_constants(
         "0008_legacy_business_comments.py"
     )
-    table_comments = archive_tables | legacy_tables
+    auth_tables, auth_columns = _load_migration_constants(
+        "0010_account_password_authentication.py"
+    )
+    table_comments = archive_tables | legacy_tables | auth_tables
     column_comments = archive_columns | legacy_columns
+    for table_name, comments in auth_columns.items():
+        column_comments[table_name] = column_comments.get(table_name, {}) | comments
 
     business_tables = {
         table_name: table

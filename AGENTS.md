@@ -8,7 +8,7 @@
 
 本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 是当前唯一操作界面，不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
 
-现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03 数据库/模型/公共授权基础、P04 前置模型分层，以及 P04.1 项目 CRUD/模板复制 API 均已完成。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 仅更新 PostgreSQL 注释、尚待真实库迁移验证。清单项 CRUD 与派生状态、正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查方向。完整登录认证仍未实现。当前不包含前端、OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署。
+现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03 数据库/模型/公共授权基础、P04 前置模型分层、P04.1 项目 CRUD/模板复制 API，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。下一任务为清单项 CRUD 与派生状态（P04.2）；正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含前端、OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署。
 
 全量 Chroma 迁移（旧制度检索和后续智慧档案）已确认；AV1-C01 已完成一次云主机上的 Chroma 独立内网、过滤、精确删除、容器重启持久化与空闲资源实验，AV1-C02 已完成运行时代码、离线单测、本机命名空间和本机 Docker 健康验证。云端完整栈资源验证不再阻塞当前开发，随部署决策一并暂缓至 V1 功能完成后。后续正式索引为 Chroma Final Collection；不得将历史 Milvus 验证、C01 空闲内存或本机健康检查写成完整部署通过。
 
@@ -71,7 +71,7 @@ Router → Application Service → Agent / Domain Service
 - PostgreSQL 保存业务实体和状态；Chroma 保存 Chunk、引用元数据和向量；文件系统保存原文件。
 - LangGraph Checkpoint 使用独立 SQLite 文件，只保存可序列化的执行状态和消息，不代替业务表。
 - `document_id` 必须贯穿 PostgreSQL、文件路径和 Chroma。
-- 受保护接口必须先验证真实存在的 `X-User-ID` 和资源归属。
+- 受保护接口必须先验证 Bearer Access Token、真实存在的用户和资源归属；不得保留 `X-User-ID` 身份后门。
 - Chroma 检索必须包含 `user_id + kb_id`；文档删除必须再包含 `document_id`。当前本地开发中，Compose 内 API 使用内部网络访问 Chroma；宿主机调试仅可使用回环地址 `127.0.0.1:8001`，不得暴露到局域网或公网。业务客户端只能访问 FastAPI；未来云端网络拓扑待部署决策后确定。
 - 不接受客户端覆盖资源的 `owner_id` 或 `user_id`。
 - Agent 工具的 `user_id` 和 `kb_id` 必须由已验证上下文注入，不能由模型生成。

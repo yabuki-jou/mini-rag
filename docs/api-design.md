@@ -4,10 +4,10 @@
 
 | 项目 | 内容 |
 |---|---|
-| 对应基线 | FR-030～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
+| 对应基线 | FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
 | 依赖设计 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md` |
-| 文档状态 | API 设计基线已确认；Chroma 代码/离线单测迁移已完成，完整云端应用栈验证待执行；FR-030 项目 CRUD/模板复制的路由、Schema、Service 与 API 测试已实现，其余智慧档案接口尚未实现 |
-| 更新日期 | 2026-08-07 |
+| 文档状态 | API 设计基线已确认；AV1-A01 账号密码认证接口、Bearer 身份切换及隔离测试已实现；`0010` PostgreSQL 真实库迁移仍待在本地开发库显式验证。FR-030 项目 CRUD/模板复制已实现，其余智慧档案接口尚未实现 |
+| 更新日期 | 2026-08-10 |
 | 操作界面 | Swagger/OpenAPI 与 API 客户端 |
 
 本文件定义智慧档案 V1 的目标 HTTP 契约。当前实际代码仍只提供企业知识库与制度
@@ -20,7 +20,7 @@
 
 | 接口组 | 路径前缀 | 当前状态 | 用途 |
 |---|---|---|---|
-| 旧知识库与 Agent 基座 | `/users`、`/knowledge-bases`、`/agent-sessions` 等 | 已实现，以当前代码为准 | 制度检索、旧 RAG 与单 Agent 演示 |
+| 认证与旧知识库/Agent 基座 | `/auth`、`/knowledge-bases`、`/agent-sessions` 等 | 认证接口和 Bearer 保护已实现；其余以当前代码为准 | 身份、制度检索、旧 RAG 与单 Agent 演示 |
 | 智慧档案 V1 | `/projects` | 已实现 FR-030 项目 CRUD；其余接口仍为设计 | 工程项目归档、清单、正式目录与问答 |
 
 智慧档案接口不得复用旧的 `/knowledge-bases/{kb_id}/documents` 作为业务入口；客户端
@@ -36,6 +36,10 @@
 | FR-030 | `GET /projects/{project_id}` | 200 | 项目详情 |
 | FR-030 | `PATCH /projects/{project_id}` | 200 | 修改名称、说明与版本 |
 | FR-030 | `DELETE /projects/{project_id}` | 204 | 删除无文档项目及其清单 |
+| FR-019 | `POST /auth/register` | 201 | 注册账号密码用户 |
+| FR-020 | `POST /auth/login` | 200 | 登录并创建认证会话 |
+| FR-020 | `POST /auth/refresh` | 200 | 使用 Refresh Token 签发新 Access Token |
+| FR-021 | `POST /auth/logout` | 204 | 撤销当前认证会话 |
 | FR-031 | `GET /projects/{project_id}/checklist-items` | 200 | 清单项与缺失/未提供结果 |
 | FR-031 | `POST /projects/{project_id}/checklist-items` | 201 | 新增项目清单项 |
 | FR-031 | `PATCH /projects/{project_id}/checklist-items/{item_id}` | 200 | 修改清单项与版本 |
@@ -73,20 +77,42 @@
 
 | 项目 | 约定 |
 |---|---|
-| 身份 | 所有 `/projects` 接口必须携带 `X-User-ID: <UUID>` |
+| 身份 | 除 `/auth/register`、`/auth/login`、`/auth/refresh` 和 `/health` 外，接口必须携带 `Authorization: Bearer <Access Token>` |
 | 所有权 | 服务先验证用户存在，再验证项目归属；资源必须属于路径中的项目 |
 | 请求追踪 | 服务返回 `X-Request-ID`；客户端可传入合法 UUID，否则服务生成 |
 | 内容类型 | JSON 接口使用 `application/json`；上传接口使用 `multipart/form-data` |
 | 时间格式 | RFC 3339 UTC，例如 `2026-08-06T09:30:00Z` |
 | UUID | 所有资源 ID 使用 UUID 字符串 |
 
-`X-User-ID` 只是学习用途模拟身份。客户端不得提交 `owner_id`、`user_id`、`kb_id`、
+用户身份仅来自已验证的 Access Token；`X-User-ID` 不再是受支持的身份头。客户端不得提交 `owner_id`、`user_id`、`kb_id`、
 `confirmed_by`、`actor_id`、`file_hash`、`snapshot_hash`、`visibility_blocking` 或内部
 操作状态；这些值必须由服务端计算或注入。
 
 Chroma 不提供面向客户端的 API 路径或鉴权边界：它只位于部署内部网络，由 FastAPI 服务端
 调用。`VECTOR_UNAVAILABLE` 是向量后端不可用的稳定业务错误，不暴露 Chroma 地址、
 配置或内部异常。
+
+### 3.1.1 账号密码认证（FR-019～FR-021）
+
+`POST /auth/register` 接受 `username`、`name` 和 `password`，返回不含密码或哈希的用户信息。
+用户名规范化为小写，必须全局唯一。
+
+`POST /auth/login` 接受 `username` 和 `password`，成功时返回 Access Token（30 分钟）、
+Refresh Token（7 天）及其秒数。`POST /auth/refresh` 的 JSON 请求体仅含 `refresh_token`，
+成功时仅返回新的 Access Token。`POST /auth/logout` 必须携带当前会话的 Access Token，
+成功时返回 `204` 并撤销对应认证会话。
+
+| 接口 | 是否需要认证 | 请求体 | 成功响应 | 业务边界 |
+|---|---|---|---|---|
+| `POST /auth/register` | 否 | `username`、`name`、`password` | `201 UserRead` | 用户名规范化为小写；密码、密码哈希不在响应中出现 |
+| `POST /auth/login` | 否 | `username`、`password` | `200 {access_token, refresh_token, token_type, access_expires_in, refresh_expires_in}` | 创建一条可撤销认证会话；`token_type` 为 `bearer` |
+| `POST /auth/refresh` | 否 | `refresh_token` | `200 {access_token, token_type, access_expires_in}` | 只接受 Refresh Token；只签发新的 Access Token，不轮换 Refresh Token |
+| `POST /auth/logout` | Bearer Access Token | 无 | `204` | 撤销当前 Access Token 所属会话；重复注销保持幂等 |
+
+`username` 允许 3～50 位小写字母、数字、下划线或连字符；`name` 为 1～100 位显示名；注册密码为
+8～128 个字符。Access Token 的有效期为 30 分钟，Refresh Token 与认证会话的有效期为 7 天。
+服务器未配置有效 `AUTH_JWT_SECRET` 时，涉及 Token 签发或验证的请求返回受控的
+`503 AUTH_NOT_CONFIGURED`，不得使用示例默认值签发 Token。
 
 ### 3.2 并发、幂等与分页
 
@@ -629,7 +655,12 @@ Pydantic Enum 约束上述 API 值，不能接受自由字符串。
 
 | HTTP | 错误码 | 触发条件 |
 |---|---|---|
-| 401 | `INVALID_USER` | `X-User-ID` 不存在或无效 |
+| 401 | `AUTHENTICATION_REQUIRED` | 缺失或格式错误的 Bearer Token |
+| 401 | `INVALID_CREDENTIALS` | 用户名不存在、密码错误或旧用户无凭据 |
+| 401 | `TOKEN_EXPIRED` | Access 或 Refresh Token 已过期 |
+| 401 | `INVALID_TOKEN` | Token 伪造、声明/用途错误、会话不存在、已撤销或 Refresh Token 摘要不匹配 |
+| 409 | `USERNAME_CONFLICT` | 规范化后的用户名已存在 |
+| 503 | `AUTH_NOT_CONFIGURED` | 未配置有效 JWT 签名密钥，认证服务拒绝签发或验证 Token |
 | 403 | `PROJECT_FORBIDDEN` | 当前用户无项目所有权 |
 | 404 | `PROJECT_NOT_FOUND` | 项目不存在 |
 | 404 | `DOCUMENT_NOT_FOUND` | 文档不存在或不属于项目 |

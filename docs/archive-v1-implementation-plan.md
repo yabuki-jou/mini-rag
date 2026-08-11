@@ -9,8 +9,8 @@
 | 文档类型 | 实施计划（不含实现代码） |
 | 依据 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md`、`docs/api-design.md` |
 | 验证门槛 | `docs/review/verification-freeze-checklist.md`（v3） |
-| 状态 | AV1-P01～P03、P04 前置模型分层、P04.1，以及 AV1-C02 本地迁移验证已完成；当前进入 P04.2；云端部署与完整栈资源验证暂定至 V1 完成后；后续归档业务 API 尚未实现 |
-| 更新日期 | 2026-08-08 |
+| 状态 | AV1-P01～P03、P04 前置模型分层、P04.1、AV1-C02 本地迁移验证及 AV1-A01 认证隔离验证已完成；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对结构；当前进入 P04.2 清单项 API 与派生状态；后续归档业务 API 尚未实现；云端部署与完整栈资源验证暂定至 V1 完成后 |
+| 更新日期 | 2026-08-10 |
 
 本计划只安排需求编号 `FR-030`～`FR-041` 的智慧档案 V1 工作。它不替代
 `docs/implementation-plan.md` 中已经完成的既有 RAG 与 Agent 基座记录，也不把计划中的
@@ -27,6 +27,7 @@
 → AV1-P03 数据库与模型基础
 → AV1-C01 历史 Chroma 独立实验（已完成）
 → AV1-C02 Chroma 向量后端本地迁移（已完成）
+→ AV1-A01 账号密码认证与 Bearer 身份切换（已完成隔离验证）
 → AV1-P04.2 清单项 API 与派生状态（当前）
 → AV1-P05 上传
 → AV1-P06 正式解析
@@ -62,13 +63,15 @@
 ### 2.3 共同工程约束
 
 - 保持 `Router → Application Service → Domain Service → 存储/外部依赖` 分层；不增加空转 Repository 层。
-- 每个受保护接口从真实存在的 `X-User-ID` 建立 `ProjectContext`；客户端和模型不能提交或覆盖所有者、项目/知识库范围。
+- 每个受保护接口从已验证 Bearer Access Token 建立当前用户与 `ProjectContext`；客户端和模型不能
+  提交或覆盖所有者、项目/知识库范围，也不再接受 `X-User-ID`。密码、Refresh Token 明文和
+  Token 负载不得写入审计或日志。
 - PostgreSQL 是业务事实来源，原文件与解析快照位于文件系统，Chroma 只保存可重建的正式 Chunk；
   Compose 内 API 经内部 `chroma:8000` 访问。仅本地开发时可额外映射 `127.0.0.1:8001` 供宿主机
   Python 调试，局域网和公网不可访问。云端是否部署及其端口策略暂定至 V1 完成后。
 - 未确认、待重新确认及 `visibility_blocking` 删除中的档案，均不得进入正式目录、检索或问答。
 - 普通自动测试不调用真实 DeepSeek；外部模型只使用虚构或脱敏资料。旧 RAG/Agent 测试必须继续通过或明确说明其环境依赖。
-- 不实现标书投标、OCR、Excel、跨项目检索、前端、JWT、多角色、混合检索、Rerank、任务队列或知识图谱。
+- 不实现标书投标、OCR、Excel、跨项目检索、前端、多角色、混合检索、Rerank、任务队列或知识图谱。
 
 ## 3. 任务总览
 
@@ -78,6 +81,7 @@
 | AV1-P02 | NFR-017、质量验收 §12 | 无（建议在 P01 后） | 准备虚构样本、人工标注和固定问题集 | 门槛 1.0 资料与 Ground Truth 可复现 |
 | AV1-P03 | FR-030～041 共用 | P01 | 建立 V1 数据库模型、迁移和公共授权/错误基础 | 空库前向迁移与约束测试通过 |
 | AV1-P04 | FR-030、FR-031 | P03 | 项目、演示清单、版本控制与所有权 | 项目/清单 API 正常、冲突、越权测试通过 |
+| AV1-A01 | FR-019～FR-021 | P03 | 账号密码、JWT 会话、Bearer 认证与旧身份切换 | 注册、登录、刷新、注销、越权与旧 `X-User-ID` 拒绝测试通过 |
 | AV1-C01 | NFR-015、历史部署实验 | 无 | 在候选 2 vCPU / 2 GB 环境验证 Chroma 内部网络、重启持久化、隔离、删除与基础资源 | 历史实验已记录，不构成部署批准 |
 | AV1-C02 | 既有 RAG 基座、NFR-015 | C01 | 将现有 VectorService 及本地 Compose 从 Milvus 替换为 Chroma，并完成本地迁移验证 | 代码、单测、命名空间、隔离/删除与 Docker 健康验证通过；云端完整栈另行决定 |
 | AV1-P05 | FR-032 | P03、P04 | 项目内上传、容量与原文件哈希去重 | 文件保存与重复/上限/隔离测试通过 |
@@ -157,6 +161,34 @@
 - 覆盖同用户项目名、同项目 `file_hash`、每文档七字段/当前快照、运行中操作、`visibility_blocking` 的数据库约束。
 - 既有迁移与回归测试仍可运行；在线 PostgreSQL 若环境不可用，必须单列为未验证项。
 
+### AV1-A01 账号密码认证、JWT 会话与身份切换（已完成隔离验证，FR-019～FR-021）
+
+**目标与范围**
+
+- 新增公开注册、登录、刷新和注销接口；使用全局唯一小写 `username` 登录，保留 `name` 作为显示名。
+- 使用 Argon2 密码哈希与带 `sub`、`sid`、用途、签发/过期时间的 JWT；Access Token 30 分钟，
+  Refresh Token 7 天。
+- 增加 `auth_sessions` 表，只保存 Refresh Token 哈希、过期时间和撤销状态；刷新只签发新的
+  Access Token，不轮换 Refresh Token。
+- 将 `CurrentUserDep` 从 `X-User-ID` 完全切换为 Bearer Access Token，移除公开 `/users` 模拟身份入口。
+- 旧用户保留业务归属数据但无凭据不能登录；提供不打印密码、不列举用户的本地初始化命令，按
+  明确的用户 ID 设置用户名和密码。
+
+**验证重点**
+
+- 注册用户名规范化冲突、弱密码拒绝、密码哈希不回显，以及用户名不存在和密码错误的响应一致。
+- 登录、刷新、注销、过期、伪造、用途错误和已撤销 Refresh Token 均返回稳定结果。
+- 所有旧知识库、Agent、项目和聊天 API 均改用 Bearer Access Token；仅携带或伪造
+  `X-User-ID` 必须不能通过身份校验。
+- PostgreSQL 迁移前向兼容旧用户；迁移、模型约束、路由和服务测试不读取真实 `.env` 或数据库数据。
+
+**实际验证与未验证项**
+
+- 已通过隔离 SQLite 的注册、登录、刷新、注销、用途错误、旧 `X-User-ID` 拒绝、旧用户拒绝登录、
+  会话撤销和既有受保护路由回归测试。
+- revision `0010_account_auth` 已通过 SQLite 前向迁移和注释契约测试，并已在当前 PostgreSQL
+  开发库实际前向迁移；已核对认证表、字段、索引及 Refresh Token 哈希唯一约束。
+
 ### AV1-P04 项目与项目清单
 
 **共同边界**
@@ -170,7 +202,7 @@
 
 **已完成范围**
 
-- 实现项目创建、读取、修改、空项目删除和 `X-User-ID` 所有权校验。
+- 实现项目创建、读取、修改、空项目删除和 Bearer 身份后的所有权校验。
 - 创建项目时可选择复制唯一的五项虚构演示清单；不提供用户自定义模板的创建、保存或复用。
 
 **已验证重点**
@@ -387,7 +419,7 @@
 ## 6. 当前状态与下一步
 
 - AV1-P01、AV1-P02、AV1-P03 已完成。P03 已新增归档 SQLModel、`ProjectContext` 所有权依赖与 `0005_archive_v1_schema`～`0008_legacy_business_comments` 前向迁移；目标 PostgreSQL 空库已实际迁移至当前版本，且全部 16 张业务表、143 个字段的注释均可由 PostgreSQL 元数据读取。
-- P03 离线迁移 SQL、SQLite 约束测试、完整回归和编译已通过；最新全量回归为 `84 passed, 1 skipped, 16 warnings`。专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置，不能替代本次空库实迁结果。
+- P03 离线迁移 SQL、SQLite 约束测试和编译已通过。修复 Alembic revision 长度并完成 AV1-A01 后的最新全量回归为 `112 passed, 1 skipped, 16 warnings`；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对结构，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
 - P04 前置结构调整已完成：归档 SQLModel 已按 `project.py`、`archive.py`、`checklist.py`、`archive_audit.py` 拆分，`app.models` 公共导入入口与表名、字段、约束保持不变；模型元数据、迁移/授权/注释测试和编译均已通过。本调整不新增迁移，也不实现项目或清单 API。
 - P04.1 FR-030 已完成。AV1-C01 的历史独立实验和 AV1-C02 的本地代码/单测/命名空间/Docker
   健康验证均已完成；当前运行和开发基线为本地。云端部署与完整栈资源验证暂定至 V1 功能完成后。

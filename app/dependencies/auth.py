@@ -1,41 +1,44 @@
-"""定义请求头用户身份校验依赖。"""
+"""从 Bearer Access Token 建立当前用户与认证会话。"""
 
 from typing import Annotated
-from uuid import UUID
 
-from fastapi import Depends, Header
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.errors import AppError
 from app.dependencies.database import SessionDep
 from app.models import User
+from app.services.auth_service import AuthenticatedPrincipal, authenticate_access_token
 
 
-def get_current_user(
+# auto_error=False 使缺失、格式错误与过期 Token 都走统一 AppError 契约。
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_authentication(
     session: SessionDep,
-    x_user_id: Annotated[UUID, Header(alias="X-User-ID")],
-) -> User:
-    """根据请求头中的用户 ID 查询当前用户。
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> AuthenticatedPrincipal:
+    """验证 Bearer Access Token，并读取未撤销的当前认证会话。
 
-    Args:
-        session: 当前请求使用的数据库 Session。
-        x_user_id: ``X-User-ID`` 请求头中的用户 UUID。
-
-    Returns:
-        请求所代表的用户记录。
-
-    Raises:
-        AppError: 请求头对应的用户不存在。
+    客户端传入的 ``X-User-ID`` 不参与本函数；所有资源授权仅可信任 Token 中
+    已验证的用户和会话声明。
     """
-    # 请求头只携带身份 ID，真实用户必须以 SQLite 记录为准。
-    current_user = session.get(User, x_user_id)
-    if current_user is None:
-        raise AppError(
-            status_code=401,
-            code="INVALID_USER",
-            message="X-User-ID 对应的用户不存在。",
-        )
-    return current_user
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise AppError(401, "AUTHENTICATION_REQUIRED", "请提供 Bearer Access Token。")
+    return authenticate_access_token(token=credentials.credentials, session=session)
 
 
-# 路由声明 CurrentUserDep 后，会自动执行请求头身份校验。
+CurrentAuthenticationDep = Annotated[
+    AuthenticatedPrincipal,
+    Depends(get_current_authentication),
+]
+
+
+def get_current_user(current_authentication: CurrentAuthenticationDep) -> User:
+    """为既有资源所有权依赖提供经过 JWT 验证的用户实体。"""
+    return current_authentication.user
+
+
+# 旧业务路由继续声明 CurrentUserDep，但身份来源已完全切换到 Bearer Token。
 CurrentUserDep = Annotated[User, Depends(get_current_user)]

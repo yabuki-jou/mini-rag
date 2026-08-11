@@ -19,6 +19,7 @@ from app.dependencies import get_admin_agent_runtime
 from app.main import app
 from app.models import AgentSession, KnowledgeBase, User
 from app.services import agent_service
+from tests.auth_support import auth_headers
 
 
 class FakeAgentRuntime:
@@ -82,10 +83,15 @@ def create_user_and_kb(engine: Engine, name: str = "owner") -> tuple[UUID, UUID]
     return user_id, kb_id
 
 
-def create_agent_session_via_api(client: TestClient, user_id: UUID, kb_id: UUID) -> dict:
+def create_agent_session_via_api(
+    client: TestClient,
+    engine: Engine,
+    user_id: UUID,
+    kb_id: UUID,
+) -> dict:
     response = client.post(
         "/agent-sessions",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"kb_id": str(kb_id)},
     )
     assert response.status_code == 201
@@ -98,7 +104,7 @@ def test_create_agent_session_binds_owned_knowledge_base(
     """创建接口应保存可信用户、知识库和唯一 Graph thread。"""
     client, engine, _ = agent_api
     user_id, kb_id = create_user_and_kb(engine)
-    data = create_agent_session_via_api(client, user_id, kb_id)
+    data = create_agent_session_via_api(client, engine, user_id, kb_id)
     assert data["kb_id"] == str(kb_id)
     assert data["thread_id"]
     assert "user_id" not in data
@@ -117,7 +123,7 @@ def test_create_agent_session_rejects_other_users_knowledge_base(
     other_id, _ = create_user_and_kb(engine, "other")
     response = client.post(
         "/agent-sessions",
-        headers={"X-User-ID": str(other_id)},
+        headers=auth_headers(engine, other_id),
         json={"kb_id": str(kb_id)},
     )
     assert owner_id != other_id
@@ -131,7 +137,7 @@ def test_message_endpoint_injects_trusted_scope_and_returns_answer(
     """消息接口应从会话注入身份范围，并返回请求 ID。"""
     client, engine, runtime = agent_api
     user_id, kb_id = create_user_and_kb(engine)
-    agent_session = create_agent_session_via_api(client, user_id, kb_id)
+    agent_session = create_agent_session_via_api(client, engine, user_id, kb_id)
     runtime.next_state = {
         "messages": [
             HumanMessage(content="你好"),
@@ -142,7 +148,7 @@ def test_message_endpoint_injects_trusted_scope_and_returns_answer(
     }
     response = client.post(
         f"/agent-sessions/{agent_session['id']}/messages",
-        headers={"X-User-ID": str(user_id), "X-Request-ID": "agent-test-1"},
+        headers={**auth_headers(engine, user_id), "X-Request-ID": "agent-test-1"},
         json={"message": "你好"},
     )
     assert response.status_code == 200
@@ -163,7 +169,7 @@ def test_policy_answer_returns_sources_and_redacted_tool_log(
     """制度回答应返回引用，工具日志不得保存正文或身份字段。"""
     client, engine, runtime = agent_api
     user_id, kb_id = create_user_and_kb(engine)
-    agent_session = create_agent_session_via_api(client, user_id, kb_id)
+    agent_session = create_agent_session_via_api(client, engine, user_id, kb_id)
     document_id = uuid4()
     tool_call = {
         "name": "search_company_policy",
@@ -216,12 +222,12 @@ def test_policy_answer_returns_sources_and_redacted_tool_log(
     )
     response = client.post(
         f"/agent-sessions/{agent_session['id']}/messages",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"message": "项目资料如何归档？"},
     )
     logs_response = client.get(
         f"/agent-sessions/{agent_session['id']}/tool-calls",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
     )
     assert response.json()["sources"][0]["document_id"] == str(document_id)
     log_data = logs_response.json()[0]
@@ -254,7 +260,7 @@ def test_agent_execution_errors_are_safe(
     """Runtime 异常应返回稳定分类，不能暴露异常正文。"""
     client, engine, runtime = agent_api
     user_id, kb_id = create_user_and_kb(engine)
-    agent_session = create_agent_session_via_api(client, user_id, kb_id)
+    agent_session = create_agent_session_via_api(client, engine, user_id, kb_id)
 
     def raise_error(*_: Any, **__: Any) -> dict[str, Any]:
         raise error
@@ -262,7 +268,7 @@ def test_agent_execution_errors_are_safe(
     monkeypatch.setattr(runtime, "invoke", raise_error)
     response = client.post(
         f"/agent-sessions/{agent_session['id']}/messages",
-        headers={"X-User-ID": str(user_id)},
+        headers=auth_headers(engine, user_id),
         json={"message": "查询信息"},
     )
     assert response.status_code == 503
@@ -279,10 +285,10 @@ def test_other_user_cannot_read_agent_session(
     client, engine, _ = agent_api
     owner_id, kb_id = create_user_and_kb(engine, "owner")
     other_id, _ = create_user_and_kb(engine, "other")
-    agent_session = create_agent_session_via_api(client, owner_id, kb_id)
+    agent_session = create_agent_session_via_api(client, engine, owner_id, kb_id)
     response = client.get(
         f"/agent-sessions/{agent_session['id']}/{suffix}",
-        headers={"X-User-ID": str(other_id)},
+        headers=auth_headers(engine, other_id),
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "AGENT_SESSION_FORBIDDEN"

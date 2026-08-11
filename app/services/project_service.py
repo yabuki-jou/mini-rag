@@ -73,13 +73,18 @@ def create_project(
         description=payload.description,
         uses_demo_checklist=payload.use_demo_checklist,
     )
-    session.add(knowledge_base)
-    session.add(project)
-
-    if payload.use_demo_checklist:
-        session.add_all(_build_demo_checklist_items(project_id=project.id))
-
     try:
+        # 这些模型没有 ORM relationship 可供工作单元推导对象依赖，因此显式按
+        # knowledge_bases → projects → checklist_items 的外键顺序刷新。flush 仍在
+        # 同一事务中，后续任一步失败都会由 rollback 一并撤销。
+        session.add(knowledge_base)
+        session.flush()
+        session.add(project)
+        session.flush()
+
+        if payload.use_demo_checklist:
+            session.add_all(_build_demo_checklist_items(project_id=project.id))
+
         session.commit()
     except IntegrityError as exc:
         session.rollback()
