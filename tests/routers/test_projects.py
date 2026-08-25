@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.db import get_session
 from app.main import app
 from app.models import ChecklistItem, Document, KnowledgeBase, Project, User
-from tests.auth_support import auth_headers
+from tests.support.auth import auth_headers
 
 
 @pytest.fixture

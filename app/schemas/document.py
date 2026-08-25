@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models import DocumentStatus
+from app.models import ArchiveDocumentStatus, DocumentStatus
 
 
 class DocumentRead(BaseModel):
@@ -33,4 +33,33 @@ class DocumentRead(BaseModel):
     chunk_count: int
     error_message: str | None
     created_at: datetime
+    updated_at: datetime
+
+
+class LastErrorRead(BaseModel):
+    """返回归档文档最近一次受控失败摘要。"""
+
+    code: str | None
+    message: str | None
+
+
+class FieldSummaryRead(BaseModel):
+    """返回七个固定归档字段的人工检查进度。"""
+
+    checked_count: int
+    total_count: int
+
+
+class ProcessDocumentRead(BaseModel):
+    """返回项目归档文档的受控处理状态，不暴露内部存储信息。"""
+
+    id: UUID
+    filename: str
+    file_hash: str
+    status: ArchiveDocumentStatus
+    last_error: LastErrorRead
+    field_summary: FieldSummaryRead
+    confirmed_at: datetime | None
+    version: int
+    uploaded_at: datetime
     updated_at: datetime

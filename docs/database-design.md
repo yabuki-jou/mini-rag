@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 对应基线 | `docs/requirements.md` V1.2 的 FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020；`docs/architecture.md` 已确认架构基线 |
-| 文档状态 | AV1-P03 归档模型已实现；AV1-A01 已新增用户凭据、认证会话模型与 `0010` 前向迁移，真实 PostgreSQL 迁移待显式验证；归档 API 尚未实现 |
+| 文档状态 | AV1-P03 归档模型已实现；AV1-A01 已新增用户凭据、认证会话模型与 `0010` 前向迁移，真实 PostgreSQL 迁移待显式验证；P06 解析/快照/重试 API 已实现，后续归档 API 尚未实现 |
 | 更新日期 | 2026-08-10 |
 | PostgreSQL 角色 | 归档业务事实的唯一来源 |
 | Chroma 角色 | 仅保存可重建的、已确认档案 Final Chunk 索引 |
@@ -15,7 +15,7 @@
 结构标准化为 JSONB 并写入归档表/字段注释，`0007_project_version_comment` 补齐项目乐观锁
 字段注释，`0008_legacy_business_comments` 补齐既有 RAG、聊天和 Agent 业务表注释，`0010_account_password_authentication`
 增加认证凭据、会话表及其注释。这些迁移
-不转换既有企业制度检索 Agent 的文档数据，也不表示归档业务 API 已经实现。
+不转换既有企业制度检索 Agent 的文档数据，也不表示后续正式归档业务 API 已经实现。
 
 ## 2. 设计原则与存储边界
 

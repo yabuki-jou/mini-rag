@@ -19,6 +19,9 @@ from app.core.errors import AppError
 ARCHIVE_PARSER_VERSION = "archive-v1-parser-v1"
 """当前定位、归一化与快照序列化契约的版本。"""
 
+ARCHIVE_NORMALIZATION_VERSION = "archive-v1-normalization-v1"
+"""当前文本空白归一化规则的版本。"""
+
 MIN_EFFECTIVE_TEXT_CHARACTERS = 20
 """归一化后可提取正文的最小字符数，用于过滤空壳文档。"""
 

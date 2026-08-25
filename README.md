@@ -10,9 +10,9 @@ Chroma 的本机命名空间、范围过滤、精确删除，以及 Docker API�
 
 下一阶段唯一业务方向是“智慧档案与企业文档智能”。需求、架构、数据库、API 与实施计划
 基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03
-数据库/模型/公共授权基础、P04 前置模型分层调整，以及 P04.1 项目 CRUD/模板复制 API
-已完成。归档表迁移 `0005`～`0008` 已在目标 PostgreSQL 空库实际前向迁移；清单项 API、
-正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
+数据库/模型/公共授权基础、P04 前置模型分层调整、P04.1 项目 CRUD/模板复制 API、
+P04.2 清单项 CRUD/派生状态 API，以及 P05 项目内上传/重复校验/容量控制已完成。归档表迁移
+`0005`～`0008` 已在目标 PostgreSQL 空库实际前向迁移；P06 已完成首次解析、快照创建、受控失败记录、专用解析重试、四格式路由和重复解析快照保护，正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
 已经删除，不再提供余额、申请、人工确认或决定接口。
 
 ## 架构
@@ -61,7 +61,7 @@ flowchart LR
 - Agent 会话所有权、LangGraph 多轮消息恢复、制度检索 Tool Calling。
 - 工具参数/结果脱敏、耗时和稳定错误码审计。
 - Alembic 管理 PostgreSQL Schema；当前本地 Compose 提供 PostgreSQL 与内部 Chroma 服务。云端部署策略和资源验收暂定，待 V1 完成后再评估。
-- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础，以及项目 CRUD API；清单项与归档业务 API 尚未实现。
+- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制，以及首次解析、受控失败记录、专用解析重试和四格式路由；后续归档业务 API 尚未实现。
 
 ## 数据库表
 
@@ -166,7 +166,7 @@ PostgreSQL 迁移测试必须显式提供空的专用测试库：
 ```powershell
 pytest -q
 $env:POSTGRES_TEST_URL='postgresql+psycopg://user:password@localhost:5432/empty_test_db'
-pytest -q tests/test_postgres_migrations.py
+pytest -q tests/test_migration_service_postgres.py
 python -m compileall app tests migrations
 docker compose config --quiet
 ```
@@ -181,4 +181,4 @@ docker compose config --quiet
 - 没有 OCR、表格专用解析、混合检索、Rerank、多 Agent 或任务队列。
 - 智慧档案的字段模型、分类与缺失规则、人工确认点、评测集和数据库设计基线已确认；
  Parser 冻结规则、虚构验收资料、迁移、模型和项目授权上下文已创建并验证；
-  项目 CRUD 与模板复制 API 已实现；清单项 API、正式归档流程、Final Collection 和端到端质量验收尚未实现。
+  项目 CRUD/模板复制、清单项 API、项目内上传、首次解析、解析重试和四格式路由已实现；正式归档流程、Final Collection 和端到端质量验收尚未实现。

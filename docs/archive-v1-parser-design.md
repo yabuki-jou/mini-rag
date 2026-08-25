@@ -5,12 +5,12 @@
 | 项目 | 内容 |
 |---|---|
 | 对应实施任务 | AV1-P01（FR-033、NFR-016） |
-| 状态 | 已在隔离验证中冻结；尚未接入归档数据库、路由或状态机 |
+| 状态 | Parser 规则已冻结，并已由 AV1-P06 接入归档数据库、项目路由和状态机 |
 | Parser 版本 | `archive-v1-parser-v1` |
 | 更新日期 | 2026-08-06 |
 
-本文记录 P01 实测后冻结的解析契约。它是后续 AV1-P06 正式解析实现的输入，不代表
-`PARSED`、`PARSE_FAILED`、`ParsedSnapshot` 表或归档 API 已经实现。
+本文记录 P01 实测后冻结的解析契约，并作为 AV1-P06 正式解析实现的规则基线。当前
+`PARSED`、`PARSE_FAILED`、`ParsedSnapshot` 表和项目解析/重试 API 已实现；后续正式归档流程仍未实现。
 
 ## 2. 统一结果与快照
 
@@ -73,14 +73,14 @@
 
 ## 5. 验证证据
 
-验证代码位于 `tests/test_archive_parser_spike.py`，运行时动态生成虚构 TXT/MD、DOCX、
+验证代码位于 `tests/services/test_archive_parser_service.py`，运行时动态生成虚构 TXT/MD、DOCX、
 文本型 PDF 和空白 PDF，不读取真实资料。
 
 执行命令：
 
 ```powershell
 $env:DATABASE_URL = 'postgresql+psycopg://parser_test:parser_test@localhost:5432/parser_test'
-C:\D\venvs\mrh\Scripts\python.exe -m pytest -q tests\test_archive_parser_spike.py tests\test_document_processing.py
+C:\D\venvs\mrh\Scripts\python.exe -m pytest -q tests\services\test_archive_parser_service.py tests\services\test_document_service.py
 C:\D\venvs\mrh\Scripts\python.exe -m compileall -q app tests
 ```
 
@@ -89,8 +89,7 @@ TXT/MD 换行与行号、空白 PDF、短文本 PDF、有效文本上下限和�
 
 补充环境验证：P01 验证时，安装 `psycopg[binary]==3.3.4` 后，以当前进程的 PostgreSQL
 格式 `DATABASE_URL` 运行全量测试，结果为 `76 passed, 1 skipped, 16 warnings in 12.97s`。
-P03、P04 前置模型分层与后续 AV1-A01 认证调整完成后的最新全量回归为
-`111 passed, 1 skipped, 16 warnings`；跳过项和警告属于既有测试环境，不是 Parser 验证失败。
+P05 项目内上传完成后的默认全量回归为 `142 passed, 2 skipped, 16 warnings`；两个跳过项分别需要显式 PostgreSQL 并发授权和专用空迁移库，警告属于既有测试环境，不是 Parser 验证失败。
 
 ## 6. 已知边界与后续任务
 
@@ -98,6 +97,6 @@ P03、P04 前置模型分层与后续 AV1-A01 认证调整完成后的最新全�
   它为后续检索/问答验收提供输入，不代表模型或检索质量已经达标。
 - 本验证未连接 PostgreSQL、文件持久化目录、Milvus 或 DeepSeek；它不能证明归档状态机、
   向量检索或问答可用。
-- AV1-P06 才会把本契约接入 `UPLOADED → PARSED/PARSE_FAILED`、不可变快照与解析重试。
+- AV1-P06 已将本契约接入 `UPLOADED → PARSED/PARSE_FAILED`、不可变快照与解析重试；后续改动必须提升 Parser 版本并重新验证。
 - 若未来需要支持其他编码、DOCX 嵌套结构或 OCR，必须新开需求和 Parser 版本，不能静默改变
   `archive-v1-parser-v1` 的定位语义。

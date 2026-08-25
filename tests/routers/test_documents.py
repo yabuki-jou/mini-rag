@@ -19,7 +19,7 @@ from app.models import Document, DocumentStatus, KnowledgeBase, User
 from app.routers import documents as documents_router
 from app.services import document_service
 from app.services import vector_service
-from tests.auth_support import auth_headers
+from tests.support.auth import auth_headers
 
 
 @pytest.fixture

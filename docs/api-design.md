@@ -6,13 +6,13 @@
 |---|---|
 | 对应基线 | FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
 | 依赖设计 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md` |
-| 文档状态 | API 设计基线已确认；AV1-A01 账号密码认证接口、Bearer 身份切换及隔离测试已实现；`0010` PostgreSQL 真实库迁移仍待在本地开发库显式验证。FR-030 项目 CRUD/模板复制已实现，其余智慧档案接口尚未实现 |
-| 更新日期 | 2026-08-10 |
+| 文档状态 | API 设计基线已确认；AV1-A01 账号密码认证接口、Bearer 身份切换及隔离测试已实现；`0010` 已在当前 PostgreSQL 开发库实际迁移并核对结构。FR-030 项目 CRUD/模板复制、FR-031 清单项 CRUD/派生状态、FR-032 项目内上传及 FR-033 四格式解析/失败记录/专用重试已实现；FR-034 起后续归档接口尚未实现 |
+| 更新日期 | 2026-08-24 |
 | 操作界面 | Swagger/OpenAPI 与 API 客户端 |
 
-本文件定义智慧档案 V1 的目标 HTTP 契约。当前实际代码仍只提供企业知识库与制度
-检索 Agent 基座接口；本文件中的项目、归档、清单、正式目录、问答和审计接口均未
-实现，不能作为已可调用 API 宣传。
+本文件定义智慧档案 V1 的目标 HTTP 契约。当前实际代码已提供项目 CRUD、清单项
+`GET/POST/PATCH/DELETE`、项目内上传、首次解析及解析重试；AI 建议、归档、正式目录、问答和审计查询接口仍未实现，
+不能作为已可调用 API 宣传。
 
 ## 2. 范围与路由边界
 
@@ -21,7 +21,7 @@
 | 接口组 | 路径前缀 | 当前状态 | 用途 |
 |---|---|---|---|
 | 认证与旧知识库/Agent 基座 | `/auth`、`/knowledge-bases`、`/agent-sessions` 等 | 认证接口和 Bearer 保护已实现；其余以当前代码为准 | 身份、制度检索、旧 RAG 与单 Agent 演示 |
-| 智慧档案 V1 | `/projects` | 已实现 FR-030 项目 CRUD；其余接口仍为设计 | 工程项目归档、清单、正式目录与问答 |
+| 智慧档案 V1 | `/projects` | 已实现 FR-030 项目 CRUD 与 FR-031 清单项 CRUD/派生状态；其余接口仍为设计 | 工程项目归档、清单、正式目录与问答 |
 
 智慧档案接口不得复用旧的 `/knowledge-bases/{kb_id}/documents` 作为业务入口；客户端
 只提交 `project_id`。服务端从项目所有权校验获取 `user_id + project_id + kb_id` 的
@@ -142,7 +142,8 @@ Refresh Token（7 天）及其秒数。`POST /auth/refresh` 的 JSON 请求体�
 }
 ```
 
-错误响应保持现有 `AppError` 契约：
+错误响应保持 `AppError` 契约；预期业务错误仅在已明确约定且可安全返回时包含可选的
+`details`：
 
 ```json
 {
@@ -153,7 +154,8 @@ Refresh Token（7 天）及其秒数。`POST /auth/refresh` 的 JSON 请求体�
 }
 ```
 
-参数格式或类型错误返回 `422 VALIDATION_ERROR`，并可包含 Pydantic 校验 `details`。
+参数格式或类型错误返回 `422 VALIDATION_ERROR`，并可包含 Pydantic 校验 `details`。业务
+`details` 不得包含存储路径、密钥、原文件内容、模型提示词或其他项目资源。
 未知异常只在服务端日志记录，客户端固定接收 `500 INTERNAL_ERROR`，不返回堆栈、
 数据库地址、文件路径、模型提示词或外部服务原始异常。
 
@@ -419,7 +421,7 @@ Swagger 的字段说明同时展示中文名称。资料类型和项目阶段不
 - 文件最大 20 MB；超限返回 `413 FILE_TOO_LARGE`。
 - 当前项目最多 100 份未删除文档；超限返回 `409 PROJECT_DOCUMENT_LIMIT_REACHED`。
 - 同项目原文件 `file_hash` 已存在时返回 `409 DUPLICATE_FILE`，仅返回当前项目已有
-  文档的 `id`、`filename`、`status`；不保存文件、不建记录、不写向量或审计。
+  文档的 `id`、`filename`、`status`，位置为 `error.details`；不保存文件、不建记录、不写向量或审计。
 
 成功创建原文件和 `UPLOADED` 归档记录，返回 `201 ProcessDocument`。上传不会自动解析
 或调用 DeepSeek。
@@ -718,8 +720,11 @@ Pydantic Enum 约束上述 API 值，不能接受自由字符串。
 1. **[DONE – FR-030]** 已创建项目 CRUD 的 Pydantic Schema、Router、Service、稳定错误码
    与 API 测试。项目创建会创建内部知识库范围，并可在同一事务复制五项虚构清单；空项目
    删除只清理项目级数据，保留内部知识库记录以保护旧 RAG/Agent 数据。
-2. **[TODO – FR-031]** 清单项 CRUD、项目/清单版本联动与派生 `SATISFIED`、`MISSING`、
-   `NOT_PROVIDED` 状态尚未实现。
+2. **[DONE – FR-031]** 已创建清单项 Schema、Router、Service 与 API 测试；`POST` 使用项目版本
+   原子保护创建并写脱敏审计，`PATCH` 使用清单项版本，关键匹配字段变更会使确认关联失效；列表
+   仅以同项目的确认档案和确认关联派生 `SATISFIED`、`MISSING`、`NOT_PROVIDED`。
+3. **[DONE – FR-032]** 已创建项目内 multipart 上传接口；文件类型/20 MiB 在落盘前预检，
+   同项目按 SHA-256 去重，项目行锁原子维护 100 份容量，不同项目相同哈希保持隔离。
 
-实施计划已生成，AV1-P01～P03、P04 前置模型分层和 P04.1 FR-030 已完成。下一步是
-**AV1-P04.2 清单项 API 与派生状态**；不得提前实现上传、解析、AI 建议、正式归档、检索或问答。
+实施计划已生成，AV1-P01～P03、P04 前置模型分层、P04.1 FR-030、P04.2 FR-031 与 P05 FR-032 已完成。
+**AV1-P06 正式解析、快照与重试已完成**；已验证四格式路由、失败记录、专用重试、重复解析拒绝和快照保护。下一步为 AV1-P07 手工草稿；不得提前实现 AI 建议以外的后续正式归档、检索或问答流程。

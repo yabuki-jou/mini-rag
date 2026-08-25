@@ -9,8 +9,8 @@
 | 文档类型 | 实施计划（不含实现代码） |
 | 依据 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md`、`docs/api-design.md` |
 | 验证门槛 | `docs/review/verification-freeze-checklist.md`（v3） |
-| 状态 | AV1-P01～P03、P04 前置模型分层、P04.1、AV1-C02 本地迁移验证及 AV1-A01 认证隔离验证已完成；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对结构；当前进入 P04.2 清单项 API 与派生状态；后续归档业务 API 尚未实现；云端部署与完整栈资源验证暂定至 V1 完成后 |
-| 更新日期 | 2026-08-10 |
+| 状态 | AV1-P01～P06、P04 前置模型分层、P04.1、P04.2、P05、AV1-C02 本地迁移验证及 AV1-A01 认证隔离验证已完成；P06 已通过项目路由、Parser、重试、重复解析和快照保护测试；后续归档业务 API 尚未实现；云端部署与完整栈资源验证暂定至 V1 完成后 |
+| 更新日期 | 2026-08-24 |
 
 本计划只安排需求编号 `FR-030`～`FR-041` 的智慧档案 V1 工作。它不替代
 `docs/implementation-plan.md` 中已经完成的既有 RAG 与 Agent 基座记录，也不把计划中的
@@ -21,16 +21,16 @@
 ### 2.1 执行顺序
 
 ```text
-智慧档案 V1 实施顺序（当前已完成 P01～P03、P04 前置模型分层与 P04.1）
+智慧档案 V1 实施顺序（当前已完成 P01～P03、P04 前置模型分层、P04.1、P04.2 与 P05）
 → AV1-P01 Parser 可行性验证与规则冻结
 → AV1-P02 虚构验收资料与人工标注
 → AV1-P03 数据库与模型基础
 → AV1-C01 历史 Chroma 独立实验（已完成）
 → AV1-C02 Chroma 向量后端本地迁移（已完成）
 → AV1-A01 账号密码认证与 Bearer 身份切换（已完成隔离验证）
-→ AV1-P04.2 清单项 API 与派生状态（当前）
-→ AV1-P05 上传
-→ AV1-P06 正式解析
+→ AV1-P04.2 清单项 API 与派生状态（已完成）
+→ AV1-P05 上传（已完成）
+→ AV1-P06 正式解析（已完成）
 → AV1-P07 手工草稿与字段检查
 → AV1-P08 AI 建议
 → AV1-P09 确认入档与 Final Collection
@@ -113,7 +113,7 @@
 **预期改动范围（执行时再确认）**
 
 - `app/services/archive_parser_service.py`（归档专用隔离适配器，未接入旧 RAG Parser）；
-- `tests/test_archive_parser_spike.py`（运行时动态生成虚构样本）；
+- `tests/services/test_archive_parser_service.py`（运行时动态生成虚构样本）；
 - `docs/archive-v1-parser-design.md`（冻结规则与实际结果）。
 
 **验证与完成条件**
@@ -143,7 +143,7 @@
 - 已生成 12 份正常虚构资料（六类资料各 2 份，覆盖 PDF、DOCX、TXT、MD）和 3 份
   异常资料（字段缺失/分类混淆、同项目原文件哈希重复、无可提取文本的扫描 PDF）。
 - 已生成字段与证据 Ground Truth、12 个固定问题（8 有据、2 无据、2 项目隔离）及本地
-  查看说明；`tests/test_archive_v1_evaluation_data.py` 验证资料、证据、重复哈希和问题集契约。
+  查看说明；`tests/services/test_archive_v1_evaluation_data.py` 验证资料、证据、重复哈希和问题集契约。
 - 本任务未调用 DeepSeek，也未执行 Chroma 检索、阈值标定或问答质量评分；这些结果仍分别由
   AV1-P11、AV1-P12 与 AV1-P14 产生。
 
@@ -216,10 +216,9 @@
   乐观锁、所有权校验、分页列表与非空项目删除拒绝。
 - `use_demo_checklist=true` 会在创建事务中复制五项虚构演示清单；空项目删除清理项目级清单，
   但保留内部 `knowledge_bases` 记录，防止影响旧 RAG/Agent 的文档数据。
-- `tests/test_projects_router.py` 覆盖模板复制、冲突、隔离、版本、越权、删除边界；P04.2
-  仍需实现清单项 CRUD、项目版本联动与派生状态。
+- `tests/routers/test_projects.py` 覆盖模板复制、冲突、隔离、版本、越权和删除边界。
 
-#### AV1-P04.2 清单项 API、版本控制与派生状态（待开始，FR-031）
+#### AV1-P04.2 清单项 API、版本控制与派生状态（已完成，FR-031）
 
 **目标与范围**
 
@@ -235,6 +234,21 @@
 - 创建请求的旧项目版本、修改请求的旧清单项版本均返回稳定的 `409 VERSION_CONFLICT`，且不产生重复清单项或审计成功记录。
 - 当前尚无已确认关联时，必需项返回 `MISSING`、可选项返回 `NOT_PROVIDED`；后续存在已确认档案和已确认关联时才返回 `SATISFIED`。
 - 修改名称、资料类型或项目阶段会使已存在的确认关联失效；只改说明不会失效。删除清单项后不再出现在列表，且其关联被清理。
+
+**完成结果（P04.2 FR-031，2026-08-12）**
+
+- 已实现 `GET/POST/PATCH/DELETE /projects/{project_id}/checklist-items`。所有接口先由
+  `ProjectContext` 校验项目所有权；创建以 `expected_project_version` 原子递增项目版本，修改以
+  `expected_version` 防止陈旧覆盖，关键匹配字段改变时将确认关联更新为 `INVALIDATED`。
+- 列表只基于同项目 `ArchiveDocument.CONFIRMED` 与 `ChecklistLink.CONFIRMED` 派生
+  `SATISFIED`、`MISSING`、`NOT_PROVIDED` 和确认档案计数；资料类型或项目阶段不会自动满足清单。
+- 清单项增删改在同一事务写入脱敏审计；删除显式清理关联但保留删除审计。关联建议、创建和
+  删除接口仍属于 AV1-P10，P04.2 测试仅为验证读取派生结果而直接准备确认档案/关联事实。
+- `tests/schemas/test_checklist_schemas.py`、`tests/services/test_checklist_service.py` 与
+  `tests/routers/test_projects_checklist.py` 分别覆盖 Schema 边界、服务层陈旧项目版本的
+  事务回滚，以及 API 的派生状态、项目/清单版本冲突、越权、关联失效、删除和审计；测试目录
+  与 `app/schemas/`、`app/services/`、`app/routers/` 一一对应。隔离 SQLite/TestClient 已验证，
+  真实 PostgreSQL 并发竞争尚未验证。
 
 ### AV1-C01 Chroma 独立可行性验证（已完成，2026-08-07）
 
@@ -419,10 +433,10 @@
 ## 6. 当前状态与下一步
 
 - AV1-P01、AV1-P02、AV1-P03 已完成。P03 已新增归档 SQLModel、`ProjectContext` 所有权依赖与 `0005_archive_v1_schema`～`0008_legacy_business_comments` 前向迁移；目标 PostgreSQL 空库已实际迁移至当前版本，且全部 16 张业务表、143 个字段的注释均可由 PostgreSQL 元数据读取。
-- P03 离线迁移 SQL、SQLite 约束测试和编译已通过。修复 Alembic revision 长度并完成 AV1-A01 后的最新全量回归为 `112 passed, 1 skipped, 16 warnings`；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对结构，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
+- P03 离线迁移 SQL、SQLite 约束测试和编译已通过。P05 完成后的默认全量回归为 `142 passed, 2 skipped, 16 warnings`；其中 P05 PostgreSQL 并发测试需要显式设置 `RUN_POSTGRES_CONCURRENCY_TEST=1`，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
 - P04 前置结构调整已完成：归档 SQLModel 已按 `project.py`、`archive.py`、`checklist.py`、`archive_audit.py` 拆分，`app.models` 公共导入入口与表名、字段、约束保持不变；模型元数据、迁移/授权/注释测试和编译均已通过。本调整不新增迁移，也不实现项目或清单 API。
-- P04.1 FR-030 已完成。AV1-C01 的历史独立实验和 AV1-C02 的本地代码/单测/命名空间/Docker
+- P04.1 FR-030、P04.2 FR-031 与 P05 FR-032 已完成。P05 的上传、重复、容量、类型、越权与跨项目隔离已通过 SQLite/TestClient 契约测试；当前 PostgreSQL 开发库的 99→100 并发验证为一成功、一容量拒绝，UUID 范围测试数据与临时文件均已清理。AV1-C01 的历史独立实验和 AV1-C02 的本地代码/单测/命名空间/Docker
   健康验证均已完成；当前运行和开发基线为本地。云端部署与完整栈资源验证暂定至 V1 功能完成后。
-  下一步为 P04.2 清单项 API 与派生状态，它不依赖向量库。
+  P06 已完成首次解析、快照创建、受控失败记录、专用解析重试、四格式路由和快照保护；默认全量回归为 `151 passed, 2 skipped, 16 warnings`。下一步为 AV1-P07 手工草稿、字段证据与人工检查。
 - AV1-P02 已解除对 AV1-P11 阈值标定和 AV1-P12 问答质量验收的“验收资料缺失”阻塞；
   这些任务仍分别依赖 P09 正式索引和 P11 正式检索实现。

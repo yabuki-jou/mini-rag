@@ -11,7 +11,7 @@ from app.core.errors import AppError
 from app.services.archive_parser_service import parse_archive_document
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATASET_ROOT = PROJECT_ROOT / "tests" / "pytest_docs"
 GENERATOR_SCRIPT = PROJECT_ROOT / "scripts" / "generate_archive_v1_eval_data.py"
 

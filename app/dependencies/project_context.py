@@ -5,11 +5,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends
+from sqlmodel import select
 
 from app.core.errors import AppError
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import SessionDep
-from app.models import Project
+from app.models import Document, Project
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,3 +41,24 @@ def get_project_context(
 
 
 ProjectContextDep = Annotated[ProjectContext, Depends(get_project_context)]
+
+
+def get_project_document(
+    document_id: UUID,
+    project_context: ProjectContextDep,
+    session: SessionDep,
+) -> Document:
+    """在已验证项目和知识库范围内注入项目文档。"""
+    document = session.exec(
+        select(Document).where(
+            Document.id == document_id,
+            Document.project_id == project_context.project_id,
+            Document.kb_id == project_context.kb_id,
+        )
+    ).first()
+    if document is None:
+        raise AppError(404, "DOCUMENT_NOT_FOUND", "该文档不存在。")
+    return document
+
+
+ProjectDocumentDep = Annotated[Document, Depends(get_project_document)]

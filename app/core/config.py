@@ -25,6 +25,7 @@ class Settings(BaseSettings):
         database_url: SQLModel 数据库连接地址。
         agent_checkpoint_file: LangGraph 执行状态使用的独立 SQLite 文件。
         file_storage_dir: 上传原文件的本地存储目录。
+        max_upload_file_bytes: 单个上传原文件允许的最大字节数。
         chroma_host: Chroma HTTP 服务主机名。
         chroma_port: Chroma HTTP 服务端口。
         chroma_tenant: Chroma 服务端租户名称。
@@ -69,6 +70,7 @@ class Settings(BaseSettings):
     )
     agent_checkpoint_file: Path = Path("./data/agent_checkpoints.db")
     file_storage_dir: Path = Path("./data/files")
+    max_upload_file_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
 
     # Chroma 仅通过内部 HTTP 网络访问；本机调试只允许回环地址。
     chroma_host: str = "localhost"

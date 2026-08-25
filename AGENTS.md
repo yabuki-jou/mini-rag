@@ -8,7 +8,7 @@
 
 本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 是当前唯一操作界面，不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
 
-现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03 数据库/模型/公共授权基础、P04 前置模型分层、P04.1 项目 CRUD/模板复制 API，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。下一任务为清单项 CRUD 与派生状态（P04.2）；正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含前端、OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署。
+现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03 数据库/模型/公共授权基础、P04 前置模型分层、P04.1 项目 CRUD/模板复制 API、P04.2 清单项 CRUD/派生状态、P05 项目内上传/重复校验/容量控制、P06 正式解析/快照/重试，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成。P05 已通过 SQLite/TestClient 契约测试和当前 PostgreSQL 开发库的项目行锁并发验证，P06 已通过项目路由、Parser、失败重试、四格式和快照保护测试；测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。下一任务为手工草稿、字段证据与人工检查（P07）；正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含前端、OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署。
 
 全量 Chroma 迁移（旧制度检索和后续智慧档案）已确认；AV1-C01 已完成一次云主机上的 Chroma 独立内网、过滤、精确删除、容器重启持久化与空闲资源实验，AV1-C02 已完成运行时代码、离线单测、本机命名空间和本机 Docker 健康验证。云端完整栈资源验证不再阻塞当前开发，随部署决策一并暂缓至 V1 功能完成后。后续正式索引为 Chroma Final Collection；不得将历史 Milvus 验证、C01 空闲内存或本机健康检查写成完整部署通过。
 
@@ -95,6 +95,9 @@ Router → Application Service → Agent / Domain Service
 - API Schema、数据库 Model、内部 dataclass 分开定义。
 - 已知业务错误使用 `AppError`；数据库提交失败后先 `rollback()`。
 - 不修改无关文件，不覆盖用户已有未提交改动。
+- 测试目录必须镜像被测代码的层目录：`app/agents/`、`app/core/`、`app/dependencies/`、`app/models/`、`app/routers/`、`app/schemas/`、`app/services/` 分别对应 `tests/` 下的同名目录；跨层 HTTP 集成测试归入 `tests/routers/`，测试辅助代码归入 `tests/support/`。移动文件时必须同步更新相对路径和文档中的测试路径。
+- 后续开发编码采用 TDD：每个可观察行为先新增或修改一个会失败的测试并实际运行（RED），随后只写使该测试通过的最小实现（GREEN），最后仅在相关测试持续通过时重构（REFACTOR）。完成一个学习步骤前再运行相关测试、全量测试和 `compileall`；不得把“预期会失败”当作已验证的 RED 证据。
+- TDD 的单元、服务和 API 测试验证确定性行为（契约、权限、事务、状态和错误）。涉及 DeepSeek 等真实 LLM 输出的事实性、引用完整性或语义质量时，必须另行使用真实模型和固定评估资料完成评估；Mock 只能用于隔离普通单元测试，不能作为 LLM 质量通过的证据。
 
 ## 命令
 

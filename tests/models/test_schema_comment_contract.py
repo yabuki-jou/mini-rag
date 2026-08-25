@@ -8,7 +8,7 @@ from sqlmodel import SQLModel
 from app import models as _models  # noqa: F401  注册所有业务表。
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_migration_constants(filename: str):

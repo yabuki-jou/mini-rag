@@ -1,6 +1,7 @@
 """定义应用业务异常，并统一 FastAPI 的错误响应。"""
 
 import logging
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -18,20 +19,29 @@ class AppError(Exception):
         status_code: HTTP 响应状态码。
         code: 供客户端判断错误类型的稳定代码。
         message: 可展示给客户端的错误信息。
+        details: 可选的、已脱敏的业务错误补充信息。
     """
 
-    def __init__(self, status_code: int, code: str, message: str):
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ):
         """初始化业务错误。
 
         Args:
             status_code: HTTP 响应状态码。
             code: 供客户端判断错误类型的稳定代码。
             message: 可展示给客户端的错误信息。
+            details: 可选的、已脱敏的业务错误补充信息。
         """
         # 同时保存 HTTP 语义和稳定业务代码，供统一异常处理器构造响应。
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.details = details
         super().__init__(message)
 
 
@@ -51,15 +61,13 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc.status_code,
             exc.code,
         )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": {
-                    "code": exc.code,
-                    "message": exc.message,
-                }
-            },
-        )
+        error_payload: dict[str, Any] = {
+            "code": exc.code,
+            "message": exc.message,
+        }
+        if exc.details is not None:
+            error_payload["details"] = jsonable_encoder(exc.details)
+        return JSONResponse(status_code=exc.status_code, content={"error": error_payload})
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(

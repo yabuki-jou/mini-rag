@@ -60,6 +60,20 @@ def validate_filename(filename: str | None) -> str:
     return safe_name
 
 
+def _validate_project_upload_filename(filename: str | None) -> str:
+    """校验项目上传文件名，并映射为智慧档案 API 的稳定格式错误。"""
+    try:
+        return validate_filename(filename)
+    except AppError as exc:
+        if exc.code == "UNSUPPORTED_FILE_TYPE":
+            raise AppError(
+                415,
+                "FILE_TYPE_UNSUPPORTED",
+                "仅支持 PDF、DOCX、TXT 和 MD 文件。",
+            ) from exc
+        raise
+
+
 @dataclass(frozen=True)
 class StoredFile:
     """表示成功保存的原文件信息。
@@ -73,6 +87,47 @@ class StoredFile:
     filename: str
     path: Path
     content_hash: str
+
+
+async def calculate_upload_file_hash(upload: UploadFile) -> str:
+    """读取上传流的 SHA-256，并将流复位以供后续安全落盘。
+
+    Args:
+        upload: FastAPI 接收到的、尚未关闭的上传文件。
+
+    Returns:
+        原文件字节的 SHA-256 十六进制摘要。
+
+    Raises:
+        AppError: 文件名无效、文件为空、文件过大或读取上传流失败。
+    """
+    content_hasher = sha256()
+    total_size = 0
+    try:
+        # 项目上传预检使用新的 415 契约，旧知识库落盘仍复用原有底层错误。
+        _validate_project_upload_filename(upload.filename)
+
+        while chunk := await upload.read(FILE_READ_CHUNK_SIZE):
+            total_size += len(chunk)
+            # 在原文件落盘前限制上传大小，避免留下超限文件或业务记录。
+            if total_size > settings.max_upload_file_bytes:
+                raise AppError(
+                    413,
+                    "FILE_TOO_LARGE",
+                    "上传文件不能超过 20 MiB。",
+                )
+            content_hasher.update(chunk)
+        if total_size == 0:
+            raise AppError(400, "EMPTY_FILE", "上传文件不能为空。")
+        # 重复校验只读取上传流；命中或未命中后均不能把已读位置传给真正的落盘函数。
+        await upload.seek(0)
+    except AppError:
+        await upload.close()
+        raise
+    except Exception as exc:
+        await upload.close()
+        raise AppError(500, "FILE_SAVE_FAILED", "文件保存失败。") from exc
+    return content_hasher.hexdigest()
 
 
 async def save_upload_file(

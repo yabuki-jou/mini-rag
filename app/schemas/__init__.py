@@ -27,7 +27,15 @@ from app.schemas.chat import (
     ChatSessionRead,
     SourceRead,
 )
-from app.schemas.document import DocumentRead
+from app.schemas.checklist import (
+    ChecklistFulfillmentStatus,
+    ChecklistItemCreate,
+    ChecklistItemCreateResponse,
+    ChecklistItemListRead,
+    ChecklistItemRead,
+    ChecklistItemUpdate,
+)
+from app.schemas.document import DocumentRead, FieldSummaryRead, LastErrorRead, ProcessDocumentRead
 from app.schemas.health import HealthComponent, HealthResponse
 from app.schemas.project import ProjectCreate, ProjectPageRead, ProjectRead, ProjectUpdate
 from app.schemas.retrieval import (
@@ -55,11 +63,20 @@ __all__ = [
     "ChatQuestionRequest",
     "ChatSessionCreate",
     "ChatSessionRead",
+    "ChecklistFulfillmentStatus",
+    "ChecklistItemCreate",
+    "ChecklistItemCreateResponse",
+    "ChecklistItemListRead",
+    "ChecklistItemRead",
+    "ChecklistItemUpdate",
     "DocumentRead",
+    "FieldSummaryRead",
     "HealthComponent",
     "HealthResponse",
     "KnowledgeBaseCreate",
     "KnowledgeBaseRead",
+    "LastErrorRead",
+    "ProcessDocumentRead",
     "ProjectCreate",
     "ProjectPageRead",
     "ProjectRead",

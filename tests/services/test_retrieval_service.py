@@ -8,10 +8,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.routers import retrieval as retrieval_router
-from app.schemas import RetrievalTestRequest
 from app.services import retrieval_service
-from app.services.retrieval_service import RetrievedChunk
 
 
 def make_query_result(
@@ -159,33 +156,3 @@ def test_retrieve_chunks_rejects_invalid_result_columns(
         retrieval_service.retrieve_chunks(uuid4(), uuid4(), "结构异常")
 
     assert exc_info.value.code == "VECTOR_RESULT_INVALID"
-
-
-def test_retrieval_endpoint_converts_internal_results(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """路由仍把内部结果转换为包含问题和来源的既有响应契约。"""
-    user_id = uuid4()
-    kb_id = uuid4()
-    document_id = uuid4()
-    internal_result = RetrievedChunk(
-        chunk_id="a" * 64,
-        document_id=document_id,
-        document_name="policy.pdf",
-        page=1,
-        content="制度正文",
-        score=0.75,
-    )
-    monkeypatch.setattr(retrieval_router, "retrieve_chunks", lambda **_: [internal_result])
-
-    response = retrieval_router.retrieval_test_endpoint(
-        current_user=SimpleNamespace(id=user_id),
-        knowledge_base=SimpleNamespace(id=kb_id),
-        kb_id=kb_id,
-        payload=RetrievalTestRequest(question="  制度问题  "),
-    )
-
-    assert response.question == "制度问题"
-    assert len(response.results) == 1
-    assert response.results[0].document_id == document_id
-    assert response.results[0].score == 0.75

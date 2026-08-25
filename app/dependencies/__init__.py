@@ -11,7 +11,9 @@ from app.dependencies.database import SessionDep
 from app.dependencies.project_context import (
     ProjectContext,
     ProjectContextDep,
+    ProjectDocumentDep,
     get_project_context,
+    get_project_document,
 )
 from app.dependencies.resources import (
     OwnedAgentSessionDep,
@@ -34,6 +36,7 @@ __all__ = [
     "OwnedKnowledgeBaseDep",
     "ProjectContext",
     "ProjectContextDep",
+    "ProjectDocumentDep",
     "SessionDep",
     "get_current_authentication",
     "get_current_user",
@@ -42,4 +45,5 @@ __all__ = [
     "get_owned_chat_session",
     "get_owned_knowledge_base",
     "get_project_context",
+    "get_project_document",
 ]
