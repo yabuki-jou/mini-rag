@@ -39,9 +39,9 @@ PostgreSQL。SQLite 单元测试只作为快速隔离测试，不能替代 Postg
 虚构验收资料与 Ground Truth、AV1-P03 PostgreSQL 迁移/模型/公共授权基础、P04
 前置模型分层调整、P04.1 FR-030 项目 CRUD/模板复制 API、P04.2 FR-031 清单项 CRUD/派生状态，
 以及 AV1-A01 账号密码、JWT 会话与 Bearer 身份切换的隔离验证；P05 项目内上传、重复校验
-与容量控制以及 P06 正式解析、快照与重试也已完成。尚未实现正式归档状态机、Final Collection、正式检索问答或端到端验收。已确认以 Chroma 单机
+与容量控制、P06 正式解析/快照/重试以及 P07 手工草稿/字段检查也已完成。尚未实现 AI 建议、正式归档状态机、Final Collection、正式检索问答或端到端验收。已确认以 Chroma 单机
 服务替换 Milvus，详见 `docs/chroma-migration-decision.md`；AV1-C01 已完成 Chroma 独立验证，
-AV1-C02 已完成代码/离线单测迁移；云端完整栈验证随部署决策暂缓，下一步为 P07 手工草稿、字段证据与人工检查。
+AV1-C02 已完成代码/离线单测迁移；云端完整栈验证随部署决策暂缓，下一步为 P08 AI 建议与安全重新生成。
 
 ## 后续通用能力
 

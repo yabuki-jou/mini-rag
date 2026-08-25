@@ -12,7 +12,11 @@ from app.models.common import utc_now
 
 
 # PostgreSQL 业务库使用 JSONB；SQLite 迁移测试仍可使用通用 JSON。
-ARCHIVE_JSON = JSON().with_variant(JSONB(), "postgresql")
+# `None` must be stored as SQL NULL rather than the JSON literal `null` so the
+# field-name check constraints can distinguish an unused value column.
+ARCHIVE_JSON = JSON(none_as_null=True).with_variant(
+    JSONB(none_as_null=True), "postgresql"
+)
 
 
 class ArchiveDocumentStatus(str, Enum):

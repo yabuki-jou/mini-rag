@@ -17,6 +17,8 @@ from app.schemas import (
     ChecklistItemListRead,
     ChecklistItemRead,
     ChecklistItemUpdate,
+    ArchiveDraftRead,
+    ArchiveFieldUpdate,
     ProjectCreate,
     ProcessDocumentRead,
     ProjectPageRead,
@@ -40,6 +42,12 @@ from app.services.document_service import (
     create_project_uploaded_document,
     parse_project_document,
     retry_parse_project_document,
+)
+from app.models import ArchiveFieldName
+from app.services.archive_draft_service import (
+    create_manual_draft,
+    read_document_draft,
+    update_field,
 )
 
 
@@ -113,6 +121,56 @@ def retry_parse_project_document_endpoint(
 ) -> ProcessDocumentRead:
     """仅对 PARSE_FAILED 文档重试解析，不重新上传原文件。"""
     return retry_parse_project_document(document=document, session=session)
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/manual-draft",
+    response_model=ArchiveDraftRead,
+)
+def create_manual_draft_endpoint(
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """为已解析项目文档创建七字段空白人工草稿。"""
+    return create_manual_draft(
+        document=document,
+        actor_id=current_user.id,
+        session=session,
+    )
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/draft",
+    response_model=ArchiveDraftRead,
+)
+def read_document_draft_endpoint(
+    document: ProjectDocumentDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """读取项目文档的人工字段草稿、快照元数据和下一步动作。"""
+    return read_document_draft(document=document, session=session)
+
+
+@router.put(
+    "/{project_id}/documents/{document_id}/fields/{field_name}",
+    response_model=ArchiveDraftRead,
+)
+def update_document_field_endpoint(
+    field_name: ArchiveFieldName,
+    payload: ArchiveFieldUpdate,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """保存单个归档字段、人工检查状态和当前快照证据。"""
+    return update_field(
+        document=document,
+        actor_id=current_user.id,
+        field_name=field_name,
+        payload=payload,
+        session=session,
+    )
 
 
 @router.get("/{project_id}/checklist-items", response_model=ChecklistItemListRead)

@@ -36,6 +36,14 @@ from app.schemas.checklist import (
     ChecklistItemUpdate,
 )
 from app.schemas.document import DocumentRead, FieldSummaryRead, LastErrorRead, ProcessDocumentRead
+from app.schemas.archive_draft import (
+    ArchiveDraftRead,
+    ArchiveFieldUpdate,
+    FieldDraftRead,
+    FieldEvidenceInput,
+    FieldEvidenceRead,
+    ParsedSnapshotRead,
+)
 from app.schemas.health import HealthComponent, HealthResponse
 from app.schemas.project import ProjectCreate, ProjectPageRead, ProjectRead, ProjectUpdate
 from app.schemas.retrieval import (
@@ -53,6 +61,8 @@ __all__ = [
     "AgentSessionCreate",
     "AgentSessionRead",
     "AgentToolCallLogRead",
+    "ArchiveDraftRead",
+    "ArchiveFieldUpdate",
     "AuthAccessTokenRead",
     "AuthLoginRequest",
     "AuthRefreshRequest",
@@ -71,6 +81,9 @@ __all__ = [
     "ChecklistItemUpdate",
     "DocumentRead",
     "FieldSummaryRead",
+    "FieldDraftRead",
+    "FieldEvidenceInput",
+    "FieldEvidenceRead",
     "HealthComponent",
     "HealthResponse",
     "KnowledgeBaseCreate",
@@ -81,6 +94,7 @@ __all__ = [
     "ProjectPageRead",
     "ProjectRead",
     "ProjectUpdate",
+    "ParsedSnapshotRead",
     "RetrievalResultRead",
     "RetrievalTestRequest",
     "RetrievalTestResponse",

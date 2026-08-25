@@ -1,7 +1,7 @@
 # 验收报告
 
 > **范围提示（2026-08-26）：** 本报告记录当前企业知识库与制度检索 Agent 基座，以及
-> 智慧档案 V1 已完成的 AV1-P01～P06、P04 前置模型分层、P04.1 FR-030、P04.2 FR-031
+> 智慧档案 V1 已完成的 AV1-P01～P07、P04 前置模型分层、P04.1 FR-030、P04.2 FR-031
 > 及 P05 FR-032。它不是智慧档案完整业务闭环的验收报告；正式归档、Final Collection、
 > 检索问答和删除恢复均尚未实现或验收。
 >
@@ -26,6 +26,11 @@
 > **P06 更新（2026-08-26）：** 项目文档首次解析、失败记录、专用重试、PDF/DOCX/TXT/MD
 > 路由和重复解析快照保护已通过相关 API/Parser 测试；当前默认全量回归为 `151 passed,
 > 2 skipped, 16 warnings`。
+
+> **P07 更新（2026-08-26）：** 人工草稿创建/读取、七字段值与检查状态、当前快照证据、
+> 人工无证据标记、伪造 AI 来源拒绝、乐观锁和已确认修改后的 `PENDING_RECONFIRMATION`
+> 已通过 API/服务测试；当前默认全量回归为 `164 passed, 2 skipped, 16 warnings`，并通过
+> `compileall`。本步不包含 AI 建议或正式确认。
 
 ## 验收范围
 
@@ -58,12 +63,13 @@
 | AC-010 清单项 API | `checklist_service.py`、`schemas/checklist.py`、`projects.py` | CRUD、版本冲突、确认关联派生、关键字段失效、删除关联/审计和项目隔离 API 测试通过；真实 PostgreSQL 并发竞争未验证 |
 | AC-011 项目内上传 | `document_service.py`、`file_service.py`、`projects.py`、上传测试 | 正常/重复/跨项目/越权/20 MiB/100 份/类型契约通过；真实 PostgreSQL 项目行锁阻止 99→101，并已核对零残留 |
 | AC-012 正式解析与重试 | `document_service.py`、`projects.py`、Parser/项目路由测试 | 成功解析、受控失败、专用重试、四格式路由和重复解析快照保护通过 |
+| AC-013 手工草稿与字段检查 | `archive_draft_service.py`、`archive_draft.py`、`projects.py`、P07 API/服务测试 | 七字段草稿、快照证据、人工来源、空值规则、版本冲突和重新确认入口通过 |
 
 ## 自动化检查
 
 | 检查 | 命令摘要 | 结果 |
 |---|---|---|
-| 全量测试 | `C:\D\venvs\mrh\Scripts\python.exe -m pytest -q -p no:cacheprovider` | `151 passed, 2 skipped, 16 warnings` |
+| 全量测试 | `C:\D\venvs\mrh\Scripts\python.exe -m pytest -q` | `164 passed, 2 skipped, 16 warnings` |
 | P05 PostgreSQL 并发 | `RUN_POSTGRES_CONCURRENCY_TEST=1` + `tests/services/test_document_service_postgres.py` | `1 passed`；99 份时两个并发上传仅一份成功 |
 | P03 相关测试 | 迁移、`ProjectContext`、字段注释契约 | `8 passed` |
 | Python 编译 | `python -m compileall -q app tests migrations scripts` | 通过 |
@@ -87,7 +93,7 @@
 ## 未实现或未验证
 
 - P04.2 的真实 PostgreSQL 并发竞争验证；当前证据为隔离 SQLite/TestClient API 测试。
-- 手工草稿、AI 建议、人工确认、Final Collection、正式检索、问答、物理删除与跨存储恢复。
+- AI 建议、人工正式确认、Final Collection、正式检索、问答、物理删除与跨存储恢复。
 - BGE/Chroma Final Collection 行为、相关性阈值标定，以及 DeepSeek 的 AI 建议/问答质量验收。
 - `POSTGRES_TEST_URL` 的可重复自动化空库迁移测试，以及本轮 Compose 启动和健康检查。
 
@@ -101,6 +107,6 @@
 
 ## 结论
 
-现有 Agent 基座与智慧档案 V1 的 P01～P06、FR-030 项目 API、FR-031 清单项 API 和
+现有 Agent 基座与智慧档案 V1 的 P01～P07、FR-030 项目 API、FR-031 清单项 API 和
 FR-032 项目内上传可以继续作为后续实现前提；正式解析已可用，但不能据此宣称正式归档、
-正式检索或问答已经可用。下一步是 P07 手工草稿、字段证据与人工检查。
+正式检索或问答已经可用。下一步是 P08 AI 建议与安全重新生成。

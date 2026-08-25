@@ -9,7 +9,7 @@
 | 文档类型 | 实施计划（不含实现代码） |
 | 依据 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md`、`docs/api-design.md` |
 | 验证门槛 | `docs/review/verification-freeze-checklist.md`（v3） |
-| 状态 | AV1-P01～P06、P04 前置模型分层、P04.1、P04.2、P05、AV1-C02 本地迁移验证及 AV1-A01 认证隔离验证已完成；P06 已通过项目路由、Parser、重试、重复解析和快照保护测试；后续归档业务 API 尚未实现；云端部署与完整栈资源验证暂定至 V1 完成后 |
+| 状态 | AV1-P01～P07、P04 前置模型分层、P04.1、P04.2、P05、AV1-C02 本地迁移验证及 AV1-A01 认证隔离验证已完成；P07 已通过人工草稿、字段证据、检查状态、乐观锁和重新确认入口测试；AI 建议及后续正式归档 API 尚未实现；云端部署与完整栈资源验证暂定至 V1 完成后 |
 | 更新日期 | 2026-08-24 |
 
 本计划只安排需求编号 `FR-030`～`FR-041` 的智慧档案 V1 工作。它不替代
@@ -325,6 +325,16 @@
 - 七字段仍有待检查、标题/类型为空、版本陈旧、伪造 AI 来源均被拒绝。
 - 已确认档案修改字段或证据后立即退出正式范围；此时尚未要求其已实现正式索引。
 
+**完成结果（2026-08-26）**
+
+- 新增 `POST .../manual-draft`、`GET .../draft` 和 `PUT .../fields/{field_name}`，覆盖
+  `PARSED/SUGGESTION_FAILED → PENDING_CONFIRMATION`、七字段空白草稿、当前快照证据、
+  人工无证据标记、来源伪造拒绝、值列与检查状态规则、乐观锁和
+  `CONFIRMED → PENDING_RECONFIRMATION`。
+- P07 只实现不依赖模型的手工路径，不包含 P08 的 DeepSeek 建议与安全重生成。
+- P07 相关路由/服务测试通过；默认全量回归为 `164 passed, 2 skipped, 16 warnings`，
+  `compileall` 通过。
+
 ### AV1-P08 AI 建议与安全重新生成
 
 **目标与范围**
@@ -433,10 +443,10 @@
 ## 6. 当前状态与下一步
 
 - AV1-P01、AV1-P02、AV1-P03 已完成。P03 已新增归档 SQLModel、`ProjectContext` 所有权依赖与 `0005_archive_v1_schema`～`0008_legacy_business_comments` 前向迁移；目标 PostgreSQL 空库已实际迁移至当前版本，且全部 16 张业务表、143 个字段的注释均可由 PostgreSQL 元数据读取。
-- P03 离线迁移 SQL、SQLite 约束测试和编译已通过。P05 完成后的默认全量回归为 `142 passed, 2 skipped, 16 warnings`；其中 P05 PostgreSQL 并发测试需要显式设置 `RUN_POSTGRES_CONCURRENCY_TEST=1`，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
+- P03 离线迁移 SQL、SQLite 约束测试和编译已通过。P07 完成后的默认全量回归为 `164 passed, 2 skipped, 16 warnings`；其中 PostgreSQL 并发测试需要显式设置 `RUN_POSTGRES_CONCURRENCY_TEST=1`，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
 - P04 前置结构调整已完成：归档 SQLModel 已按 `project.py`、`archive.py`、`checklist.py`、`archive_audit.py` 拆分，`app.models` 公共导入入口与表名、字段、约束保持不变；模型元数据、迁移/授权/注释测试和编译均已通过。本调整不新增迁移，也不实现项目或清单 API。
 - P04.1 FR-030、P04.2 FR-031 与 P05 FR-032 已完成。P05 的上传、重复、容量、类型、越权与跨项目隔离已通过 SQLite/TestClient 契约测试；当前 PostgreSQL 开发库的 99→100 并发验证为一成功、一容量拒绝，UUID 范围测试数据与临时文件均已清理。AV1-C01 的历史独立实验和 AV1-C02 的本地代码/单测/命名空间/Docker
   健康验证均已完成；当前运行和开发基线为本地。云端部署与完整栈资源验证暂定至 V1 功能完成后。
-  P06 已完成首次解析、快照创建、受控失败记录、专用解析重试、四格式路由和快照保护；默认全量回归为 `151 passed, 2 skipped, 16 warnings`。下一步为 AV1-P07 手工草稿、字段证据与人工检查。
+  P06 已完成首次解析、快照创建、受控失败记录、专用解析重试、四格式路由和快照保护；P07 已完成手工草稿、字段证据、人工检查和重新确认入口；默认全量回归为 `164 passed, 2 skipped, 16 warnings`。下一步为 AV1-P08 AI 建议与安全重新生成。
 - AV1-P02 已解除对 AV1-P11 阈值标定和 AV1-P12 问答质量验收的“验收资料缺失”阻塞；
   这些任务仍分别依赖 P09 正式索引和 P11 正式检索实现。
