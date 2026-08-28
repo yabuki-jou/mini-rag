@@ -1,5 +1,6 @@
 """提供 FR-030 项目管理和 FR-031 清单读取 HTTP 接口。"""
 
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -12,15 +13,30 @@ from app.dependencies import (
     SessionDep,
 )
 from app.schemas import (
+    ArchiveDetailRead,
+    ArchiveAuditOperationType,
+    ArchivePageRead,
+    ArchiveRetrievalRequest,
+    ArchiveRetrievalResponse,
+    ArchiveQuestionRequest,
+    ArchiveQuestionResponse,
+    AuditLogPageRead,
     ChecklistItemCreate,
     ChecklistItemCreateResponse,
     ChecklistItemListRead,
     ChecklistItemRead,
     ChecklistItemUpdate,
+    ChecklistLinkCreate,
+    ChecklistLinkListRead,
+    ChecklistLinkRead,
+    ChecklistLinkSuggestionListRead,
+    ArchiveConfirmationRequest,
     ArchiveDraftRead,
+    ArchiveSuggestionRegenerateRequest,
     ArchiveFieldUpdate,
     ProjectCreate,
     ProcessDocumentRead,
+    ProcessDocumentPageRead,
     ProjectPageRead,
     ProjectRead,
     ProjectUpdate,
@@ -43,12 +59,39 @@ from app.services.document_service import (
     parse_project_document,
     retry_parse_project_document,
 )
-from app.models import ArchiveFieldName
+from app.models import (
+    ArchiveDocumentStatus,
+    ArchiveDocumentType,
+    ArchiveFieldName,
+    ProjectStage,
+)
 from app.services.archive_draft_service import (
     create_manual_draft,
     read_document_draft,
     update_field,
 )
+from app.services.archive_suggestion_service import (
+    create_suggestions,
+    regenerate_suggestions,
+    retry_suggestions,
+)
+from app.services.archive_confirmation_service import confirm_document
+from app.services.archive_cancel_confirmation_service import cancel_confirmation
+from app.services.archive_catalog_service import (
+    list_audit_logs,
+    list_formal_archives,
+    list_process_documents,
+    read_formal_archive,
+)
+from app.services.archive_checklist_service import (
+    create_document_link,
+    delete_document_link,
+    list_document_links,
+    list_link_suggestions,
+)
+from app.services.archive_retrieval_service import retrieve_archive_chunks
+from app.services.archive_question_service import answer_archive_question
+from app.services.archive_document_delete_service import delete_archive_document
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -95,6 +138,136 @@ async def create_project_document_endpoint(
         upload=file,
         project_id=project_context.project_id,
         kb_id=project_context.kb_id,
+        session=session,
+    )
+
+
+@router.delete(
+    "/{project_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_project_document_endpoint(
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> Response:
+    """物理删除项目文档及其档案、文件、向量和关联。"""
+    delete_archive_document(
+        document=document,
+        actor_id=current_user.id,
+        session=session,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{project_id}/documents", response_model=ProcessDocumentPageRead)
+def list_project_documents_endpoint(
+    project_context: ProjectContextDep,
+    session: SessionDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status: ArchiveDocumentStatus | None = None,
+) -> ProcessDocumentPageRead:
+    """分页读取项目文档处理状态，包含未确认和失败文档。"""
+    return list_process_documents(
+        project_id=project_context.project_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+        session=session,
+    )
+
+
+@router.get("/{project_id}/archives", response_model=ArchivePageRead)
+def list_project_archives_endpoint(
+    project_context: ProjectContextDep,
+    session: SessionDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    document_type: ArchiveDocumentType | None = None,
+    project_stage: ProjectStage | None = None,
+    document_date_from: date | None = None,
+    document_date_to: date | None = None,
+    document_date_is_null: bool = False,
+    authoring_organization: str | None = None,
+) -> ArchivePageRead:
+    """分页读取没有删除阻断的正式档案目录。"""
+    return list_formal_archives(
+        project_id=project_context.project_id,
+        page=page,
+        page_size=page_size,
+        document_type=document_type,
+        project_stage=project_stage,
+        document_date_from=document_date_from,
+        document_date_to=document_date_to,
+        document_date_is_null=document_date_is_null,
+        authoring_organization=authoring_organization,
+        session=session,
+    )
+
+
+@router.get("/{project_id}/archives/{document_id}", response_model=ArchiveDetailRead)
+def get_project_archive_endpoint(
+    document: ProjectDocumentDep,
+    session: SessionDep,
+) -> ArchiveDetailRead:
+    """读取正式档案详情和七个字段证据；非正式档案统一隐藏。"""
+    return read_formal_archive(document=document, session=session)
+
+
+@router.get("/{project_id}/audit-logs", response_model=AuditLogPageRead)
+def list_project_audit_logs_endpoint(
+    project_context: ProjectContextDep,
+    session: SessionDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    operation_type: ArchiveAuditOperationType | None = None,
+) -> AuditLogPageRead:
+    """分页读取当前项目的脱敏业务审计记录。"""
+    return list_audit_logs(
+        project_id=project_context.project_id,
+        page=page,
+        page_size=page_size,
+        operation_type=operation_type,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/archive-retrieval",
+    response_model=ArchiveRetrievalResponse,
+)
+def retrieve_project_archive_endpoint(
+    payload: ArchiveRetrievalRequest,
+    project_context: ProjectContextDep,
+    session: SessionDep,
+) -> ArchiveRetrievalResponse:
+    """仅在当前项目正式档案范围内检索可追溯原文证据。"""
+    return retrieve_archive_chunks(
+        user_id=project_context.user_id,
+        project_id=project_context.project_id,
+        kb_id=project_context.kb_id,
+        query=payload.query,
+        top_k=payload.top_k,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/archive-questions",
+    response_model=ArchiveQuestionResponse,
+)
+def ask_project_archive_question_endpoint(
+    payload: ArchiveQuestionRequest,
+    project_context: ProjectContextDep,
+    session: SessionDep,
+) -> ArchiveQuestionResponse:
+    """基于当前项目正式证据生成带引用回答；无依据时直接拒答。"""
+    return answer_archive_question(
+        user_id=project_context.user_id,
+        project_id=project_context.project_id,
+        kb_id=project_context.kb_id,
+        question=payload.question,
         session=session,
     )
 
@@ -171,6 +344,161 @@ def update_document_field_endpoint(
         payload=payload,
         session=session,
     )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/suggestions",
+    response_model=ArchiveDraftRead,
+)
+def create_document_suggestions_endpoint(
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """基于当前解析快照生成首次 AI 字段建议。"""
+    return create_suggestions(
+        document_id=document.id,
+        actor_id=current_user.id,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/suggestions/retry",
+    response_model=ArchiveDraftRead,
+)
+def retry_document_suggestions_endpoint(
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """仅对建议失败文档重试 AI 字段建议。"""
+    return retry_suggestions(
+        document_id=document.id,
+        actor_id=current_user.id,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/suggestions/regenerate",
+    response_model=ArchiveDraftRead,
+)
+def regenerate_document_suggestions_endpoint(
+    payload: ArchiveSuggestionRegenerateRequest,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ArchiveDraftRead:
+    """仅在无人工编辑且版本匹配时安全重新生成 AI 建议。"""
+    return regenerate_suggestions(
+        document_id=document.id,
+        actor_id=current_user.id,
+        expected_version=payload.expected_version,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/confirm",
+    response_model=ProcessDocumentRead,
+)
+def confirm_project_document_endpoint(
+    payload: ArchiveConfirmationRequest,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ProcessDocumentRead:
+    """校验人工确认前置条件、转为 CONFIRMED 并触发内部 INDEX。"""
+    return confirm_document(
+        document=document,
+        actor_id=current_user.id,
+        payload=payload,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/cancel-confirmation",
+    response_model=ProcessDocumentRead,
+)
+def cancel_project_document_confirmation_endpoint(
+    payload: ArchiveConfirmationRequest,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ProcessDocumentRead:
+    """取消确认、退出正式范围并清理 Final Chunk。"""
+    return cancel_confirmation(
+        document=document,
+        actor_id=current_user.id,
+        payload=payload,
+        session=session,
+    )
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/checklist-link-suggestions",
+    response_model=ChecklistLinkSuggestionListRead,
+)
+def list_document_checklist_link_suggestions_endpoint(
+    document: ProjectDocumentDep,
+    session: SessionDep,
+) -> ChecklistLinkSuggestionListRead:
+    """按人工确认的类型和阶段返回清单关联建议。"""
+    return list_link_suggestions(document=document, session=session)
+
+
+@router.get(
+    "/{project_id}/documents/{document_id}/checklist-links",
+    response_model=ChecklistLinkListRead,
+)
+def list_document_checklist_links_endpoint(
+    document: ProjectDocumentDep,
+    session: SessionDep,
+) -> ChecklistLinkListRead:
+    """读取档案已有的确认或失效清单关联。"""
+    return list_document_links(document=document, session=session)
+
+
+@router.post(
+    "/{project_id}/documents/{document_id}/checklist-links",
+    response_model=ChecklistLinkRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_document_checklist_link_endpoint(
+    payload: ChecklistLinkCreate,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> ChecklistLinkRead:
+    """以文档和清单项版本号为前提人工确认档案关联。"""
+    return create_document_link(
+        document=document,
+        actor_id=current_user.id,
+        payload=payload,
+        session=session,
+    )
+
+
+@router.delete(
+    "/{project_id}/documents/{document_id}/checklist-links/{link_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_document_checklist_link_endpoint(
+    link_id: UUID,
+    document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> Response:
+    """删除档案清单关联并写入脱敏审计。"""
+    delete_document_link(
+        document=document,
+        link_id=link_id,
+        actor_id=current_user.id,
+        session=session,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{project_id}/checklist-items", response_model=ChecklistItemListRead)

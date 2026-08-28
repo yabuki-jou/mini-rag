@@ -2,17 +2,18 @@
 
 从空目录手写的企业知识库 RAG 与只读 Agent 后端练习项目。当前运行时代码使用
 FastAPI、SQLModel、PostgreSQL、Alembic、LangChain/LangGraph、Chroma、本地 BGE 与
-DeepSeek，通过 Swagger 演示上传、解析、检索、引用问答、Agent 会话和脱敏工具审计。
+DeepSeek。Swagger 用于 API 契约诊断；AV1-P14 将相邻 `mini-rag-milvus-vue` 作为本地工作台，演示上传、解析、检索、引用问答和脱敏审计。
 全部向量能力已迁移到 Chroma HTTP 客户端与单机服务配置。当前运行和开发基线是本地环境：
 Chroma 的本机命名空间、范围过滤、精确删除，以及 Docker API、PostgreSQL、Chroma 与本地 BGE
 健康连通均已验证。一次云主机 Chroma 独立实验仅保留为历史可行性证据；是否部署云端、采用何种
 拓扑及资源规格均暂定，待 V1 全部功能完成后再决定，当前不能把项目描述为已完成云端部署。
 
 下一阶段唯一业务方向是“智慧档案与企业文档智能”。需求、架构、数据库、API 与实施计划
-基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03
-数据库/模型/公共授权基础、P04 前置模型分层调整、P04.1 项目 CRUD/模板复制 API、
-P04.2 清单项 CRUD/派生状态 API，以及 P05 项目内上传/重复校验/容量控制已完成。归档表迁移
-`0005`～`0008` 已在目标 PostgreSQL 空库实际前向迁移；P06 已完成首次解析、快照创建、受控失败记录、专用解析重试、四格式路由和重复解析快照保护；P07 已完成手工草稿、七字段检查、快照证据、乐观锁和重新确认入口。AI 建议、正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
+基线已确认；AV1-P01～P08、P09 确认—INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、
+P12 证据问答和 P13 物理删除的实现切片已完成。P09 已完成真实确认—INDEX 路由纵向链路、
+真实 Chroma/BGE canary 与取消确认清理；P11 已完成真实单文档 canary（512 维 cosine、命中 1 条、
+10 次请求 P95 约 125.97 ms）。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储
+故障恢复和完整 Vue 工作台端到端验收仍待 P14。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
 已经删除，不再提供余额、申请、人工确认或决定接口。
 
 ## 架构
@@ -61,7 +62,7 @@ flowchart LR
 - Agent 会话所有权、LangGraph 多轮消息恢复、制度检索 Tool Calling。
 - 工具参数/结果脱敏、耗时和稳定错误码审计。
 - Alembic 管理 PostgreSQL Schema；当前本地 Compose 提供 PostgreSQL 与内部 Chroma 服务。云端部署策略和资源验收暂定，待 V1 完成后再评估。
-- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制、首次解析/受控失败记录/专用解析重试/四格式路由，以及 P07 手工草稿和字段检查；AI 建议与正式归档业务 API 尚未实现。
+- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制、首次解析/受控失败记录/专用解析重试/四格式路由、P07 手工草稿和字段检查、P08 AI 建议/失败重试/安全 regenerate，以及 P09 确认/INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、P12 证据问答和 P13 物理删除切片；真实确认—INDEX、Chroma/BGE canary、取消确认清理和单文档 P95 基线已通过。相邻 Vue 工作台已接入认证、项目 CRUD、FR-031 清单 CRUD，以及 FR-032/033 项目级上传、处理列表、首次解析和专用解析重试的 DTO/API、Store 与页面，并通过正式 `5173/api → 8000` 代理 canary；两份虚构 TXT 覆盖 `UPLOADED → PARSED` 和 `PARSE_TEXT_UNAVAILABLE → PARSE_FAILED`，跨存储清理在 Chroma 心跳恢复后核对为零。固定问题集质量、DeepSeek 质量、P13 真实故障恢复、FR-034～FR-041 前端接入和完整端到端验收仍待 P14。
 
 ## 数据库表
 
@@ -135,6 +136,9 @@ API 默认地址为 `http://127.0.0.1:8000`，Swagger 为 `/docs`。
 8. `POST /agent-sessions/{session_id}/messages`
 9. `GET /agent-sessions/{session_id}/messages`
 10. `GET /agent-sessions/{session_id}/tool-calls`
+11. `GET /projects/{project_id}/documents`、`GET /projects/{project_id}/archives`
+12. `POST /projects/{project_id}/archive-retrieval`、`POST /projects/{project_id}/archive-questions`
+13. `DELETE /projects/{project_id}/documents/{document_id}`、`GET /projects/{project_id}/audit-logs`
 
 除注册、登录、刷新和健康检查外，受保护接口必须使用
 `Authorization: Bearer <Access Token>`。`X-User-ID` 不再被接受。首次运行认证前，
@@ -181,4 +185,8 @@ docker compose config --quiet
 - 没有 OCR、表格专用解析、混合检索、Rerank、多 Agent 或任务队列。
 - 智慧档案的字段模型、分类与缺失规则、人工确认点、评测集和数据库设计基线已确认；
  Parser 冻结规则、虚构验收资料、迁移、模型和项目授权上下文已创建并验证；
-  项目 CRUD/模板复制、清单项 API、项目内上传、首次解析、解析重试和四格式路由已实现；正式归档流程、Final Collection 和端到端质量验收尚未实现。
+ 项目 CRUD/模板复制、清单项 API、项目内上传、解析、P08 AI 建议、P09 确认/INDEX/取消确认、
+ P10 清单关联/目录/审计、P11 正式检索、P12 证据问答和 P13 物理删除实现切片已完成。当前仍未
+ 验收固定问题集阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复和完整 Vue 工作台端到端演示。
+
+相邻前端目录为 `../mini-rag-milvus-vue`。它是 P14 的本地联调界面，不直接连接 PostgreSQL、Chroma、文件系统或 DeepSeek；所有业务请求仍经由 FastAPI 的 Bearer 认证与项目授权边界。

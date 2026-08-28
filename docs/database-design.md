@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 |---|---|
 | 对应基线 | `docs/requirements.md` V1.2 的 FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020；`docs/architecture.md` 已确认架构基线 |
-| 文档状态 | AV1-P03 归档模型已实现；AV1-A01 已新增用户凭据、认证会话模型与 `0010` 前向迁移，真实 PostgreSQL 迁移待显式验证；P06 解析/快照/重试和 P07 手工草稿/字段证据 API 已实现，AI 建议与正式确认 API 尚未实现 |
-| 更新日期 | 2026-08-26 |
+| 文档状态 | AV1-P03 模型/迁移已实现；AV1-A01、P06～P09 已完成对应切片；P10～P13 的清单关联、正式目录、正式检索、证据问答、物理删除和审计查询切片已实现。真实 PostgreSQL/Chroma 纵向证据和 P11 单文档 P95 已记录；固定质量门槛、真实 DeepSeek、真实跨存储恢复和端到端验收仍待 P14 |
+| 更新日期 | 2026-08-27 |
 | PostgreSQL 角色 | 归档业务事实的唯一来源 |
 | Chroma 角色 | 仅保存可重建的、已确认档案 Final Chunk 索引 |
 
@@ -14,8 +14,8 @@
 已通过 `0005_archive_v1_schema` 创建归档表；`0006_archive_jsonb_and_comments` 将归档 JSON
 结构标准化为 JSONB 并写入归档表/字段注释，`0007_project_version_comment` 补齐项目乐观锁
 字段注释，`0008_legacy_business_comments` 补齐既有 RAG、聊天和 Agent 业务表注释，`0010_account_password_authentication`
-增加认证凭据、会话表及其注释。这些迁移
-不转换既有企业制度检索 Agent 的文档数据，也不表示后续正式归档业务 API 已经实现。
+增加认证凭据、会话表及其注释。这些迁移不转换既有企业制度检索 Agent 的文档数据；正式归档
+业务 API 的实现状态以 `docs/api-design.md` 和 `docs/archive-v1-implementation-plan.md` 为准。
 
 ## 2. 设计原则与存储边界
 
@@ -500,12 +500,34 @@ Collection 初始化、健康检查和重建验证必须随部署说明单独执
 再插入的非原子计数。删除全部完成并实际移除文档记录后才减一；因此解析失败、待确认
 和删除失败的文档都占用容量，符合需求中的“未删除文档”定义。
 
+> **AV1-P09 当前学习切片边界（2026-08-26）：** 当前实现先验证人工确认前置条件并写入
+> `CONFIRMED`、确认人/时间、当前快照指纹和脱敏审计；暂不执行上表中的 Final Chunk/Chroma
+> 写入，`final_chunk_count` 保持为 0。正式可见性、`ArchiveOperation(INDEX)` 和 Final
+> Collection 仍是后续切片，不能把本切片的状态转换测试当作向量索引或正式检索验收。
+
+> **第二个基础切片边界：** `archive_final_chunks` 的 Collection 配置、Final Chunk 稳定构建和
+> upsert 元数据契约已在 Mock Chroma 测试中验证；真实 Embedding、`ArchiveOperation(INDEX)`
+> 事务和跨 PostgreSQL/Chroma 一致性仍未实现。
+
+> **第三个基础切片边界：** `index_confirmed_document` 已验证 `ArchiveOperation(INDEX)` 的运行中
+> 互斥、失败落库、同快照幂等和成功后的 `final_index_snapshot_hash`/`final_chunk_count` 回写。
+> 该服务尚未接入确认路由，且真实 Embedding/Chroma、跨存储补偿、取消确认与正式目录闸门仍未完成；
+> 因此 `CONFIRMED` 不能单独视为已完成正式索引。
+
+> **第四个基础切片边界：** 确认服务现在会在确认事务提交后调用内部 INDEX 编排；INDEX 失败会以
+> 稳定错误返回，数据库中保留 `CONFIRMED + FAILED INDEX` 以支持恢复。测试隔离了外部 Chroma/Embedding，
+> 真实写入、跨存储补偿、取消确认和正式目录闸门仍未完成。
+
+> **取消确认基础切片边界：** 新增取消确认服务先提交 `PENDING_RECONFIRMATION` 和脱敏审计，清除确认/索引事实，
+> 再按 `user_id + project_id + kb_id + document_id` 清理 Final Chunk；外部清理失败仍保守排除正式范围。
+> 当前 API/服务测试隔离 Chroma，真实取消清理和正式目录闸门仍待验收。
+
 字段草稿、确认和清单项更新使用聚合/资源 `version` 做乐观锁；客户端使用旧版本提交
 时返回业务冲突。数据库/API 设计后续需统一版本字段在请求和响应中的传递方式。
 
 ## 11. 迁移策略
 
-已在现有 `0004_remove_leave_domain` 后新增 `0005_archive_v1_schema`，建立 V1 所需结构与约束；随后通过 `0006_archive_jsonb_and_comments` 标准化 JSONB 列并补齐归档 PostgreSQL 表/字段注释，`0007_project_version_comment` 补齐项目版本字段注释，`0008_legacy_business_comments` 补齐既有业务表和字段注释。`0009_chroma_vector_comments` 后的 `0010_account_password_authentication` 已新增 `users.username`、`users.password_hash` 与 `auth_sessions` 的前向迁移及 PostgreSQL 注释；它不把旧知识库文档自动变为项目档案，也不为旧用户伪造密码。`0010` 尚待在真实 PostgreSQL 开发库显式执行验证。
+已在现有 `0004_remove_leave_domain` 后新增 `0005_archive_v1_schema`，建立 V1 所需结构与约束；随后通过 `0006_archive_jsonb_and_comments` 标准化 JSONB 列并补齐归档 PostgreSQL 表/字段注释，`0007_project_version_comment` 补齐项目版本字段注释，`0008_legacy_business_comments` 补齐既有业务表和字段注释。`0009_chroma_vector_comments` 后的 `0010_account_password_authentication` 已新增 `users.username`、`users.password_hash` 与 `auth_sessions` 的前向迁移及 PostgreSQL 注释；它不把旧知识库文档自动变为项目档案，也不为旧用户伪造密码。`0010` 已在当前 PostgreSQL 开发库实际执行并核对结构。
 
 迁移顺序：
 
@@ -540,6 +562,6 @@ API 契约已在 `docs/api-design.md` 固定：版本值使用请求体、删除
 索引参数和相关性阈值必须按 `docs/review/verification-freeze-checklist.md` 的门槛 2
 验证后冻结。
 
-当前已创建 SQLModel 与 `0005`～`0008` Alembic 迁移。项目/清单 Router、Service 和 API
-测试属于 AV1-P04；上传、状态机、Final Collection 和跨存储恢复属于后续任务，不能因
-数据库结构已经存在而视为已实现。
+当前已创建 SQLModel 与 `0005`～`0010` Alembic 迁移。项目/清单、上传、状态机、Final Collection、
+目录、检索、问答和删除 Router/Service 已完成对应实现切片；固定质量门槛、真实 DeepSeek、真实
+跨存储故障恢复和完整端到端验收仍不能因数据库结构存在而视为已完成。

@@ -6,15 +6,15 @@
 
 ## 项目定位
 
-本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 是当前唯一操作界面，不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
+本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；AV1-P14 将相邻的 `mini-rag-milvus-vue` 作为本地 Vue 联调工作台，但不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
 
-现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01 Parser 规则冻结、AV1-P02 虚构验收资料与 Ground Truth、AV1-P03 数据库/模型/公共授权基础、P04 前置模型分层、P04.1 项目 CRUD/模板复制 API、P04.2 清单项 CRUD/派生状态、P05 项目内上传/重复校验/容量控制、P06 正式解析/快照/重试、P07 手工草稿/字段证据/人工检查，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成。P05 已通过 SQLite/TestClient 契约测试和当前 PostgreSQL 开发库的项目行锁并发验证，P06 已通过项目路由、Parser、失败重试、四格式和快照保护测试；测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。P07 已完成；下一任务为 AI 建议与安全重新生成（P08）。正式归档状态机、Chroma Final 索引和端到端验收尚未实现。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含前端、OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署。
+现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01～P08、P09 确认/取消确认与 Final Collection 基础、P10 清单关联/目录/审计、P11 正式检索服务、P12 证据问答服务、P13 物理删除服务，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成对应实现切片。P09 已完成真实确认—INDEX 路由纵向链路、真实 Chroma/BGE canary 和取消确认清理验证；P11 已完成一次真实单文档检索 canary（512 维、cosine、命中 1 条、10 次请求 P95 约 125.97 ms）；P10～P13 的确定性服务/API 测试已通过。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复，以及 Vue 工作台的完整端到端验收仍待 P14。测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。当前下一步为 P14 全链路验收、文档收口和最终回归。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含 OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署；P14 的相邻 Vue 工作台例外仅限本地联调，不扩大为公开前端产品。
 
 全量 Chroma 迁移（旧制度检索和后续智慧档案）已确认；AV1-C01 已完成一次云主机上的 Chroma 独立内网、过滤、精确删除、容器重启持久化与空闲资源实验，AV1-C02 已完成运行时代码、离线单测、本机命名空间和本机 Docker 健康验证。云端完整栈资源验证不再阻塞当前开发，随部署决策一并暂缓至 V1 功能完成后。后续正式索引为 Chroma Final Collection；不得将历史 Milvus 验证、C01 空闲内存或本机健康检查写成完整部署通过。
 
 ## 企业知识库 Agent 当前范围
 
-目标是完成可通过 Swagger 演示、可写入简历的单 Agent 业务闭环，而不是追求 Tool 或 Agent 数量。
+目标是完成可通过 Vue 工作台与 Swagger 演示、可写入简历的单 Agent 业务闭环，而不是追求 Tool 或 Agent 数量。
 
 当前唯一工具：
 

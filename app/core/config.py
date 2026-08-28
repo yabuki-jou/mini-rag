@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from psycopg import postgres
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -31,9 +31,11 @@ class Settings(BaseSettings):
         chroma_tenant: Chroma 服务端租户名称。
         chroma_database: Chroma 租户内数据库名称。
         chroma_collection: 保存既有知识库 Chunk 的 Chroma Collection 名称。
+        chroma_final_collection: 保存智慧档案正式 Chunk 的独立 Chroma Collection 名称。
         embedding_model_path: 本地 BGE 模型目录。
         embedding_device: Embedding 运行设备。
         embedding_dimension: Embedding 模型输出的向量维度。
+        archive_embedding_context_mode: 正式档案 Chunk 向量中确认字段的表示方式。
         chunk_size: 每个 Chunk 的目标字符数。
         chunk_overlap: 相邻 Chunk 重复保留的字符数。
         deepseek_api_key: DeepSeek API 密钥。
@@ -78,6 +80,7 @@ class Settings(BaseSettings):
     chroma_tenant: str = "mini_rag_tenant"
     chroma_database: str = "mini_rag_chroma"
     chroma_collection: str = "mini_rag_knowledge_chunks_v1"
+    chroma_final_collection: str = "archive_final_chunks"
 
     # 本地 Embedding 模型及其输出维度配置。
     embedding_model_path: Path = Path(
@@ -85,6 +88,7 @@ class Settings(BaseSettings):
     )
     embedding_device: str = "cpu"
     embedding_dimension: int = Field(default=512, gt=0)
+    archive_embedding_context_mode: Literal["none", "values", "labeled"] = "labeled"
 
     # 递归字符切分器使用的目标大小和重叠字符数。
     chunk_size: int = Field(default=800, gt=0)

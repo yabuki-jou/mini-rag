@@ -44,6 +44,32 @@ from app.schemas.archive_draft import (
     FieldEvidenceRead,
     ParsedSnapshotRead,
 )
+from app.schemas.archive_suggestion import ArchiveSuggestionRegenerateRequest
+from app.schemas.archive_confirmation import ArchiveConfirmationRequest
+from app.schemas.archive_retrieval import (
+    ArchiveRetrievalItemRead,
+    ArchiveRetrievalRequest,
+    ArchiveRetrievalResponse,
+)
+from app.schemas.archive_question import (
+    ArchiveAnswerStatus,
+    ArchiveQuestionRequest,
+    ArchiveQuestionResponse,
+)
+from app.schemas.archive_catalog import (
+    ArchiveAuditOperationType,
+    ArchiveDetailRead,
+    ArchivePageRead,
+    ArchiveSummaryRead,
+    AuditLogPageRead,
+    AuditLogRead,
+    ChecklistLinkCreate,
+    ChecklistLinkListRead,
+    ChecklistLinkRead,
+    ChecklistLinkSuggestionListRead,
+    ChecklistLinkSuggestionRead,
+    ProcessDocumentPageRead,
+)
 from app.schemas.health import HealthComponent, HealthResponse
 from app.schemas.project import ProjectCreate, ProjectPageRead, ProjectRead, ProjectUpdate
 from app.schemas.retrieval import (
@@ -62,7 +88,21 @@ __all__ = [
     "AgentSessionRead",
     "AgentToolCallLogRead",
     "ArchiveDraftRead",
+    "ArchiveAuditOperationType",
+    "ArchiveConfirmationRequest",
+    "ArchiveDetailRead",
+    "ArchivePageRead",
+    "ArchiveSummaryRead",
+    "AuditLogPageRead",
+    "AuditLogRead",
     "ArchiveFieldUpdate",
+    "ArchiveSuggestionRegenerateRequest",
+    "ArchiveRetrievalItemRead",
+    "ArchiveRetrievalRequest",
+    "ArchiveRetrievalResponse",
+    "ArchiveAnswerStatus",
+    "ArchiveQuestionRequest",
+    "ArchiveQuestionResponse",
     "AuthAccessTokenRead",
     "AuthLoginRequest",
     "AuthRefreshRequest",
@@ -79,6 +119,11 @@ __all__ = [
     "ChecklistItemListRead",
     "ChecklistItemRead",
     "ChecklistItemUpdate",
+    "ChecklistLinkCreate",
+    "ChecklistLinkListRead",
+    "ChecklistLinkRead",
+    "ChecklistLinkSuggestionListRead",
+    "ChecklistLinkSuggestionRead",
     "DocumentRead",
     "FieldSummaryRead",
     "FieldDraftRead",
@@ -90,6 +135,7 @@ __all__ = [
     "KnowledgeBaseRead",
     "LastErrorRead",
     "ProcessDocumentRead",
+    "ProcessDocumentPageRead",
     "ProjectCreate",
     "ProjectPageRead",
     "ProjectRead",

@@ -6,13 +6,14 @@
 |---|---|
 | 对应基线 | FR-019～FR-041、BR-008～BR-029、NFR-011～NFR-020 |
 | 依赖设计 | `docs/requirements.md`、`docs/architecture.md`、`docs/database-design.md` |
-| 文档状态 | API 设计基线已确认；AV1-A01 账号密码认证接口、Bearer 身份切换及隔离测试已实现；`0010` 已在当前 PostgreSQL 开发库实际迁移并核对结构。FR-030 项目 CRUD/模板复制、FR-031 清单项 CRUD/派生状态、FR-032 项目内上传、FR-033 四格式解析/失败记录/专用重试和 FR-035 手工草稿/字段检查已实现；FR-034 AI 建议及 FR-036 起后续正式归档接口尚未实现 |
-| 更新日期 | 2026-08-26 |
-| 操作界面 | Swagger/OpenAPI 与 API 客户端 |
+| 文档状态 | API 设计基线已确认；AV1-A01、FR-030～FR-036 已实现；FR-037/038/039/040/041 的清单关联、处理列表、正式目录、正式检索、证据问答、物理删除和审计查询切片已实现并通过确定性测试。固定检索质量、真实 DeepSeek 质量、P13 真实跨存储故障恢复和完整端到端验收仍待 P14 |
+| 更新日期 | 2026-08-27 |
+| 操作界面 | P14 相邻 Vue 工作台（Vite `/api` 代理）与 Swagger/OpenAPI 契约诊断 |
 
 本文件定义智慧档案 V1 的目标 HTTP 契约。当前实际代码已提供项目 CRUD、清单项
-`GET/POST/PATCH/DELETE`、项目内上传、首次解析、解析重试和人工草稿/字段检查；AI 建议、正式归档、正式目录、问答和审计查询接口仍未实现，
-不能作为已可调用 API 宣传。
+`GET/POST/PATCH/DELETE`、项目内上传、首次解析、解析重试、AI 建议/失败重试/安全 regenerate、
+人工草稿/字段检查、`confirm` 和 `cancel-confirmation` 调用链、正式归档目录、清单关联、审计查询、正式检索、
+证据问答和物理删除路由；当前仍不能把固定问题集质量、真实 DeepSeek 质量或完整业务闭环写成已验收。
 
 ## 2. 范围与路由边界
 
@@ -21,10 +22,10 @@
 | 接口组 | 路径前缀 | 当前状态 | 用途 |
 |---|---|---|---|
 | 认证与旧知识库/Agent 基座 | `/auth`、`/knowledge-bases`、`/agent-sessions` 等 | 认证接口和 Bearer 保护已实现；其余以当前代码为准 | 身份、制度检索、旧 RAG 与单 Agent 演示 |
-| 智慧档案 V1 | `/projects` | 已实现 FR-030/031/032/033 与 FR-035 手工草稿/字段检查；AI 建议、正式目录与问答仍为设计 | 工程项目归档、清单、正式目录与问答 |
+| 智慧档案 V1 | `/projects` | FR-030～FR-041 的路由切片已实现；固定检索质量、真实 DeepSeek、跨存储故障恢复和端到端验收仍待 P14 | 工程项目归档、清单、正式目录、检索、问答与审计 |
 
-智慧档案接口不得复用旧的 `/knowledge-bases/{kb_id}/documents` 作为业务入口；客户端
-只提交 `project_id`。服务端从项目所有权校验获取 `user_id + project_id + kb_id` 的
+智慧档案接口不得复用旧的 `/knowledge-bases/{kb_id}/documents` 作为业务入口；Vue 工作台和其他客户端
+只提交路径中的 `project_id` 及本接口定义的业务字段。服务端从项目所有权校验获取 `user_id + project_id + kb_id` 的
 `ProjectContext`，不接受客户端提交或覆盖其中任何身份字段。
 
 ### 2.2 路由总览
@@ -730,4 +731,34 @@ Pydantic Enum 约束上述 API 值，不能接受自由字符串。
    转为 `PENDING_RECONFIRMATION`。
 
 实施计划已生成，AV1-P01～P03、P04 前置模型分层、P04.1 FR-030、P04.2 FR-031 与 P05 FR-032 已完成。
-**AV1-P07 手工草稿、字段证据与人工检查已完成**；已验证七字段空白草稿、当前快照证据、人工来源、检查状态、版本冲突和重新确认入口。下一步为 AV1-P08 AI 建议；不得提前实现正式归档、检索或问答流程。
+**AV1-P08 AI 建议与安全重新生成已完成**；已验证首次建议、失败重试、当前快照证据、连接/超时一次重试、无效输出失败状态、人工覆盖保护、模型调用后的版本冲突和 regenerate 审计。fake 模型只证明确定性 API 契约，不代表 DeepSeek 质量。
+
+> 下列 P09 分阶段说明保留历史切片边界；当前 P09～P13 状态以本节末尾“当前实现更新（2026-08-27）”为准。
+
+**AV1-P09 第一个确认切片已完成**；`POST .../confirm` 已验证人工确认前置条件、版本冲突、`CONFIRMED` 状态转换、当前快照指纹、重复确认幂等和脱敏 `ARCHIVE_CONFIRMED` 审计。本切片明确不写 Chroma Final Collection、不生成 Final Chunk、不提供正式目录或正式检索；后续实现必须补齐 `ArchiveOperation(INDEX)`、Final Collection 和取消确认，才能宣称完整 FR-036/FR-038/FR-039。
+
+**AV1-P09 第二个基础切片已完成**；已验证当前快照到 Final Chunk 的确定性构建，以及独立
+`archive_final_chunks` Collection 的 cosine 配置和服务端隔离/快照元数据 upsert 契约。测试使用
+Mock Chroma，仅证明调用参数和稳定错误映射；真实 Chroma 写入、Embedding、`INDEX` 事务、
+取消确认和正式检索仍未实现。
+
+**AV1-P09 第三个基础切片已完成**；新增内部 `index_confirmed_document` 服务，验证已确认文档的
+`ArchiveOperation(INDEX)` 创建、运行中操作互斥、失败状态/错误摘要落库、同快照成功幂等和成功时的
+Final Chunk 数量/快照哈希回写。服务会按项目所有者注入 `user_id`，但当前仍由内部调用，确认路由
+尚未自动触发它；测试使用 Mock Chroma/Embedding，真实外部写入、跨存储补偿、取消确认和正式检索
+仍未实现。
+
+**AV1-P09 第四个基础切片已完成**；确认服务在确认事务提交并刷新状态后调用内部 INDEX 服务，
+INDEX 的 `AppError` 会沿用稳定错误码返回，确认路由测试通过默认 stub 隔离外部依赖，且已确认文档
+已有 Final Chunk 的幂等确认不会重复触发索引；确认后索引未完成时同版本请求会进入恢复重试。该切片仍未执行真实 Chroma/Embedding，正式目录和正式检索
+仍未实现。
+
+**AV1-P09 取消确认基础切片已完成**；新增 `POST .../cancel-confirmation`，使用当前版本校验，
+先提交 `PENDING_RECONFIRMATION`、清除确认/索引事实并写入脱敏取消审计，再清理 Final Chunk；
+清理失败时仍保守排除正式范围并返回稳定错误。当前测试隔离外部清理，真实取消—Chroma 清理和正式目录仍待验收。
+
+**当前实现更新（2026-08-27）**；P09 已完成真实确认—INDEX 路由链路和取消确认清理验证；P10 的
+处理列表、正式目录/详情、清单关联和审计查询，P11 的正式范围检索，P12 的证据问答，以及 P13 的
+物理删除路由均已实现并通过确定性 API/服务测试。P11 真实单文档 canary 的 P95 约 `125.97 ms`，
+但固定问题集阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复和完整 Vue 工作台端到端验收
+仍未完成。审计 `operation_type` 查询现由 `ArchiveAuditOperationType` 枚举约束，未知值返回 422。

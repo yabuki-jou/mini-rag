@@ -166,6 +166,7 @@ app/
 ```mermaid
 flowchart LR
     Swagger["Swagger / API Client"] --> Router["FastAPI Routers"]
+    Vue["P14 Vue Workspace<br/>via Vite /api proxy"] --> Router
     Router --> Access["Project Access Dependency"]
     Access --> Context["ProjectContext<br/>user_id + project_id + kb_id"]
 
@@ -197,7 +198,9 @@ flowchart LR
 ```
 
 新业务不依赖 `LegacyAgent` 或 `Checkpoint SQLite`。二者在图中保留是为了
-说明当前基座仍存在，而不是智慧档案 V1 的实现依赖。
+说明当前基座仍存在，而不是智慧档案 V1 的实现依赖。P14 的 Vue 工作台只能经由
+FastAPI 调用；它不连接 PostgreSQL、Chroma、文件系统、本地 BGE 或 DeepSeek，也不提交
+`user_id`、`owner_id`、`kb_id` 等授权字段。
 
 ## 6. 项目访问与授权边界
 

@@ -30,22 +30,20 @@
 本任务不包含旧 SQLite 业务数据导入，也不把 LangGraph Checkpoint 改为
 PostgreSQL。SQLite 单元测试只作为快速隔离测试，不能替代 PostgreSQL 迁移证据。
 
-## 智慧档案 V1 进度（基础已完成，业务 API 未实施）
+## 智慧档案 V1 进度（P01～P13 实现切片完成，P14 验收收口中）
 
 下一阶段唯一业务方向为“智慧档案与企业文档智能”，聚焦工程项目资料归档、
 结构化、检索与原文追溯；当前不推进标书投标、标书解析生成或投标合规审查。
 需求、架构、数据库与 API 设计基线已确认，实施计划见
-`docs/archive-v1-implementation-plan.md`。已完成 AV1-P01 Parser 规则冻结、AV1-P02
-虚构验收资料与 Ground Truth、AV1-P03 PostgreSQL 迁移/模型/公共授权基础、P04
-前置模型分层调整、P04.1 FR-030 项目 CRUD/模板复制 API、P04.2 FR-031 清单项 CRUD/派生状态，
-以及 AV1-A01 账号密码、JWT 会话与 Bearer 身份切换的隔离验证；P05 项目内上传、重复校验
-与容量控制、P06 正式解析/快照/重试以及 P07 手工草稿/字段检查也已完成。尚未实现 AI 建议、正式归档状态机、Final Collection、正式检索问答或端到端验收。已确认以 Chroma 单机
-服务替换 Milvus，详见 `docs/chroma-migration-decision.md`；AV1-C01 已完成 Chroma 独立验证，
-AV1-C02 已完成代码/离线单测迁移；云端完整栈验证随部署决策暂缓，下一步为 P08 AI 建议与安全重新生成。
+`docs/archive-v1-implementation-plan.md`。AV1-P01～P08、P09 确认/INDEX/取消确认、P10 清单关联/目录/审计、
+P11 正式检索、P12 证据问答和 P13 物理删除实现切片已完成；P09 真实确认—INDEX/取消确认清理与 P11
+单文档 P95 canary 已通过。固定问题集阈值/召回、真实 DeepSeek、P13 真实跨存储恢复和完整端到端验收
+仍待 P14。已确认以 Chroma 单机服务替换 Milvus，详见 `docs/chroma-migration-decision.md`；AV1-C01/C02
+本地验证已完成，云端完整栈验证随部署决策暂缓。
 
 ## 后续通用能力
 
-- C-01：账号密码、JWT 与 Bearer 身份切换已完成隔离验证；真实 PostgreSQL `0010` 迁移待显式验证。
+- C-01：账号密码、JWT 与 Bearer 身份切换已完成隔离验证；真实 PostgreSQL `0010` 迁移已在当前开发库核对。
 - C-02：知识库修改与空库删除。
 - C-03：Checkpoint PostgreSQL 或其他共享存储（需要多实例部署时再实施）。
 - C-04：大文件异步解析与任务状态。

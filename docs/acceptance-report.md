@@ -1,9 +1,9 @@
 # 验收报告
 
-> **范围提示（2026-08-26）：** 本报告记录当前企业知识库与制度检索 Agent 基座，以及
-> 智慧档案 V1 已完成的 AV1-P01～P07、P04 前置模型分层、P04.1 FR-030、P04.2 FR-031
-> 及 P05 FR-032。它不是智慧档案完整业务闭环的验收报告；正式归档、Final Collection、
-> 检索问答和删除恢复均尚未实现或验收。
+> **范围提示（2026-08-27）：** 本报告记录当前企业知识库与制度检索 Agent 基座，以及
+> 智慧档案 V1 的 AV1-P01～P13 实现切片、真实确认—INDEX 路由链路、真实 Chroma/BGE canary、
+> 真实取消确认清理和 P11 单文档检索 P95 基线。它仍不是智慧档案完整质量验收报告；固定问题集
+> 阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复和完整 Vue 工作台端到端演示尚未验收。
 >
 > **向量存储更新（2026-08-07）：** 后续目标已确认从 Milvus 迁移至 Chroma，但本报告中的
 > 已有运行时和历史验证仍是 Milvus 证据。AV1-C01 已独立验证 Chroma 内网、过滤、精确删除、
@@ -32,6 +32,64 @@
 > 已通过 API/服务测试；当前默认全量回归为 `164 passed, 2 skipped, 16 warnings`，并通过
 > `compileall`。本步不包含 AI 建议或正式确认。
 
+> **P08 更新（2026-08-26）：** 首次 AI 建议、失败后专用 retry、连接/超时一次重试、当前快照
+> 证据校验、无效输出失败状态、未人工编辑安全 regenerate、人工覆盖保护、模型调用期间版本
+> 复核和脱敏 regenerate 审计已通过 API/服务测试；当前默认全量回归为 `173 passed, 2 skipped,
+> 16 warnings`，并通过 `compileall`。fake 模型只证明确定性契约，不代表 DeepSeek 事实性或
+> 引用质量；正式确认和 Final Collection 仍未实现。
+
+> 以下 P09 分阶段记录保留各切片完成时的历史边界；最终状态以本报告后面的 P09 真实链路、P10～P13
+> 更新和自动化检查为准。
+
+> **P09 第一个切片更新（2026-08-26）：** 人工确认前置条件、当前版本乐观锁、`CONFIRMED`
+> 状态转换、AI 当前快照证据校验、重复确认幂等和脱敏 `ARCHIVE_CONFIRMED` 审计已通过
+> `tests/routers/test_project_document_confirmation.py`；相关测试 `25 passed`，当前全量回归
+> 为 `178 passed, 2 skipped, 16 warnings`，并通过 `compileall`。本切片不写 Chroma Final
+> Collection、不生成 Final Chunk、不实现正式目录或正式检索；因此 P09/FR-036 的完整索引验收
+> 仍未完成。
+
+> **P09 第二个基础切片更新（2026-08-26）：** 当前解析快照到 Final Chunk 的确定性构建、
+> 文档归属/快照哈希/Parser 版本校验、稳定 Chunk ID，以及独立 `archive_final_chunks` Collection
+> 的 cosine 配置和服务端隔离元数据 upsert 契约已通过 `tests/services/test_archive_final_chunk_service.py`；
+> 相关测试 `13 passed`，当前全量回归为 `183 passed, 2 skipped, 16 warnings`，并通过 `compileall`。
+> 测试使用 Mock Chroma，未执行真实 Chroma 写入、Embedding 或 `ArchiveOperation(INDEX)` 事务。
+
+> **P09 第三个基础切片更新（2026-08-26）：** `archive_index_service.py` 的内部 INDEX 编排已通过
+> `tests/services/test_archive_index_service.py`：覆盖已确认状态、运行中操作互斥、失败落库、同快照
+> 幂等和成功回写快照哈希/Chunk 数量。P09 相关回归为 `30 passed`，当前全量回归为 `191 passed,
+> 2 skipped, 16 warnings`，并通过 `compileall`。测试仅 Mock Chroma/Embedding；确认路由尚未自动触发
+> INDEX，真实外部写入、跨存储补偿、取消确认、正式目录和正式检索仍未验收。
+
+> **P09 第四个基础切片更新（2026-08-27）：** 确认服务已在确认事务提交后调用内部 INDEX 编排；
+> `tests/routers/test_project_document_confirmation.py` 覆盖成功调用链和 INDEX 失败时返回稳定错误，
+> 并通过 stub 隔离未启动的外部服务。P09 相关回归为 `30 passed`，当前全量回归为 `191 passed,
+> 2 skipped, 16 warnings`，并通过 `compileall`。真实 Chroma/Embedding、跨存储补偿、取消确认、正式
+> 目录和正式检索仍未验收。
+
+> **P09 真实 Chroma/Embedding canary 更新（2026-08-27）：** 使用唯一 UUID 范围实际加载本地 BGE，
+> 在独立 `archive_final_chunks` Collection（`cosine`）写入 1 条 512 维向量，按服务端生成的
+> `user_id + kb_id + document_id` 过滤查询命中 1 条，随后删除 1 条并核验范围残留为 0。该 canary
+> 不创建 PostgreSQL 业务记录，也不等同于真实确认—INDEX 纵向链路、跨存储补偿、P95 延迟标定或正式检索验收。
+
+> **P09 取消确认基础切片更新（2026-08-27）：** 新增 `POST .../cancel-confirmation`，校验
+> `expected_version` 和 `CONFIRMED` 状态后，先提交 `PENDING_RECONFIRMATION`、清除确认/索引事实并写入
+> 脱敏 `ARCHIVE_CONFIRMATION_CANCELLED` 审计，再清理 Final Chunk；清理失败仍保守排除正式范围并返回稳定错误。
+> 确认路由相关测试 `9 passed`，P09 服务相关回归 `19 passed`，当前全量回归 `192 passed, 2 skipped, 16 warnings`，并通过 `compileall`；外部清理仍使用 stub，真实取消清理和正式目录未验收。
+
+> **P09 真实纵向链路更新（2026-08-27）：** 唯一 UUID 范围的真实确认路由已提交
+> `CONFIRMED` 并触发 `ArchiveOperation(INDEX)`，真实 BGE/Chroma 写入 `archive_final_chunks` 后按范围
+> 查询命中 1 条；取消确认真实清理随后核对 PostgreSQL 状态/审计和 Chroma 残留均为 0。
+
+> **P10～P13 更新（2026-08-27）：** P10 已提供处理列表、正式目录/详情、清单关联建议/确认/删除和
+> 脱敏审计查询；P11 已提供 PostgreSQL 正式文档集合约束的 Chroma 检索；P12 已提供仅基于正式证据的
+> 问答、无依据拒答和模型不可用稳定错误；P13 已提供可见性阻断、Chroma/文件/数据库物理删除、
+> 脱敏删除审计、失败保守状态和可重入入口。P10～P13 定向测试共 `19 passed`；新增审计筛选枚举
+> RED→GREEN 后，当前定向测试为 `20 passed`（另有 1 个既有弃用警告）。
+
+> **P11 性能基线更新（2026-08-27）：** 真实单文档检索 canary 使用本地 BGE 512 维和 Chroma
+> cosine，10 次请求返回 1 条命中，P95 约 `125.97 ms`。这不是固定 8 个有据/2 个无据问题集的
+> 阈值、召回率或隔离质量验收；当前 `retrieval_distance_threshold` 仍未冻结。
+
 ## 验收范围
 
 本轮覆盖以下已完成事项：
@@ -44,6 +102,7 @@
 - P04.1 实现项目 CRUD、内部知识库范围、五项虚构模板复制、乐观锁和受限删除。
 - P04.2 实现清单项 CRUD、项目/清单乐观锁、确认关联派生状态、关键匹配字段失效和脱敏审计。
 - AV1-A01 实现 Argon2 密码哈希、JWT 会话、Bearer 身份切换与本地旧用户凭据初始化脚本。
+- P10～P13 实现清单关联/目录/审计、正式检索、证据问答和物理删除；相关确定性测试已通过。
 
 旧 SQLite 业务数据不迁移；LangGraph Checkpoint SQLite 保留且不替代 PostgreSQL 业务表。
 
@@ -64,17 +123,31 @@
 | AC-011 项目内上传 | `document_service.py`、`file_service.py`、`projects.py`、上传测试 | 正常/重复/跨项目/越权/20 MiB/100 份/类型契约通过；真实 PostgreSQL 项目行锁阻止 99→101，并已核对零残留 |
 | AC-012 正式解析与重试 | `document_service.py`、`projects.py`、Parser/项目路由测试 | 成功解析、受控失败、专用重试、四格式路由和重复解析快照保护通过 |
 | AC-013 手工草稿与字段检查 | `archive_draft_service.py`、`archive_draft.py`、`projects.py`、P07 API/服务测试 | 七字段草稿、快照证据、人工来源、空值规则、版本冲突和重新确认入口通过 |
+| AC-014 AI 建议与安全重新生成 | `archive_suggestion_service.py`、`archive_suggestion.py`、`projects.py`、P08 API 测试 | 首次建议、失败重试、证据校验、人工覆盖保护、版本复核、失败保留原稿和 regenerate 审计通过；真实 DeepSeek 质量未验收 |
+| AC-015 人工确认切片 | `archive_confirmation_service.py`、`archive_confirmation.py`、`projects.py`、P09 API 测试 | 前置条件、版本冲突、`CONFIRMED` 转换、当前快照证据、幂等和脱敏审计通过；确认路由已接入 INDEX |
+| AC-016 Final Chunk/Collection 契约切片 | `archive_final_chunk_service.py`、`config.py`、P09 服务测试 | 稳定 Chunk、快照追溯、独立 Collection upsert 契约和真实 Chroma/BGE canary 通过 |
+| AC-017 INDEX 内部事务编排切片 | `archive_index_service.py`、P09 服务测试 | `ArchiveOperation(INDEX)` 创建/互斥/失败落库/幂等/成功回写通过；真实业务链路另有单文档 canary |
+| AC-018 确认—INDEX 调用链切片 | `archive_confirmation_service.py`、确认路由和 P09 API 测试、真实 canary | 确认提交后调用 INDEX、错误透传和幂等不重复调用通过；真实路由链路命中 1 条 Final Chunk |
+| AC-019 取消确认基础切片 | `archive_cancel_confirmation_service.py`、取消确认路由和 P09 API 测试、真实清理验证 | `PENDING_RECONFIRMATION`、事实清理、版本递增、脱敏审计和真实 Chroma 精确清理通过 |
+| AC-020 P10 清单关联/目录/审计 | `archive_catalog_service.py`、`archive_checklist_service.py`、P10 API 测试 | 处理列表、正式目录隔离/筛选、关联确认/删除派生和脱敏审计查询通过；审计筛选受控枚举校验 |
+| AC-021 P11 正式检索 | `archive_retrieval_service.py`、`archive_retrieval.py`、P11 测试和真实 canary | PostgreSQL 正式文档集合、Chroma 四维范围过滤、稳定错误和引用返回通过；固定问题集阈值/召回尚未验收 |
+| AC-022 P12 证据问答 | `archive_question_service.py`、`archive_question.py`、P12 测试 | 有证据才调用模型、无证据拒答、模型不可用稳定 503 通过；真实 DeepSeek 质量尚未验收 |
+| AC-023 P13 物理删除 | `archive_document_delete_service.py`、P13 服务/API 测试 | 删除可见性阻断、Chroma/文件/数据库清理、脱敏删除审计、失败保守状态和可重入入口通过；真实跨存储故障恢复尚未验收 |
 
 ## 自动化检查
 
 | 检查 | 命令摘要 | 结果 |
 |---|---|---|
-| 全量测试 | `C:\D\venvs\mrh\Scripts\python.exe -m pytest -q` | `164 passed, 2 skipped, 16 warnings` |
+| 全量测试 | `C:\D\venvs\mrh\Scripts\python.exe -m pytest -q` | `213 passed, 2 skipped, 16 warnings` |
+| Vue 当前代码基线 | 相邻 `mini-rag-milvus-vue` 的 `npm run typecheck`、`npm run test`、`npm run build` | 通过；FR-031 API、Store、组件及真实代理 canary 完成；FR-032/033 项目级上传、处理列表、解析/重试的 API、Store、组件及真实文件代理 canary 按 TDD 完成。前端全量为 5 个测试文件、35 个测试；两份虚构 TXT 覆盖 `UPLOADED → PARSED` 和普通解析/专用重试的 `422/PARSE_TEXT_UNAVAILABLE → PARSE_FAILED`，清理后测试范围记录为零 |
 | P05 PostgreSQL 并发 | `RUN_POSTGRES_CONCURRENCY_TEST=1` + `tests/services/test_document_service_postgres.py` | `1 passed`；99 份时两个并发上传仅一份成功 |
 | P03 相关测试 | 迁移、`ProjectContext`、字段注释契约 | `8 passed` |
 | Python 编译 | `python -m compileall -q app tests migrations scripts` | 通过 |
 | PostgreSQL 空库迁移 | 实际执行 Alembic 前向迁移 | 已到 `0008_legacy_business_comments` |
 | PostgreSQL 专用自动化迁移测试 | `tests/test_postgres_migrations.py` | 未配置 `POSTGRES_TEST_URL`，因此全量测试中跳过 |
+| 当前配置健康检查 | `health_check(Response())`（项目配置） | HTTP `200`；API、PostgreSQL、Chroma、Embedding 全部 `ok`（本轮复用既有实测） |
+| 真实 Chroma/BGE canary | 唯一 UUID 范围的 `archive_final_chunks` 写入、查询、删除脚本 | 通过；512 维、cosine、命中 1 条、删除 1 条、残留 0 |
+| 真实确认—INDEX/检索 canary | 唯一 UUID 范围真实确认路由、INDEX 与检索测量 | 通过；命中 1 条，10 次请求 P95 约 `125.97 ms`；固定问题集质量未验收 |
 | Docker Compose 启动与健康检查 | Compose 服务运行 | 不属于本轮验证，未以本报告宣称通过 |
 | Lint/类型/覆盖率 | 项目未配置 | 未执行 |
 
@@ -89,24 +162,29 @@
 - 已提供 `POST/GET/PATCH/DELETE /projects`；模板为虚构演示规则，删除空项目保留内部知识库。
 - 已提供 `GET/POST/PATCH/DELETE /projects/{project_id}/checklist-items`；清单满足只由确认档案与确认关联派生，创建/修改/删除写脱敏审计。
 - 已提供 `POST /projects/{project_id}/documents`；上传只创建原文件、`Document` 与 `UPLOADED` 归档记录，不自动解析、调用模型或写 Chroma。
+- 已提供 `POST .../suggestions`、`POST .../suggestions/retry` 和 `POST .../suggestions/regenerate`；
+  服务校验当前快照证据、保留失败状态、保护人工字段并执行版本安全替换。测试使用 fake 模型隔离
+  外部调用，不代表真实 DeepSeek 质量。
+- 已提供确认/取消确认、处理列表、正式目录/详情、清单关联、审计查询、正式检索、证据问答和物理删除路由；
+  P11/P12/P13 的确定性测试已覆盖正式范围过滤、无依据拒答、稳定错误、删除可见性阻断和失败保守状态。
 
 ## 未实现或未验证
 
 - P04.2 的真实 PostgreSQL 并发竞争验证；当前证据为隔离 SQLite/TestClient API 测试。
-- AI 建议、人工正式确认、Final Collection、正式检索、问答、物理删除与跨存储恢复。
-- BGE/Chroma Final Collection 行为、相关性阈值标定，以及 DeepSeek 的 AI 建议/问答质量验收。
+- P13 真实跨存储故障恢复和完整 Vue 工作台端到端验收；当前证据为确定性故障注入/服务 API 测试，未宣称线上恢复完成。相邻 Vue 工作台已完成 FR-031 API、Store、页面与真实代理 canary，以及 FR-032/033 API、Store、页面与真实文件代理 canary；首次文档清理在 Chroma 暂不可用时被物理删除服务安全阻断，心跳恢复后清理成功，但这不是 P13 正式跨存储故障恢复验收。FR-034～FR-041 仍未接入，不能作为完整业务闭环证据。
+- 固定问题集的 BGE/Chroma 相关性阈值与召回率、隔离质量，以及 DeepSeek 的 AI 建议/问答质量验收；P11 仅有单文档 P95 基线。
 - `POSTGRES_TEST_URL` 的可重复自动化空库迁移测试，以及本轮 Compose 启动和健康检查。
 
 ## 风险
 
 1. 中：认证已改为 Argon2 密码哈希、JWT 与可撤销会话，但尚未实现多设备会话管理、Refresh Token 轮换和生产级密钥轮换。
 2. 中：Checkpoint SQLite 不支持多实例部署。
-3. 中：PostgreSQL、Chroma 和文件系统没有分布式事务；恢复策略将在 AV1-P13 实现和验证。
-4. 中：智慧档案当前仅完成数据/授权基础，尚未形成可演示的项目归档业务闭环。
+3. 中：PostgreSQL、Chroma 和文件系统没有分布式事务；P13 已实现失败保守隐藏和可重入入口，但真实跨存储故障恢复仍未做在线 canary。
+4. 中：智慧档案已完成 P01～P13 实现切片和单文档检索 P95 基线；固定问题集阈值/召回、DeepSeek 质量、P13 真实恢复与 Vue 工作台完整端到端验收仍未完成。
 5. 中：外部模型仅可处理虚构或脱敏资料；不得把真实商业秘密或敏感信息发送给 DeepSeek。
 
 ## 结论
 
-现有 Agent 基座与智慧档案 V1 的 P01～P07、FR-030 项目 API、FR-031 清单项 API 和
-FR-032 项目内上传可以继续作为后续实现前提；正式解析已可用，但不能据此宣称正式归档、
-正式检索或问答已经可用。下一步是 P08 AI 建议与安全重新生成。
+现有 Agent 基座与智慧档案 V1 的 P01～P13 实现切片、真实确认—INDEX/取消确认清理和单文档检索 P95 基线
+已具备继续验收的前提；仍不能据此宣称固定问题集召回、DeepSeek 问答质量、P13 真实故障恢复或 Vue 工作台完整端到端闭环已通过。
+下一步是 P14 全链路验收、文档收口和最终回归。
