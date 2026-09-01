@@ -35,8 +35,14 @@ logger = logging.getLogger(__name__)
 # bge-small-zh-v1.5 的文档语料向量不加指令；查询侧使用公开推荐的检索前缀，
 # 避免问题句与原文片段处于不一致的语义表示空间。
 _BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
+_ARCHIVE_QUERY_EXPRESSION_PREFIX = "档案证据检索问题："
 _ArchiveCandidate = tuple[float, ArchiveRetrievalItemRead]
 _RerankedArchiveCandidate = tuple[float, float, ArchiveRetrievalItemRead]
+
+
+def _build_archive_query_expression(query: str) -> str:
+    """构造固定、可复现且同时供召回与重排使用的查询表达。"""
+    return f"{_ARCHIVE_QUERY_EXPRESSION_PREFIX}{query.strip()}"
 
 
 def _query_values(result: dict[str, Any], name: str) -> list[Any]:
@@ -128,7 +134,7 @@ def _score_and_order_candidates(
 ) -> list[_RerankedArchiveCandidate]:
     """为所有已校验候选评分并排序，供公开检索和诊断共用。"""
     rerank_scores = score_archive_candidates(
-        query=query.strip(),
+        query=_build_archive_query_expression(query),
         contents=[item.excerpt for _, item in candidates],
     )
     reranked_candidates = [
@@ -177,7 +183,7 @@ def _query_validated_candidates(
     try:
         # 查询指令只作用于向量化问题；候选原文保持可追溯，不在诊断中回传。
         query_embedding = get_embeddings().embed_query(
-            f"{_BGE_ZH_QUERY_INSTRUCTION}{query.strip()}"
+            f"{_BGE_ZH_QUERY_INSTRUCTION}{_build_archive_query_expression(query)}"
         )
         raw_result = get_final_collection().query(
             query_embeddings=[query_embedding],

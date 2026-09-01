@@ -17,6 +17,13 @@ from tests.routers.test_project_documents import create_user, project_document_a
 from tests.support.auth import auth_headers
 
 
+def test_build_archive_query_expression_is_stable_and_strips_whitespace() -> None:
+    """查询表达必须固定且只规范化首尾空白。"""
+    assert archive_retrieval_service._build_archive_query_expression(
+        "  项目阶段  "
+    ) == "档案证据检索问题：项目阶段"
+
+
 class FakeEmbeddings:
     """返回固定查询向量，避免单测加载本地 BGE。"""
 
@@ -86,8 +93,15 @@ def test_retrieval_uses_formal_scope_and_filters_result_documents(
     pending_id = _add_pending_document(engine, project_id)
     collection = FakeCollection(_result(formal_id, pending_id))
     embeddings = FakeEmbeddings()
+    reranker_queries: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        reranker_queries.append(query)
+        return [0.5] * len(contents)
+
     monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
     monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
     monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
 
     with Session(engine) as session:
@@ -113,8 +127,9 @@ def test_retrieval_uses_formal_scope_and_filters_result_documents(
     document_clause = next(clause for clause in where["$and"] if "document_id" in clause)
     assert document_clause["document_id"]["$in"] == [str(formal_id)]
     assert embeddings.queries == [
-        "为这个句子生成表示以用于检索相关文章：正式证据是什么？"
+        "为这个句子生成表示以用于检索相关文章：档案证据检索问题：正式证据是什么？"
     ]
+    assert reranker_queries == ["档案证据检索问题：正式证据是什么？"]
 
 
 def test_retrieval_applies_distance_threshold_and_returns_evidence_fields(
@@ -309,7 +324,7 @@ def test_retrieval_reranks_only_validated_top_twenty_candidates(
     observed_contents: list[str] = []
 
     def fake_score(*, query: str, contents: list[str]) -> list[float]:
-        assert query == "项目阶段"
+        assert query == "档案证据检索问题：项目阶段"
         observed_contents.extend(contents)
         return [0.1, 0.9, 0.4]
 
@@ -370,7 +385,7 @@ def test_retrieval_passes_all_top_twenty_candidates_to_reranker(
     observed_contents: list[str] = []
 
     def fake_score(*, query: str, contents: list[str]) -> list[float]:
-        assert query == "项目阶段"
+        assert query == "档案证据检索问题：项目阶段"
         observed_contents.extend(contents)
         return [1.0 if content == "候选-20" else 0.0 for content in contents]
 
@@ -437,7 +452,7 @@ def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
     observed_contents: list[str] = []
 
     def fake_score(*, query: str, contents: list[str]) -> list[float]:
-        assert query == "项目阶段"
+        assert query == "档案证据检索问题：项目阶段"
         observed_contents.extend(contents)
         return [0.9 if content == "高重排分数" else 0.1 for content in contents]
 
