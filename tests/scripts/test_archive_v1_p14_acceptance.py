@@ -594,6 +594,23 @@ def test_safe_diagnostic_omits_error_text_except_threshold_aggregates(tmp_path: 
     }
 
 
+def test_safe_diagnostic_preserves_latency_p95_for_failed_quality_runs(
+    tmp_path: Path,
+) -> None:
+    """质量门槛失败时仍应保存安全的 P95 延迟，便于比较单变量实验。"""
+    target = tmp_path / "p14-diagnostic-latency.json"
+
+    write_safe_diagnostic(
+        target,
+        stage="threshold_calibration",
+        error=ValueError("grounded=6/8，no_evidence=2/2，isolation=2/2"),
+        latency_p95_ms=123.45,
+    )
+
+    diagnostic = json.loads(target.read_text(encoding="utf-8"))
+    assert diagnostic["latency_p95_ms"] == pytest.approx(123.45)
+
+
 def test_safe_diagnostic_persists_only_the_sanitized_retrieval_diagnostics(
     tmp_path: Path,
 ) -> None:

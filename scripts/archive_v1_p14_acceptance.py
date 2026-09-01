@@ -494,9 +494,10 @@ def write_safe_diagnostic(
     error: BaseException,
     retrieval_diagnostics: list[dict[str, object]] | None = None,
     index_context_summary: dict[str, int] | None = None,
+    latency_p95_ms: float | None = None,
 ) -> None:
     """保存不含请求路径、资源 ID 或正文的最小失败诊断。"""
-    diagnostic: dict[str, str] = {
+    diagnostic: dict[str, object] = {
         "outcome": "failed",
         "stage": stage,
         "error_type": type(error).__name__,
@@ -516,6 +517,15 @@ def write_safe_diagnostic(
         diagnostic["retrieval_diagnostics"] = retrieval_diagnostics
     if index_context_summary is not None:
         diagnostic["index_context_summary"] = index_context_summary
+    if latency_p95_ms is not None:
+        if (
+            isinstance(latency_p95_ms, bool)
+            or not isinstance(latency_p95_ms, (int, float))
+            or not math.isfinite(float(latency_p95_ms))
+            or latency_p95_ms < 0
+        ):
+            raise ValueError("P14 P95 延迟必须是非负有限数值。")
+        diagnostic["latency_p95_ms"] = round(float(latency_p95_ms), 2)
     path.write_text(
         json.dumps(diagnostic, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -611,6 +621,7 @@ def run_retrieval_calibration(
     retrieval_diagnostics: list[dict[str, object]] | None = None
     index_context_summary: dict[str, int] | None = None
     stage = "registration"
+    latencies_ms: list[float] = []
     try:
         user_id, _ = _register_and_login(api, run_tag=run_tag)
         stage = "seed_confirmation"
@@ -656,6 +667,7 @@ def run_retrieval_calibration(
                 error=exc,
                 retrieval_diagnostics=retrieval_diagnostics,
                 index_context_summary=index_context_summary,
+                latency_p95_ms=_p95_ms(latencies_ms) if latencies_ms else None,
             )
         raise
     finally:
