@@ -54,6 +54,13 @@ def test_delete_removes_archive_file_vector_and_link_but_keeps_redacted_audit(
     )
     assert link.status_code == 201
     document = _load_document(engine, document_id)
+    with Session(engine) as session:
+        archive_document = session.get(ArchiveDocument, document_id)
+        assert archive_document is not None
+        snapshot = session.get(ParsedSnapshot, archive_document.current_snapshot_id)
+        assert snapshot is not None
+        snapshot_path = Path(snapshot.snapshot_storage_path)
+        assert snapshot_path.is_file()
     monkeypatch.setattr(archive_document_delete_service, "delete_final_chunks", lambda **_: 1)
     monkeypatch.setattr(archive_document_delete_service, "delete_stored_document_file", lambda _: None)
 
@@ -76,6 +83,7 @@ def test_delete_removes_archive_file_vector_and_link_but_keeps_redacted_audit(
             )
         ).all()
         project = session.get(Project, project_id)
+    assert not snapshot_path.exists()
     assert project is not None
     assert project.active_document_count == 0
     assert len(audits) == 1

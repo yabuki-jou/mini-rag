@@ -254,3 +254,56 @@ def delete_stored_document_file(storage_path: str) -> None:
             "document storage directory retained path=%s",
             target_path.parent,
         )
+
+
+def delete_stored_snapshot_file(storage_path: str) -> None:
+    """在配置的文件目录内幂等删除解析快照文件。
+
+    Args:
+        storage_path: ``ParsedSnapshot.snapshot_storage_path`` 保存的快照绝对路径。
+
+    Raises:
+        AppError: 路径越界、路径层级无效、目标不是解析快照或删除失败。
+    """
+    # 快照与原文件共用文档目录，但必须限制为固定文件名，避免误删其他文件。
+    storage_root = settings.file_storage_path.resolve()
+    target_path = Path(storage_path).resolve()
+
+    try:
+        relative_path = target_path.relative_to(storage_root)
+    except ValueError as exc:
+        raise AppError(
+            status_code=500,
+            code="DOCUMENT_STORAGE_PATH_INVALID",
+            message="文档存储路径无效。",
+        ) from exc
+
+    if (
+        len(relative_path.parts) < 3
+        or target_path.is_dir()
+        or target_path.name != "parsed_snapshot.json"
+    ):
+        raise AppError(
+            status_code=500,
+            code="DOCUMENT_STORAGE_PATH_INVALID",
+            message="文档存储路径无效。",
+        )
+
+    try:
+        # missing_ok 让跨存储删除重试时把已清理的快照视为成功。
+        target_path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise AppError(
+            status_code=500,
+            code="DOCUMENT_SNAPSHOT_DELETE_FAILED",
+            message="解析快照删除失败。",
+        ) from exc
+
+    try:
+        # 原文件步骤可能因快照仍存在而未能删除目录，此处再清理一次空目录。
+        target_path.parent.rmdir()
+    except OSError:
+        logger.debug(
+            "snapshot storage directory retained path=%s",
+            target_path.parent,
+        )

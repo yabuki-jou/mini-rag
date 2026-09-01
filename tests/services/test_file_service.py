@@ -6,7 +6,10 @@ import pytest
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.services.file_service import delete_stored_document_file
+from app.services.file_service import (
+    delete_stored_document_file,
+    delete_stored_snapshot_file,
+)
 
 
 def test_delete_stored_document_file_is_idempotent(
@@ -61,3 +64,40 @@ def test_delete_stored_document_file_rejects_directory_target(
 
     assert exc_info.value.code == "DOCUMENT_STORAGE_PATH_INVALID"
     assert directory_target.exists()
+
+
+def test_delete_stored_snapshot_file_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重复删除解析快照应成功，并清理空文档目录。"""
+    storage_root = tmp_path / "files"
+    target_path = storage_root / "kb-id" / "document-id" / "parsed_snapshot.json"
+    target_path.parent.mkdir(parents=True)
+    target_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(settings, "file_storage_dir", storage_root)
+
+    delete_stored_snapshot_file(str(target_path))
+    delete_stored_snapshot_file(str(target_path))
+
+    assert not target_path.exists()
+    assert not target_path.parent.exists()
+    assert (storage_root / "kb-id").exists()
+
+
+def test_delete_stored_snapshot_file_rejects_non_snapshot_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """解析快照删除函数不能删除同目录下的普通文件。"""
+    storage_root = tmp_path / "files"
+    target_path = storage_root / "kb-id" / "document-id" / "policy.txt"
+    target_path.parent.mkdir(parents=True)
+    target_path.write_text("制度正文", encoding="utf-8")
+    monkeypatch.setattr(settings, "file_storage_dir", storage_root)
+
+    with pytest.raises(AppError) as exc_info:
+        delete_stored_snapshot_file(str(target_path))
+
+    assert exc_info.value.code == "DOCUMENT_STORAGE_PATH_INVALID"
+    assert target_path.exists()

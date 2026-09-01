@@ -27,7 +27,10 @@ from app.models import (
     utc_now,
 )
 from app.services.archive_final_chunk_service import delete_final_chunks
-from app.services.file_service import delete_stored_document_file
+from app.services.file_service import (
+    delete_stored_document_file,
+    delete_stored_snapshot_file,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -187,20 +190,27 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
         session.commit()
 
         # 注释 5：文件步骤单独记录检查点；即使进程重启，重试也能从已持久化的
-        # 操作状态安全继续。
+        # 操作状态安全继续。快照路径先从数据库对象读取，随后与原文件一起清理。
+        snapshot_id = archive_document.current_snapshot_id
+        snapshot = (
+            session.get(ParsedSnapshot, snapshot_id)
+            if snapshot_id is not None
+            else None
+        )
         delete_stored_document_file(current.storage_path)
+        if snapshot is not None:
+            delete_stored_snapshot_file(snapshot.snapshot_storage_path)
         eval_wrap(
             {"step": "FILE_DELETE", "status": "completed"},
             purpose="state",
             name="archive_delete_external_result",
-            description="物理删除的原文件步骤结果；不记录文件路径或内容。",
+            description="物理删除的原文件和解析快照步骤结果；不记录路径或内容。",
         )
         delete_operation.last_completed_step = "FILE_DELETE"
         delete_operation.updated_at = utc_now()
         session.add(delete_operation)
         session.commit()
 
-        snapshot_id = archive_document.current_snapshot_id
         field_ids = session.exec(
             select(ArchiveFieldValue.id).where(
                 ArchiveFieldValue.document_id == document_id
