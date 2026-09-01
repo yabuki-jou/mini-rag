@@ -12,12 +12,16 @@ from app.dependencies import (
     ProjectDocumentDep,
     SessionDep,
 )
+from app.core.config import settings
+from app.core.errors import AppError
 from app.schemas import (
     ArchiveDetailRead,
     ArchiveAuditOperationType,
     ArchivePageRead,
     ArchiveRetrievalRequest,
     ArchiveRetrievalResponse,
+    ArchiveRetrievalDiagnosticRequest,
+    ArchiveRetrievalDiagnosticResponse,
     ArchiveQuestionRequest,
     ArchiveQuestionResponse,
     AuditLogPageRead,
@@ -89,7 +93,10 @@ from app.services.archive_checklist_service import (
     list_document_links,
     list_link_suggestions,
 )
-from app.services.archive_retrieval_service import retrieve_archive_chunks
+from app.services.archive_retrieval_service import (
+    retrieve_archive_chunks,
+    retrieve_archive_diagnostics,
+)
 from app.services.archive_question_service import answer_archive_question
 from app.services.archive_document_delete_service import delete_archive_document
 
@@ -256,6 +263,29 @@ def retrieve_project_archive_endpoint(
         kb_id=project_context.kb_id,
         query=payload.query,
         top_k=payload.top_k,
+        session=session,
+    )
+
+
+@router.post(
+    "/{project_id}/archive-retrieval-diagnostic",
+    response_model=ArchiveRetrievalDiagnosticResponse,
+    include_in_schema=False,
+)
+def retrieve_project_archive_diagnostic_endpoint(
+    payload: ArchiveRetrievalDiagnosticRequest,
+    project_context: ProjectContextDep,
+    session: SessionDep,
+) -> ArchiveRetrievalDiagnosticResponse:
+    """仅在开发环境返回固定集所需的 Top-20 双排序脱敏诊断。"""
+    if settings.app_env != "development":
+        raise AppError(404, "NOT_FOUND", "资源不存在。")
+    return retrieve_archive_diagnostics(
+        user_id=project_context.user_id,
+        project_id=project_context.project_id,
+        kb_id=project_context.kb_id,
+        query=payload.query,
+        expected_evidence=payload.expected_evidence,
         session=session,
     )
 

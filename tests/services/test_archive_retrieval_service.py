@@ -564,3 +564,75 @@ def test_retrieval_orders_equal_reranker_scores_by_distance_then_chunk_id(
         )
 
     assert [item.chunk_id for item in response.items] == ["a" * 64, "b" * 64, "c" * 64]
+
+
+def test_retrieval_diagnostics_keeps_full_validated_top_twenty_before_threshold(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C3-A 诊断必须看到完整校验候选，不能被公开阈值或返回数量截断。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(
+        {
+            "ids": [["a" * 64, "b" * 64]],
+            "documents": [["普通候选", "标准证据"]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                },
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 2,
+                    "location_end": 2,
+                },
+            ]],
+            "distances": [[0.1, 0.8]],
+        }
+    )
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.2, 0.9],
+    )
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", 0.95, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_diagnostics(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="标准证据",
+            expected_evidence={
+                "relative_path": "documents/正式资料.pdf",
+                "items": [{
+                    "location_type": "PDF_PAGE",
+                    "location_start": 2,
+                    "location_end": 2,
+                    "excerpt": "标准证据",
+                }],
+            },
+            session=session,
+        )
+
+    assert response.chroma_candidate_count == 2
+    assert response.candidate_count == 2
+    assert len(response.candidates) == 2
+    assert response.candidates[1].dense_rank == 2
+    assert response.candidates[1].reranker_rank == 1
+    assert response.candidates[1].matches_expected_evidence is True
+    assert response.candidates[1].reranker_score == pytest.approx(0.9)
+    serialized = response.model_dump_json()
+    for forbidden in ("正式资料.pdf", "标准证据", str(document_id)):
+        assert forbidden not in serialized

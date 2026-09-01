@@ -240,6 +240,40 @@ def test_safe_retrieval_diagnostics_marks_incomplete_candidate_pool_without_fals
     assert diagnostics[0]["expected_reranker_score"] is None
 
 
+def test_safe_retrieval_diagnostics_prefers_internal_top_twenty_dual_ranking() -> None:
+    """运行器必须保留内部 Top-20 的 dense 与 Reranker 独立排名。"""
+    outcome = _grounded(distance=0.2)
+    outcome["allowed_filenames"] = ["alpha.txt"]
+    outcome["internal_candidates"] = [
+        {
+            "dense_rank": 12,
+            "dense_distance": 0.4,
+            "reranker_rank": 1,
+            "reranker_score": 0.9,
+            "matches_expected_evidence": True,
+        },
+        {
+            "dense_rank": 1,
+            "dense_distance": 0.1,
+            "reranker_rank": 2,
+            "reranker_score": 0.2,
+            "matches_expected_evidence": False,
+        },
+    ]
+    outcome["diagnostic_candidate_count"] = 20
+    outcome["diagnostic_chroma_candidate_count"] = 20
+
+    diagnostics = build_safe_retrieval_diagnostics([outcome])
+
+    assert diagnostics[0]["candidate_count"] == 20
+    assert diagnostics[0]["expected_candidate_rank"] == 12
+    assert diagnostics[0]["expected_in_chroma_top_10"] is False
+    assert diagnostics[0]["expected_reranker_rank"] == 1
+    assert diagnostics[0]["expected_reranker_score"] == pytest.approx(0.9)
+    assert diagnostics[0]["nearest_candidate_distance"] == pytest.approx(0.1)
+    assert diagnostics[0]["chroma_candidate_count"] == 20
+
+
 def test_threshold_selection_meets_recall_no_evidence_and_isolation_gates() -> None:
     """阈值选择必须同时满足 7/8 召回、2/2 空结果和 2/2 项目隔离。"""
     outcomes = [_grounded(distance=0.20) for _ in range(7)]

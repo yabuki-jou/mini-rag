@@ -47,6 +47,9 @@ from app.schemas.archive_draft import (
 from app.schemas.archive_suggestion import ArchiveSuggestionRegenerateRequest
 from app.schemas.archive_confirmation import ArchiveConfirmationRequest
 from app.schemas.archive_retrieval import (
+    ArchiveRetrievalDiagnosticCandidateRead,
+    ArchiveRetrievalDiagnosticRequest,
+    ArchiveRetrievalDiagnosticResponse,
     ArchiveRetrievalItemRead,
     ArchiveRetrievalRequest,
     ArchiveRetrievalResponse,
@@ -98,6 +101,9 @@ __all__ = [
     "ArchiveFieldUpdate",
     "ArchiveSuggestionRegenerateRequest",
     "ArchiveRetrievalItemRead",
+    "ArchiveRetrievalDiagnosticCandidateRead",
+    "ArchiveRetrievalDiagnosticRequest",
+    "ArchiveRetrievalDiagnosticResponse",
     "ArchiveRetrievalRequest",
     "ArchiveRetrievalResponse",
     "ArchiveAnswerStatus",

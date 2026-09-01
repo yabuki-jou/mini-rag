@@ -19,6 +19,8 @@ from app.models import (
     EvidenceLocationType,
 )
 from app.schemas.archive_retrieval import (
+    ArchiveRetrievalDiagnosticCandidateRead,
+    ArchiveRetrievalDiagnosticResponse,
     ArchiveRetrievalItemRead,
     ArchiveRetrievalResponse,
 )
@@ -112,11 +114,23 @@ def _build_validated_candidates(
 
 def _rerank_candidates(*, query: str, candidates: list[_ArchiveCandidate]) -> list[_RerankedArchiveCandidate]:
     """按本地重排分数筛选并生成可复现的候选顺序。"""
+    scored_candidates = _score_and_order_candidates(query=query, candidates=candidates)
+    rerank_threshold = settings.archive_reranker_score_threshold
+    return [
+        candidate
+        for candidate in scored_candidates
+        if rerank_threshold is None or candidate[0] >= rerank_threshold
+    ]
+
+
+def _score_and_order_candidates(
+    *, query: str, candidates: list[_ArchiveCandidate]
+) -> list[_RerankedArchiveCandidate]:
+    """为所有已校验候选评分并排序，供公开检索和诊断共用。"""
     rerank_scores = score_archive_candidates(
         query=query.strip(),
         contents=[item.excerpt for _, item in candidates],
     )
-    rerank_threshold = settings.archive_reranker_score_threshold
     reranked_candidates = [
         (
             score,
@@ -124,12 +138,184 @@ def _rerank_candidates(*, query: str, candidates: list[_ArchiveCandidate]) -> li
             item.model_copy(update={"reranker_score": score}),
         )
         for score, (distance, item) in zip(rerank_scores, candidates, strict=True)
-        if rerank_threshold is None or score >= rerank_threshold
     ]
     # 重排分数相同时，使用 Chroma distance 和 Chunk ID 作为稳定次级排序键，
     # 使固定集与 API 客户端得到可复现顺序。
     reranked_candidates.sort(key=lambda value: (-value[0], value[1], value[2].chunk_id))
     return reranked_candidates
+
+
+def _scope_filter(
+    *, user_id: UUID, project_id: UUID, kb_id: UUID, formal_ids: list[UUID]
+) -> dict[str, Any]:
+    """构造只允许当前用户项目正式文档的 Chroma 过滤条件。"""
+    return {
+        "$and": [
+            {"user_id": str(user_id)},
+            {"project_id": str(project_id)},
+            {"kb_id": str(kb_id)},
+            {"document_id": {"$in": [str(document_id) for document_id in formal_ids]}},
+        ]
+    }
+
+
+def _query_validated_candidates(
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    kb_id: UUID,
+    query: str,
+    formal_ids: list[UUID],
+) -> tuple[int, list[_ArchiveCandidate]]:
+    """执行一次 Top-20 Chroma 查询并返回原始数与范围校验后的候选。"""
+    scope_filter = _scope_filter(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        formal_ids=formal_ids,
+    )
+    try:
+        # 查询指令只作用于向量化问题；候选原文保持可追溯，不在诊断中回传。
+        query_embedding = get_embeddings().embed_query(
+            f"{_BGE_ZH_QUERY_INSTRUCTION}{query.strip()}"
+        )
+        raw_result = get_final_collection().query(
+            query_embeddings=[query_embedding],
+            n_results=settings.archive_reranker_candidate_k,
+            where=scope_filter,
+            include=["documents", "metadatas", "distances"],
+        )
+    except AppError:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "archive_retrieval_failed user_id=%s project_id=%s",
+            user_id,
+            project_id,
+        )
+        raise AppError(503, "VECTOR_UNAVAILABLE", "无法连接 Chroma 向量服务。") from exc
+
+    chunk_ids = _query_values(raw_result, "ids")
+    documents = _query_values(raw_result, "documents")
+    metadatas = _query_values(raw_result, "metadatas")
+    distances = _query_values(raw_result, "distances")
+    if not (len(chunk_ids) == len(documents) == len(metadatas) == len(distances)):
+        raise AppError(500, "VECTOR_RESULT_INVALID", "Chroma 检索结果列长度不一致。")
+    return len(chunk_ids), _build_validated_candidates(
+        chunk_ids=chunk_ids,
+        documents=documents,
+        metadatas=metadatas,
+        distances=distances,
+        formal_ids=formal_ids,
+    )
+
+
+def _candidate_matches_expected_evidence(
+    *, item: ArchiveRetrievalItemRead, expected_evidence: object
+) -> bool:
+    """在服务端比较标准证据，只把布尔结果交给开发诊断客户端。"""
+    if not isinstance(expected_evidence, dict):
+        return False
+    relative_path = expected_evidence.get("relative_path")
+    expected_filename = str(relative_path).replace("\\", "/").rsplit("/", 1)[-1]
+    if not expected_filename or item.filename != expected_filename:
+        return False
+    expected_items = expected_evidence.get("items")
+    if not isinstance(expected_items, list):
+        return False
+    for expected in expected_items:
+        if not isinstance(expected, dict):
+            continue
+        if (
+            item.location_type.value == str(expected.get("location_type"))
+            and item.location_start == expected.get("location_start")
+            and item.location_end == expected.get("location_end")
+            and item.excerpt == expected.get("excerpt")
+        ):
+            return True
+    return False
+
+
+def _diagnostic_candidate_kind(
+    *, item: ArchiveRetrievalItemRead, expected_evidence: object | None
+) -> str | None:
+    """把候选归为安全类别，不向诊断响应暴露文件或文档标识。"""
+    if not isinstance(expected_evidence, dict):
+        return None
+    relative_path = expected_evidence.get("relative_path")
+    expected_filename = str(relative_path).replace("\\", "/").rsplit("/", 1)[-1]
+    return "SAME_DOCUMENT" if item.filename == expected_filename else "OTHER_DOCUMENT"
+
+
+def retrieve_archive_diagnostics(
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    kb_id: UUID,
+    query: str,
+    expected_evidence: object | None,
+    session: Session,
+) -> ArchiveRetrievalDiagnosticResponse:
+    """返回开发环境固定集所需的完整 Top-20 双排序脱敏诊断。"""
+    if not query or not query.strip():
+        raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
+    formal_ids = _formal_document_ids(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        session=session,
+    )
+    if not formal_ids:
+        return ArchiveRetrievalDiagnosticResponse(
+            chroma_candidate_count=0,
+            candidate_count=0,
+            candidates=[],
+        )
+    chroma_count, candidates = _query_validated_candidates(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        query=query,
+        formal_ids=formal_ids,
+    )
+    scored_candidates = _score_and_order_candidates(query=query, candidates=candidates)
+    dense_candidates = sorted(
+        candidates,
+        key=lambda value: (value[0], value[1].chunk_id),
+    )
+    dense_ranks = {
+        item.chunk_id: (rank, distance)
+        for rank, (distance, item) in enumerate(dense_candidates, start=1)
+    }
+    reranker_ranks = {
+        item.chunk_id: rank
+        for rank, (_, _, item) in enumerate(scored_candidates, start=1)
+    }
+    reranker_scores = {
+        item.chunk_id: score for score, _, item in scored_candidates
+    }
+    diagnostics = [
+        ArchiveRetrievalDiagnosticCandidateRead(
+            dense_rank=dense_ranks[item.chunk_id][0],
+            dense_distance=dense_ranks[item.chunk_id][1],
+            reranker_rank=reranker_ranks[item.chunk_id],
+            reranker_score=reranker_scores[item.chunk_id],
+            matches_expected_evidence=_candidate_matches_expected_evidence(
+                item=item,
+                expected_evidence=expected_evidence,
+            ),
+            candidate_kind=_diagnostic_candidate_kind(
+                item=item,
+                expected_evidence=expected_evidence,
+            ),
+        )
+        for _, item in dense_candidates
+    ]
+    return ArchiveRetrievalDiagnosticResponse(
+        chroma_candidate_count=chroma_count,
+        candidate_count=len(candidates),
+        candidates=diagnostics,
+    )
 
 
 def retrieve_archive_chunks(
@@ -175,54 +361,11 @@ def retrieve_archive_chunks(
         return response
 
     retrieval_started_at = perf_counter()
-    # 注释 2：每个元数据条件都由服务端提供；尤其是文档 ID 列表能防止其他项目的
-    # 已确认向量通过宽泛的知识库检索泄露。
-    scope_filter = {
-        "$and": [
-            {"user_id": str(user_id)},
-            {"project_id": str(project_id)},
-            {"kb_id": str(kb_id)},
-            {"document_id": {"$in": [str(document_id) for document_id in formal_ids]}},
-        ]
-    }
-    try:
-        # 注释 3：指令只用于查询向量；已存储文档 Chunk 保持可读证据，
-        # 不为模型输入而改写。
-        query_embedding = get_embeddings().embed_query(
-            f"{_BGE_ZH_QUERY_INSTRUCTION}{query.strip()}"
-        )
-        raw_result = get_final_collection().query(
-            query_embeddings=[query_embedding],
-            n_results=settings.archive_reranker_candidate_k,
-            where=scope_filter,
-            include=["documents", "metadatas", "distances"],
-        )
-    except AppError:
-        raise
-    except Exception as exc:
-        logger.exception(
-            "archive_retrieval_failed user_id=%s project_id=%s top_k=%s",
-            user_id,
-            project_id,
-            top_k,
-        )
-        raise AppError(503, "VECTOR_UNAVAILABLE", "无法连接 Chroma 向量服务。") from exc
-
-    try:
-        chunk_ids = _query_values(raw_result, "ids")
-        documents = _query_values(raw_result, "documents")
-        metadatas = _query_values(raw_result, "metadatas")
-        distances = _query_values(raw_result, "distances")
-    except AppError:
-        raise
-    if not (len(chunk_ids) == len(documents) == len(metadatas) == len(distances)):
-        raise AppError(500, "VECTOR_RESULT_INVALID", "Chroma 检索结果列长度不一致。")
-
-    candidates = _build_validated_candidates(
-        chunk_ids=chunk_ids,
-        documents=documents,
-        metadatas=metadatas,
-        distances=distances,
+    _, candidates = _query_validated_candidates(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        query=query,
         formal_ids=formal_ids,
     )
     rerank_threshold = settings.archive_reranker_score_threshold

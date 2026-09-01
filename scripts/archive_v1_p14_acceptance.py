@@ -374,17 +374,99 @@ def _collect_retrieval_outcomes(
             isinstance(item, dict) for item in raw_items
         ):
             raise AcceptanceError("正式检索响应缺少有效 items。")
+        diagnostic_payload: dict[str, object] = {"query": content}
+        if category == "GROUNDED" and "expected_evidence" in question:
+            diagnostic_payload["expected_evidence"] = question["expected_evidence"]
+        diagnostic_response = _require_object(
+            api.request(
+                "POST",
+                f"/projects/{project_id}/archive-retrieval-diagnostic",
+                expected_statuses=(200,),
+                payload=diagnostic_payload,
+            ),
+            step="Top-20 双排序诊断",
+        )
+        diagnostic_candidates = _read_safe_internal_diagnostic(diagnostic_response)
         outcome: dict[str, object] = {
             "category": category,
             "project_id": project_key,
             "items": raw_items,
             "allowed_filenames": filenames_by_project[project_key],
+            "internal_candidates": diagnostic_candidates["candidates"],
+            "diagnostic_candidate_count": diagnostic_candidates["candidate_count"],
+            "diagnostic_chroma_candidate_count": diagnostic_candidates[
+                "chroma_candidate_count"
+            ],
         }
         for optional_key in ("expected_evidence", "hidden_evidence_in_other_project"):
             if optional_key in question:
                 outcome[optional_key] = question[optional_key]
         outcomes.append(outcome)
     return outcomes, latencies_ms
+
+
+def _read_safe_internal_diagnostic(payload: dict[str, Any]) -> dict[str, object]:
+    """校验诊断接口的数值投影，拒绝任何非脱敏或结构不完整响应。"""
+    candidate_count = payload.get("candidate_count")
+    chroma_candidate_count = payload.get("chroma_candidate_count")
+    candidates = payload.get("candidates")
+    if (
+        isinstance(candidate_count, bool)
+        or not isinstance(candidate_count, int)
+        or candidate_count < 0
+        or isinstance(chroma_candidate_count, bool)
+        or not isinstance(chroma_candidate_count, int)
+        or chroma_candidate_count < 0
+        or not isinstance(candidates, list)
+    ):
+        raise AcceptanceError("Top-20 双排序诊断响应结构无效。")
+    safe_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise AcceptanceError("Top-20 双排序诊断候选结构无效。")
+        dense_rank = candidate.get("dense_rank")
+        dense_distance = candidate.get("dense_distance")
+        reranker_rank = candidate.get("reranker_rank")
+        reranker_score = candidate.get("reranker_score")
+        matches = candidate.get("matches_expected_evidence")
+        candidate_kind = candidate.get("candidate_kind")
+        if (
+            isinstance(dense_rank, bool)
+            or not isinstance(dense_rank, int)
+            or dense_rank < 1
+            or isinstance(dense_distance, bool)
+            or not isinstance(dense_distance, (int, float))
+            or not math.isfinite(float(dense_distance))
+            or isinstance(reranker_rank, bool)
+            or not isinstance(reranker_rank, int)
+            or reranker_rank < 1
+            or isinstance(reranker_score, bool)
+            or not isinstance(reranker_score, (int, float))
+            or not math.isfinite(float(reranker_score))
+            or not isinstance(matches, bool)
+            or (candidate_kind is not None and candidate_kind not in {
+                "SAME_DOCUMENT",
+                "OTHER_DOCUMENT",
+            })
+        ):
+            raise AcceptanceError("Top-20 双排序诊断数值无效。")
+        safe_candidates.append(
+            {
+                "dense_rank": dense_rank,
+                "dense_distance": float(dense_distance),
+                "reranker_rank": reranker_rank,
+                "reranker_score": float(reranker_score),
+                "matches_expected_evidence": matches,
+                "candidate_kind": candidate_kind,
+            }
+        )
+    if len(safe_candidates) != candidate_count:
+        raise AcceptanceError("Top-20 双排序诊断候选数量不一致。")
+    return {
+        "chroma_candidate_count": chroma_candidate_count,
+        "candidate_count": candidate_count,
+        "candidates": safe_candidates,
+    }
 
 
 def _p95_ms(samples: list[float]) -> float:
@@ -748,6 +830,44 @@ def _reranker_ranked_items(
     ]
 
 
+def _internal_diagnostic_candidates(
+    outcome: dict[str, object],
+) -> list[dict[str, object]] | None:
+    """读取服务端 Top-20 的安全数值投影；旧结果没有该字段时返回空值。"""
+    raw_candidates = outcome.get("internal_candidates")
+    if raw_candidates is None:
+        return None
+    if not isinstance(raw_candidates, list):
+        raise ValueError("问题结果缺少有效 internal_candidates 列表。")
+    required = (
+        "dense_rank",
+        "dense_distance",
+        "reranker_rank",
+        "reranker_score",
+        "matches_expected_evidence",
+    )
+    for candidate in raw_candidates:
+        if not isinstance(candidate, dict) or any(key not in candidate for key in required):
+            raise ValueError("问题结果包含不完整的 Top-20 诊断候选。")
+        if (
+            isinstance(candidate["dense_rank"], bool)
+            or not isinstance(candidate["dense_rank"], int)
+            or candidate["dense_rank"] < 1
+            or isinstance(candidate["dense_distance"], bool)
+            or not isinstance(candidate["dense_distance"], (int, float))
+            or not math.isfinite(float(candidate["dense_distance"]))
+            or isinstance(candidate["reranker_rank"], bool)
+            or not isinstance(candidate["reranker_rank"], int)
+            or candidate["reranker_rank"] < 1
+            or isinstance(candidate["reranker_score"], bool)
+            or not isinstance(candidate["reranker_score"], (int, float))
+            or not math.isfinite(float(candidate["reranker_score"]))
+            or not isinstance(candidate["matches_expected_evidence"], bool)
+        ):
+            raise ValueError("问题结果包含无效的 Top-20 诊断数值。")
+    return raw_candidates
+
+
 def build_safe_retrieval_diagnostics(
     outcomes: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -774,24 +894,72 @@ def build_safe_retrieval_diagnostics(
             raise ValueError("有据问题缺少标准证据。")
 
         items = [item for item in raw_items if isinstance(item, dict)]
-        dense_ranked_items = _dense_ranked_items(items)
-        expected_dense = next(
-            (
-                (index, distance)
-                for index, item, distance in dense_ranked_items
-                if item_contains_expected_evidence(item, expected_evidence)
-            ),
-            None,
-        )
-        dense_incorrect = [
-            (item, distance)
-            for _, item, distance in dense_ranked_items
-            if not item_contains_expected_evidence(item, expected_evidence)
-        ]
+        internal_candidates = _internal_diagnostic_candidates(outcome)
+        if internal_candidates is None:
+            dense_ranked_items = _dense_ranked_items(items)
+            expected_dense = next(
+                (
+                    (index, distance)
+                    for index, item, distance in dense_ranked_items
+                    if item_contains_expected_evidence(item, expected_evidence)
+                ),
+                None,
+            )
+            dense_incorrect = [
+                (item, distance)
+                for _, item, distance in dense_ranked_items
+                if not item_contains_expected_evidence(item, expected_evidence)
+            ]
+            diagnostic_candidate_count = len(items)
+            diagnostic_chroma_candidate_count: int | None = None
+        else:
+            dense_ranked_internal = sorted(
+                internal_candidates,
+                key=lambda candidate: int(candidate["dense_rank"]),
+            )
+            expected_internal = next(
+                (
+                    candidate
+                    for candidate in dense_ranked_internal
+                    if candidate["matches_expected_evidence"] is True
+                ),
+                None,
+            )
+            expected_dense = (
+                (
+                    int(expected_internal["dense_rank"]),
+                    float(expected_internal["dense_distance"]),
+                )
+                if expected_internal is not None
+                else None
+            )
+            dense_incorrect = [
+                (None, float(candidate["dense_distance"]))
+                for candidate in dense_ranked_internal
+                if candidate["matches_expected_evidence"] is False
+            ]
+            diagnostic_candidate_count = int(
+                outcome.get("diagnostic_candidate_count", len(internal_candidates))
+            )
+            diagnostic_chroma_candidate_count = outcome.get(
+                "diagnostic_chroma_candidate_count"
+            )
+            if not isinstance(diagnostic_chroma_candidate_count, int):
+                diagnostic_chroma_candidate_count = None
         nearest_candidate_distance = (
-            round(min(distance for _, _, distance in dense_ranked_items), 6)
-            if dense_ranked_items
-            else None
+            round(
+                min(
+                    float(candidate["dense_distance"])
+                    for candidate in internal_candidates
+                ),
+                6,
+            )
+            if internal_candidates
+            else (
+                round(min(distance for _, _, distance in dense_ranked_items), 6)
+                if dense_ranked_items
+                else None
+            )
         )
         nearest_incorrect = min(dense_incorrect, key=lambda pair: pair[1], default=None)
         expected_distance = (
@@ -800,6 +968,32 @@ def build_safe_retrieval_diagnostics(
         nearest_incorrect_distance = (
             round(nearest_incorrect[1], 6) if nearest_incorrect is not None else None
         )
+        if internal_candidates is None:
+            incorrect_candidate_kind = (
+                _diagnostic_candidate_kind(
+                    item=nearest_incorrect[0],
+                    expected_evidence=expected_evidence,
+                    allowed_filenames=allowed_filenames,
+                )
+                if nearest_incorrect is not None
+                else "NONE"
+            )
+        else:
+            nearest_internal_incorrect = min(
+                (
+                    candidate
+                    for candidate in internal_candidates
+                    if candidate["matches_expected_evidence"] is False
+                ),
+                key=lambda candidate: float(candidate["dense_distance"]),
+                default=None,
+            )
+            incorrect_candidate_kind = (
+                str(nearest_internal_incorrect.get("candidate_kind"))
+                if nearest_internal_incorrect is not None
+                and nearest_internal_incorrect.get("candidate_kind") is not None
+                else ("UNKNOWN" if nearest_internal_incorrect is not None else "NONE")
+            )
         diagnostic: dict[str, object] = {
             "category": category,
             "expected_candidate_rank": (
@@ -812,41 +1006,87 @@ def build_safe_retrieval_diagnostics(
                 if nearest_incorrect is not None and expected_dense is not None
                 else None
             ),
-            "incorrect_candidate_kind": (
-                _diagnostic_candidate_kind(
-                    item=nearest_incorrect[0],
-                    expected_evidence=expected_evidence,
-                    allowed_filenames=allowed_filenames,
-                )
-                if nearest_incorrect is not None
-                else "NONE"
-            ),
+            "incorrect_candidate_kind": incorrect_candidate_kind,
             "nearest_candidate_distance": nearest_candidate_distance,
         }
+        if diagnostic_chroma_candidate_count is not None:
+            diagnostic["chroma_candidate_count"] = diagnostic_chroma_candidate_count
         if category == "GROUNDED":
             grounded_case_count += 1
-            reranker_ranked_items = _reranker_ranked_items(items)
-            expected_reranker = next(
-                (
-                    (index, score)
-                    for index, item, score in reranker_ranked_items
-                    if item_contains_expected_evidence(item, expected_evidence)
-                ),
-                None,
-            )
-            strongest_incorrect = next(
-                (
-                    (item, score)
-                    for _, item, score in reranker_ranked_items
-                    if not item_contains_expected_evidence(item, expected_evidence)
-                ),
-                None,
-            )
+            if internal_candidates is None:
+                reranker_ranked_items = _reranker_ranked_items(items)
+                expected_reranker = next(
+                    (
+                        (index, score)
+                        for index, item, score in reranker_ranked_items
+                        if item_contains_expected_evidence(item, expected_evidence)
+                    ),
+                    None,
+                )
+                strongest_incorrect = next(
+                    (
+                        (item, score)
+                        for _, item, score in reranker_ranked_items
+                        if not item_contains_expected_evidence(item, expected_evidence)
+                    ),
+                    None,
+                )
+                strongest_incorrect_kind = (
+                    _diagnostic_candidate_kind(
+                        item=strongest_incorrect[0],
+                        expected_evidence=expected_evidence,
+                        allowed_filenames=allowed_filenames,
+                    )
+                    if strongest_incorrect is not None
+                    else "NONE"
+                )
+            else:
+                reranker_ranked_internal = sorted(
+                    internal_candidates,
+                    key=lambda candidate: int(candidate["reranker_rank"]),
+                )
+                expected_internal_reranker = next(
+                    (
+                        candidate
+                        for candidate in reranker_ranked_internal
+                        if candidate["matches_expected_evidence"] is True
+                    ),
+                    None,
+                )
+                strongest_internal_incorrect = next(
+                    (
+                        candidate
+                        for candidate in reranker_ranked_internal
+                        if candidate["matches_expected_evidence"] is False
+                    ),
+                    None,
+                )
+                expected_reranker = (
+                    (
+                        int(expected_internal_reranker["reranker_rank"]),
+                        float(expected_internal_reranker["reranker_score"]),
+                    )
+                    if expected_internal_reranker is not None
+                    else None
+                )
+                strongest_incorrect = (
+                    (None, float(strongest_internal_incorrect["reranker_score"]))
+                    if strongest_internal_incorrect is not None
+                    else None
+                )
+                strongest_incorrect_kind = (
+                    str(strongest_internal_incorrect.get("candidate_kind"))
+                    if strongest_internal_incorrect is not None
+                    and strongest_internal_incorrect.get("candidate_kind") is not None
+                    else "UNKNOWN"
+                )
             diagnostic.update(
                 {
                     "case_id": f"GROUNDED-{grounded_case_count:02d}",
-                    "candidate_count": len(items),
-                    "expected_in_chroma_top_10": expected_dense is not None,
+                    "candidate_count": diagnostic_candidate_count,
+                    "expected_in_chroma_top_10": (
+                        expected_dense is not None and expected_dense[0] <= 10
+                    ),
                     "expected_reranker_rank": (
                         expected_reranker[0] if expected_reranker is not None else None
                     ),
@@ -865,35 +1105,46 @@ def build_safe_retrieval_diagnostics(
                         if expected_reranker is not None and strongest_incorrect is not None
                         else None
                     ),
-                    "strongest_reranker_incorrect_kind": (
-                        _diagnostic_candidate_kind(
-                            item=strongest_incorrect[0],
-                            expected_evidence=expected_evidence,
-                            allowed_filenames=allowed_filenames,
-                        )
-                        if strongest_incorrect is not None
-                        else "NONE"
-                    ),
+                    "strongest_reranker_incorrect_kind": strongest_incorrect_kind,
                 }
             )
         elif category == "NO_EVIDENCE":
-            reranker_ranked_items = _reranker_ranked_items(items)
-            strongest_candidate = (
-                reranker_ranked_items[0] if reranker_ranked_items else None
-            )
+            if internal_candidates is None:
+                reranker_ranked_items = _reranker_ranked_items(items)
+                strongest_candidate = (
+                    reranker_ranked_items[0] if reranker_ranked_items else None
+                )
+                strongest_reranker_score = (
+                    round(strongest_candidate[2], 6)
+                    if strongest_candidate is not None
+                    else None
+                )
+                strongest_dense_distance = (
+                    round(_item_distance(strongest_candidate[1]), 6)
+                    if strongest_candidate is not None
+                    else None
+                )
+            else:
+                strongest_internal = min(
+                    internal_candidates,
+                    key=lambda candidate: int(candidate["reranker_rank"]),
+                    default=None,
+                )
+                strongest_reranker_score = (
+                    round(float(strongest_internal["reranker_score"]), 6)
+                    if strongest_internal is not None
+                    else None
+                )
+                strongest_dense_distance = (
+                    round(float(strongest_internal["dense_distance"]), 6)
+                    if strongest_internal is not None
+                    else None
+                )
             diagnostic.update(
                 {
-                    "candidate_count": len(items),
-                    "strongest_candidate_reranker_score": (
-                        round(strongest_candidate[2], 6)
-                        if strongest_candidate is not None
-                        else None
-                    ),
-                    "strongest_candidate_dense_distance": (
-                        round(_item_distance(strongest_candidate[1]), 6)
-                        if strongest_candidate is not None
-                        else None
-                    ),
+                    "candidate_count": diagnostic_candidate_count,
+                    "strongest_candidate_reranker_score": strongest_reranker_score,
+                    "strongest_candidate_dense_distance": strongest_dense_distance,
                 }
             )
         diagnostics.append(diagnostic)

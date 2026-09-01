@@ -88,3 +88,62 @@ def test_archive_retrieval_route_maps_reranker_failure_to_stable_error(
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "RERANKER_UNAVAILABLE"
+
+
+def test_archive_retrieval_diagnostic_route_is_dev_only_and_returns_safe_projection(
+    project_document_api: tuple[TestClient, Engine, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C3-A 路由必须隐藏于公开 Schema，并只返回脱敏的双排序投影。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, _, _ = _confirmed_document(client, engine, user_id)
+
+    def fake_diagnostic(**kwargs):
+        assert kwargs["query"] == "项目阶段"
+        return {
+            "chroma_candidate_count": 20,
+            "candidate_count": 20,
+            "candidates": [
+                {
+                    "dense_rank": 12,
+                    "dense_distance": 0.4,
+                    "reranker_rank": 1,
+                    "reranker_score": 0.9,
+                    "matches_expected_evidence": True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.routers.projects.retrieve_archive_diagnostics", fake_diagnostic)
+    response = client.post(
+        f"/projects/{project_id}/archive-retrieval-diagnostic",
+        headers=auth_headers(engine, user_id),
+        json={"query": "项目阶段", "expected_evidence": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["candidate_count"] == 20
+    assert "项目阶段" not in response.text
+    openapi = client.get("/openapi.json")
+    assert "/projects/{project_id}/archive-retrieval-diagnostic" not in openapi.json()["paths"]
+
+
+def test_archive_retrieval_diagnostic_route_is_not_available_outside_development(
+    project_document_api: tuple[TestClient, Engine, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生产环境不得开放固定集诊断入口。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, _, _ = _confirmed_document(client, engine, user_id)
+    monkeypatch.setattr("app.routers.projects.settings.app_env", "production")
+
+    response = client.post(
+        f"/projects/{project_id}/archive-retrieval-diagnostic",
+        headers=auth_headers(engine, user_id),
+        json={"query": "项目阶段"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
