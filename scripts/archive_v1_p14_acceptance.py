@@ -447,7 +447,11 @@ def _verify_and_purge_principal(*, user_id: UUID) -> None:
     from app.db import engine
 
     with engine.begin() as connection:
-        # 项目和文档由业务 API 删除；此处只删除 API 未提供入口的认证主体和内部 KB。
+        # 项目和文档由业务 API 删除；此处清理 API 未提供入口的会话、认证主体和内部 KB。
+        connection.execute(
+            text("DELETE FROM auth_sessions WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
         connection.execute(
             text("DELETE FROM knowledge_bases WHERE owner_id = :user_id"),
             {"user_id": user_id},

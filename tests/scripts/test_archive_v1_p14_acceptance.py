@@ -471,6 +471,17 @@ def test_registered_user_id_remains_a_uuid_for_postgresql_cleanup_binding() -> N
     assert isinstance(user_id, UUID)
 
 
+def test_principal_cleanup_removes_sessions_before_user() -> None:
+    """清理临时账号时必须先删除会话，避免用户删除被外键阻断。"""
+    script_path = Path(__file__).parents[2] / "scripts" / "archive_v1_p14_acceptance.py"
+    source = script_path.read_text(encoding="utf-8")
+
+    session_delete = source.index("DELETE FROM auth_sessions WHERE user_id")
+    user_delete = source.index("DELETE FROM users WHERE id", session_delete)
+
+    assert session_delete < user_delete
+
+
 def test_aggregate_result_file_contains_only_machine_readable_metrics(tmp_path: Path) -> None:
     """真实验收的聚合结论可写入临时文件，避免依赖终端输出。"""
     target = tmp_path / "p14-result.json"

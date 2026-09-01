@@ -59,8 +59,11 @@ def test_settings_default_to_local_archive_reranker_configuration() -> None:
         "embedding_models/bge-reranker-base"
     )
     assert settings.archive_reranker_device == "cpu"
-    assert settings.archive_reranker_candidate_k == 10
+    assert settings.archive_reranker_candidate_k == 20
     assert settings.archive_reranker_score_threshold is None
 
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, archive_reranker_candidate_k=9)
+        Settings(_env_file=None, archive_reranker_candidate_k=19)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, archive_reranker_candidate_k=21)

@@ -260,11 +260,11 @@ def test_retrieval_records_eval_scope_and_final_items(
     assert observed_by_name["archive_retrieval_result"]["items"][0]["document_id"] == str(document_id)
 
 
-def test_retrieval_reranks_only_validated_top_ten_candidates(
+def test_retrieval_reranks_only_validated_top_twenty_candidates(
     project_document_api,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """重排只能处理范围校验后的 Top-10，并保持最终 API 只返回请求数量。"""
+    """重排只能处理范围校验后的 Top-20，并保持最终 API 只返回请求数量。"""
     client, engine, _ = project_document_api
     user_id = create_user(engine)
     project_id, document_id, _ = _confirmed_document(client, engine, user_id)
@@ -335,10 +335,72 @@ def test_retrieval_reranks_only_validated_top_ten_candidates(
             session=session,
         )
 
-    assert collection.calls[0]["n_results"] == 10
+    assert collection.calls[0]["n_results"] == 20
     assert observed_contents == ["低重排分数", "高重排分数", "中等重排分数"]
     assert response.returned_count == 1
     assert response.items[0].excerpt == "高重排分数"
+
+
+def test_retrieval_passes_all_top_twenty_candidates_to_reranker(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """候选池扩大后，位置靠后的合格候选也必须进入重排，最终仍只返回请求数量。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    items = [
+        {
+            "document_id": str(document_id),
+            "filename": "正式资料.pdf",
+            "location_type": "PDF_PAGE",
+            "location_start": index + 1,
+            "location_end": index + 1,
+        }
+        for index in range(20)
+    ]
+    collection = FakeCollection(
+        {
+            "ids": [[f"{index:064d}" for index in range(20)]],
+            "documents": [[f"候选-{index + 1}" for index in range(20)]],
+            "metadatas": [[item for item in items]],
+            "distances": [[0.1 + index * 0.01 for index in range(20)]],
+        }
+    )
+    observed_contents: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        assert query == "项目阶段"
+        observed_contents.extend(contents)
+        return [1.0 if content == "候选-20" else 0.0 for content in contents]
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        fake_score,
+        raising=False,
+    )
+    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", None, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="项目阶段",
+            top_k=1,
+            session=session,
+        )
+
+    assert collection.calls[0]["n_results"] == 20
+    assert len(observed_contents) == 20
+    assert response.returned_count == 1
+    assert response.items[0].excerpt == "候选-20"
 
 
 def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
@@ -402,7 +464,7 @@ def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
             session=session,
         )
 
-    assert collection.calls[0]["n_results"] == 10
+    assert collection.calls[0]["n_results"] == 20
     assert observed_contents == ["低重排分数", "高重排分数"]
     assert response.returned_count == 1
     assert response.items[0].excerpt == "高重排分数"
