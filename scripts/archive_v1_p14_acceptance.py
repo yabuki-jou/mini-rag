@@ -220,7 +220,7 @@ def _seed_confirmed_documents(
     run_tag: str,
     project_ids: dict[str, str],
     seeded: list[tuple[str, str]],
-) -> dict[str, list[str]]:
+) -> tuple[dict[str, list[str]], list[int]]:
     """经 P05/P06/P07/P09 路由准备两项目的真实正式档案。"""
     projects = _as_object_list(document_label.get("projects"), name="projects")
     normal_documents = _as_object_list(
@@ -251,6 +251,7 @@ def _seed_confirmed_documents(
             raise AcceptanceError("项目创建未返回标识。") from exc
 
     filenames_by_project: dict[str, list[str]] = {key: [] for key in project_ids}
+    index_context_counts: list[int] = []
     for document in normal_documents:
         try:
             project_key = str(document["project_id"])
@@ -330,8 +331,12 @@ def _seed_confirmed_documents(
         )
         if not is_confirmed_document_response(confirmed):
             raise AcceptanceError("确认响应未表明文档进入 CONFIRMED 状态。")
+        context_count = confirmed.get("index_context_chunk_count")
+        if isinstance(context_count, bool) or not isinstance(context_count, int) or context_count < 0:
+            raise AcceptanceError("确认响应缺少安全的索引上下文覆盖计数。")
+        index_context_counts.append(context_count)
         filenames_by_project[project_key].append(path.name)
-    return filenames_by_project
+    return filenames_by_project, index_context_counts
 
 
 def _collect_retrieval_outcomes(
@@ -400,7 +405,14 @@ def write_aggregate_result(path: Path, result: dict[str, int | float | bool]) ->
     )
 
 
-def write_safe_diagnostic(path: Path, *, stage: str, error: BaseException) -> None:
+def write_safe_diagnostic(
+    path: Path,
+    *,
+    stage: str,
+    error: BaseException,
+    retrieval_diagnostics: list[dict[str, object]] | None = None,
+    index_context_summary: dict[str, int] | None = None,
+) -> None:
     """保存不含请求路径、资源 ID 或正文的最小失败诊断。"""
     diagnostic: dict[str, str] = {
         "outcome": "failed",
@@ -416,6 +428,12 @@ def write_safe_diagnostic(path: Path, *, stage: str, error: BaseException) -> No
             diagnostic["http_status"] = error.http_status
         if error.api_code is not None:
             diagnostic["api_code"] = error.api_code
+    if retrieval_diagnostics is not None:
+        # 逐题数据已经过安全投影；保留它才能将阈值失败归因到候选排序，
+        # 而不是只得到不可行动的聚合计数。
+        diagnostic["retrieval_diagnostics"] = retrieval_diagnostics
+    if index_context_summary is not None:
+        diagnostic["index_context_summary"] = index_context_summary
     path.write_text(
         json.dumps(diagnostic, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -504,17 +522,24 @@ def run_retrieval_calibration(
     project_ids: dict[str, str] = {}
     seeded: list[tuple[str, str]] = []
     primary_error: BaseException | None = None
+    retrieval_diagnostics: list[dict[str, object]] | None = None
+    index_context_summary: dict[str, int] | None = None
     stage = "registration"
     try:
         user_id, _ = _register_and_login(api, run_tag=run_tag)
         stage = "seed_confirmation"
-        filenames_by_project = _seed_confirmed_documents(
+        filenames_by_project, index_context_counts = _seed_confirmed_documents(
             api,
             document_label=document_label,
             run_tag=run_tag,
             project_ids=project_ids,
             seeded=seeded,
         )
+        index_context_summary = {
+            "document_count": len(index_context_counts),
+            "contextual_chunk_count": sum(index_context_counts),
+            "zero_context_document_count": sum(count == 0 for count in index_context_counts),
+        }
         stage = "retrieval"
         outcomes, latencies_ms = _collect_retrieval_outcomes(
             api,
@@ -522,13 +547,15 @@ def run_retrieval_calibration(
             project_ids=project_ids,
             filenames_by_project=filenames_by_project,
         )
+        retrieval_diagnostics = build_safe_retrieval_diagnostics(outcomes)
         stage = "threshold_calibration"
-        threshold, score = choose_distance_threshold(outcomes)
+        threshold, score = choose_reranker_score_threshold(outcomes)
         result: dict[str, int | float | bool] = {
             **score,
-            "distance_threshold": round(threshold, 6),
+            "reranker_score_threshold": round(threshold, 6),
             "latency_p95_ms": round(_p95_ms(latencies_ms), 2),
             "question_count": len(outcomes),
+            **index_context_summary,
         }
         if result_file is not None:
             # 先保存无敏感聚合指标，再进入可能较慢的跨存储清理，避免外部运行时限丢失证据。
@@ -537,7 +564,13 @@ def run_retrieval_calibration(
     except BaseException as exc:
         primary_error = exc
         if diagnostic_file is not None:
-            write_safe_diagnostic(path=diagnostic_file, stage=stage, error=exc)
+            write_safe_diagnostic(
+                path=diagnostic_file,
+                stage=stage,
+                error=exc,
+                retrieval_diagnostics=retrieval_diagnostics,
+                index_context_summary=index_context_summary,
+            )
         raise
     finally:
         cleanup_error: BaseException | None = None
@@ -552,8 +585,9 @@ def run_retrieval_calibration(
             except BaseException as exc:
                 cleanup_error = exc
         api.close()
-        if primary_error is None and cleanup_error is not None:
-            raise cleanup_error
+        if cleanup_error is not None:
+            # 清理失败意味着虚构验收资料可能残留，必须优先暴露稳定错误，不能被主流程异常掩盖。
+            raise AcceptanceError("P14 虚构验收数据清理未全部完成。") from cleanup_error
 
 
 def main() -> int:
@@ -664,6 +698,202 @@ def item_contains_expected_evidence(
         if not (same_location_type and contains_location and contains_excerpt):
             return False
     return True
+
+
+def _diagnostic_candidate_kind(
+    *,
+    item: dict[str, object],
+    expected_evidence: object,
+    allowed_filenames: set[str],
+) -> str:
+    """将错误候选归为范围问题或可解释的检索问题，不输出其来源。"""
+    filename = str(item.get("filename", ""))
+    if filename not in allowed_filenames:
+        return "OUT_OF_SCOPE"
+    if isinstance(expected_evidence, dict) and filename == _filename_from_relative_path(
+        expected_evidence.get("relative_path", "")
+    ):
+        return "SAME_DOCUMENT"
+    return "OTHER_DOCUMENT"
+
+
+def _dense_ranked_items(
+    items: list[dict[str, object]],
+) -> list[tuple[int, dict[str, object], float]]:
+    """按兼容 dense score 还原 Chroma 候选顺序，保持阶段 A 的字段语义。"""
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _item_distance(item),
+            str(item.get("chunk_id", "")),
+        ),
+    )
+    return [
+        (index, item, _item_distance(item))
+        for index, item in enumerate(ordered, start=1)
+    ]
+
+
+def _reranker_ranked_items(
+    items: list[dict[str, object]],
+) -> list[tuple[int, dict[str, object], float]]:
+    """读取服务已按 Reranker 排序的最终顺序，不重排也不改变检索结果。"""
+    return [
+        (index, item, _item_reranker_score(item))
+        for index, item in enumerate(items, start=1)
+    ]
+
+
+def build_safe_retrieval_diagnostics(
+    outcomes: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """从固定集原始候选构造不含资源标识和正文的逐题诊断。"""
+    diagnostics: list[dict[str, object]] = []
+    grounded_case_count = 0
+    for outcome in outcomes:
+        category = outcome.get("category")
+        if category not in {"GROUNDED", "NO_EVIDENCE", "ISOLATION"}:
+            raise ValueError("固定问题集包含未知类别。")
+        raw_items = outcome.get("items")
+        if not isinstance(raw_items, list) or not all(
+            isinstance(item, dict) for item in raw_items
+        ):
+            raise ValueError("问题结果缺少有效 items 列表。")
+        allowed = outcome.get("allowed_filenames")
+        if not isinstance(allowed, list) or not all(
+            isinstance(filename, str) for filename in allowed
+        ):
+            raise ValueError("问题结果缺少允许的文件名范围。")
+        allowed_filenames = set(allowed)
+        expected_evidence = outcome.get("expected_evidence")
+        if category == "GROUNDED" and not isinstance(expected_evidence, dict):
+            raise ValueError("有据问题缺少标准证据。")
+
+        items = [item for item in raw_items if isinstance(item, dict)]
+        dense_ranked_items = _dense_ranked_items(items)
+        expected_dense = next(
+            (
+                (index, distance)
+                for index, item, distance in dense_ranked_items
+                if item_contains_expected_evidence(item, expected_evidence)
+            ),
+            None,
+        )
+        dense_incorrect = [
+            (item, distance)
+            for _, item, distance in dense_ranked_items
+            if not item_contains_expected_evidence(item, expected_evidence)
+        ]
+        nearest_candidate_distance = (
+            round(min(distance for _, _, distance in dense_ranked_items), 6)
+            if dense_ranked_items
+            else None
+        )
+        nearest_incorrect = min(dense_incorrect, key=lambda pair: pair[1], default=None)
+        expected_distance = (
+            round(expected_dense[1], 6) if expected_dense is not None else None
+        )
+        nearest_incorrect_distance = (
+            round(nearest_incorrect[1], 6) if nearest_incorrect is not None else None
+        )
+        diagnostic: dict[str, object] = {
+            "category": category,
+            "expected_candidate_rank": (
+                expected_dense[0] if expected_dense is not None else None
+            ),
+            "expected_distance": expected_distance,
+            "nearest_incorrect_distance": nearest_incorrect_distance,
+            "distance_gap": (
+                round(nearest_incorrect[1] - expected_dense[1], 6)
+                if nearest_incorrect is not None and expected_dense is not None
+                else None
+            ),
+            "incorrect_candidate_kind": (
+                _diagnostic_candidate_kind(
+                    item=nearest_incorrect[0],
+                    expected_evidence=expected_evidence,
+                    allowed_filenames=allowed_filenames,
+                )
+                if nearest_incorrect is not None
+                else "NONE"
+            ),
+            "nearest_candidate_distance": nearest_candidate_distance,
+        }
+        if category == "GROUNDED":
+            grounded_case_count += 1
+            reranker_ranked_items = _reranker_ranked_items(items)
+            expected_reranker = next(
+                (
+                    (index, score)
+                    for index, item, score in reranker_ranked_items
+                    if item_contains_expected_evidence(item, expected_evidence)
+                ),
+                None,
+            )
+            strongest_incorrect = next(
+                (
+                    (item, score)
+                    for _, item, score in reranker_ranked_items
+                    if not item_contains_expected_evidence(item, expected_evidence)
+                ),
+                None,
+            )
+            diagnostic.update(
+                {
+                    "case_id": f"GROUNDED-{grounded_case_count:02d}",
+                    "candidate_count": len(items),
+                    "expected_in_chroma_top_10": expected_dense is not None,
+                    "expected_reranker_rank": (
+                        expected_reranker[0] if expected_reranker is not None else None
+                    ),
+                    "expected_reranker_score": (
+                        round(expected_reranker[1], 6)
+                        if expected_reranker is not None
+                        else None
+                    ),
+                    "strongest_incorrect_reranker_score": (
+                        round(strongest_incorrect[1], 6)
+                        if strongest_incorrect is not None
+                        else None
+                    ),
+                    "reranker_score_gap": (
+                        round(expected_reranker[1] - strongest_incorrect[1], 6)
+                        if expected_reranker is not None and strongest_incorrect is not None
+                        else None
+                    ),
+                    "strongest_reranker_incorrect_kind": (
+                        _diagnostic_candidate_kind(
+                            item=strongest_incorrect[0],
+                            expected_evidence=expected_evidence,
+                            allowed_filenames=allowed_filenames,
+                        )
+                        if strongest_incorrect is not None
+                        else "NONE"
+                    ),
+                }
+            )
+        elif category == "NO_EVIDENCE":
+            reranker_ranked_items = _reranker_ranked_items(items)
+            strongest_candidate = (
+                reranker_ranked_items[0] if reranker_ranked_items else None
+            )
+            diagnostic.update(
+                {
+                    "candidate_count": len(items),
+                    "strongest_candidate_reranker_score": (
+                        round(strongest_candidate[2], 6)
+                        if strongest_candidate is not None
+                        else None
+                    ),
+                    "strongest_candidate_dense_distance": (
+                        round(_item_distance(strongest_candidate[1]), 6)
+                        if strongest_candidate is not None
+                        else None
+                    ),
+                }
+            )
+        diagnostics.append(diagnostic)
+    return diagnostics
 
 
 def _filtered_items(outcome: dict[str, object], threshold: float) -> list[dict[str, object]]:
@@ -798,6 +1028,146 @@ def choose_distance_threshold(
 
     # 同等通过时选择最大阈值，最大化保留已验证相关证据的余量。
     return max(passing, key=lambda value: value[0])
+
+
+def _item_reranker_score(item: dict[str, object]) -> float:
+    """读取正式检索响应中用于阶段 C 标定的最终重排分数。"""
+    value = item.get("reranker_score")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("正式检索响应缺少有效 reranker_score。")
+    score = float(value)
+    if not math.isfinite(score):
+        raise ValueError("正式检索响应的 reranker_score 必须是有限数。")
+    return score
+
+
+def _filtered_reranked_items(
+    outcome: dict[str, object], threshold: float
+) -> list[dict[str, object]]:
+    """按最低重排分数复现阶段 C 的最终候选过滤。"""
+    raw_items = outcome.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("问题结果缺少 items 列表。")
+    items = [item for item in raw_items if isinstance(item, dict)]
+    if len(items) != len(raw_items):
+        raise ValueError("问题结果包含无效检索项。")
+    return [item for item in items if _item_reranker_score(item) >= threshold]
+
+
+def score_reranker_outcomes(
+    outcomes: list[dict[str, object]], *, threshold: float
+) -> dict[str, int | bool]:
+    """按照阶段 C 的独立重排分数门槛对固定问题集评分。"""
+    if not math.isfinite(threshold):
+        raise ValueError("reranker score threshold 必须是有限数。")
+
+    grounded_total = grounded_passed = 0
+    no_evidence_total = no_evidence_passed = 0
+    isolation_total = isolation_passed = 0
+    for outcome in outcomes:
+        category = outcome.get("category")
+        items = _filtered_reranked_items(outcome, threshold)
+        if category == "GROUNDED":
+            grounded_total += 1
+            expected = outcome.get("expected_evidence")
+            if any(item_contains_expected_evidence(item, expected) for item in items):
+                grounded_passed += 1
+        elif category == "NO_EVIDENCE":
+            no_evidence_total += 1
+            if not items:
+                no_evidence_passed += 1
+        elif category == "ISOLATION":
+            isolation_total += 1
+            hidden = outcome.get("hidden_evidence_in_other_project")
+            hidden_filename = (
+                _filename_from_relative_path(hidden.get("relative_path", ""))
+                if isinstance(hidden, dict)
+                else ""
+            )
+            allowed_filenames = outcome.get("allowed_filenames")
+            allowed = (
+                {str(filename) for filename in allowed_filenames}
+                if isinstance(allowed_filenames, list)
+                else None
+            )
+            filenames = {str(item.get("filename")) for item in items}
+            hides_other_project = hidden_filename not in filenames
+            stays_in_current_project = allowed is None or filenames <= allowed
+            if hides_other_project and stays_in_current_project:
+                isolation_passed += 1
+        else:
+            raise ValueError("固定问题集包含未知类别。")
+
+    passed = (
+        grounded_total == 8
+        and grounded_passed >= 7
+        and no_evidence_total == 2
+        and no_evidence_passed == 2
+        and isolation_total == 2
+        and isolation_passed == 2
+    )
+    return {
+        "grounded_total": grounded_total,
+        "grounded_passed": grounded_passed,
+        "no_evidence_total": no_evidence_total,
+        "no_evidence_passed": no_evidence_passed,
+        "isolation_total": isolation_total,
+        "isolation_passed": isolation_passed,
+        "passed": passed,
+    }
+
+
+def choose_reranker_score_threshold(
+    outcomes: list[dict[str, object]],
+) -> tuple[float, dict[str, int | bool]]:
+    """选择满足固定门槛且尽可能宽松的最低重排分数。"""
+    scores = sorted(
+        {
+            _item_reranker_score(item)
+            for outcome in outcomes
+            for item in outcome.get("items", [])
+            if isinstance(item, dict)
+        }
+    )
+    if not scores:
+        raise ValueError("固定问题集没有可用于标定的重排分数。")
+
+    passing: list[tuple[float, dict[str, int | bool]]] = []
+    for candidate in scores:
+        score = score_reranker_outcomes(outcomes, threshold=candidate)
+        if score["passed"]:
+            passing.append((candidate, score))
+    if not passing:
+        raw_score = score_reranker_outcomes(outcomes, threshold=min(scores))
+        no_evidence_scores = [
+            _item_reranker_score(item)
+            for outcome in outcomes
+            if outcome.get("category") == "NO_EVIDENCE"
+            for item in outcome.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if not no_evidence_scores:
+            raise ValueError("无依据问题没有可用于阈值诊断的重排分数。")
+        ceiling_score = score_reranker_outcomes(
+            outcomes,
+            threshold=math.nextafter(max(no_evidence_scores), math.inf),
+        )
+        raise ValueError(
+            "不存在同时满足固定问题集门槛的 reranker score threshold："
+            f"grounded={raw_score['grounded_passed']}/{raw_score['grounded_total']}，"
+            f"no_evidence={raw_score['no_evidence_passed']}/{raw_score['no_evidence_total']}，"
+            f"isolation={raw_score['isolation_passed']}/{raw_score['isolation_total']}；"
+            "拒绝全部无依据候选时："
+            f"grounded={ceiling_score['grounded_passed']}/"
+            f"{ceiling_score['grounded_total']}，"
+            f"no_evidence={ceiling_score['no_evidence_passed']}/"
+            f"{ceiling_score['no_evidence_total']}，"
+            f"isolation={ceiling_score['isolation_passed']}/"
+            f"{ceiling_score['isolation_total']}。"
+        )
+
+    # 分数越高，候选越严格；同样通过时选择最小阈值以最大化保留已验证证据。
+    return min(passing, key=lambda value: value[0])
 
 
 if __name__ == "__main__":

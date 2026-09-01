@@ -63,3 +63,4 @@ class ProcessDocumentRead(BaseModel):
     version: int
     uploaded_at: datetime
     updated_at: datetime
+    index_context_chunk_count: int | None = None

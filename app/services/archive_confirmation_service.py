@@ -139,14 +139,18 @@ def confirm_document(
 
     field_values = _read_field_values(document.id, session)
     if archive_document.status == ArchiveDocumentStatus.CONFIRMED:
+        index_result = None
         # 已确认但尚无 Final Chunk 表示上次 INDEX 失败或尚未完成；重放同一版本时
         # 允许恢复索引。已有正式 Chunk 的确认请求仍保持真正幂等，不重复调用外部服务。
         if archive_document.final_chunk_count == 0:
-            index_confirmed_document(document=document, session=session)
+            index_result = index_confirmed_document(document=document, session=session)
         return _build_process_document_read(
             document=document,
             archive_document=archive_document,
             field_values=field_values,
+            index_context_chunk_count=(
+                index_result.contextual_chunk_count if index_result is not None else None
+            ),
         )
     if archive_document.status not in _CONFIRMABLE_STATUSES:
         raise AppError(409, "CONFIRM_NOT_ALLOWED", "当前文档状态不允许人工确认。")
@@ -195,9 +199,10 @@ def confirm_document(
         raise AppError(500, "CONFIRM_FAILED", "人工确认保存失败。") from exc
 
     session.refresh(archive_document)
-    index_confirmed_document(document=document, session=session)
+    index_result = index_confirmed_document(document=document, session=session)
     return _build_process_document_read(
         document=document,
         archive_document=archive_document,
         field_values=field_values,
+        index_context_chunk_count=getattr(index_result, "contextual_chunk_count", None),
     )

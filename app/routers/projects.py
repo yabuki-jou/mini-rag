@@ -96,6 +96,8 @@ from app.services.archive_document_delete_service import delete_archive_document
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+# 注释 1：该 Router 保持薄层；依赖负责建立身份和项目归属，Service 负责事务、
+# 状态规则和 I/O。
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
 def create_project_endpoint(
@@ -152,6 +154,8 @@ def delete_project_document_endpoint(
     session: SessionDep,
 ) -> Response:
     """物理删除项目文档及其档案、文件、向量和关联。"""
+    # 注释 2：ProjectDocumentDep 在删除前同时解析所有权和项目成员关系，
+    # 因而客户端不能选择其他项目的文档。
     delete_archive_document(
         document=document,
         actor_id=current_user.id,
@@ -192,6 +196,8 @@ def list_project_archives_endpoint(
     authoring_organization: str | None = None,
 ) -> ArchivePageRead:
     """分页读取没有删除阻断的正式档案目录。"""
+    # 注释 3：由 Service 而非本路由应用 CONFIRMED 与可见性阻断规则，
+    # 使所有目录调用方共用同一闸门。
     return list_formal_archives(
         project_id=project_context.project_id,
         page=page,
@@ -243,6 +249,7 @@ def retrieve_project_archive_endpoint(
     session: SessionDep,
 ) -> ArchiveRetrievalResponse:
     """仅在当前项目正式档案范围内检索可追溯原文证据。"""
+    # 注释 4：范围值来自已验证依赖而非请求体，使向量检索始终与 Bearer 授权一致。
     return retrieve_archive_chunks(
         user_id=project_context.user_id,
         project_id=project_context.project_id,
@@ -263,6 +270,7 @@ def ask_project_archive_question_endpoint(
     session: SessionDep,
 ) -> ArchiveQuestionResponse:
     """基于当前项目正式证据生成带引用回答；无依据时直接拒答。"""
+    # 注释 5：问题文本是唯一面向模型的客户端输入；身份和知识库范围始终由服务端控制。
     return answer_archive_question(
         user_id=project_context.user_id,
         project_id=project_context.project_id,
@@ -306,6 +314,8 @@ def create_manual_draft_endpoint(
     session: SessionDep,
 ) -> ArchiveDraftRead:
     """为已解析项目文档创建七字段空白人工草稿。"""
+    # 注释 6：创建草稿需要已认证操作者，因为 Service 会记录人工归属的状态转换，
+    # 与纯读取路由不同。
     return create_manual_draft(
         document=document,
         actor_id=current_user.id,
@@ -337,6 +347,7 @@ def update_document_field_endpoint(
     session: SessionDep,
 ) -> ArchiveDraftRead:
     """保存单个归档字段、人工检查状态和当前快照证据。"""
+    # 注释 7：请求体只携带字段内容；文档归属和字段名分别由可信路径依赖与枚举校验确定。
     return update_field(
         document=document,
         actor_id=current_user.id,
@@ -356,6 +367,7 @@ def create_document_suggestions_endpoint(
     session: SessionDep,
 ) -> ArchiveDraftRead:
     """基于当前解析快照生成首次 AI 字段建议。"""
+    # 注释 8：Service 自行读取当前快照，避免客户端提交任意文本或过期快照标识。
     return create_suggestions(
         document_id=document.id,
         actor_id=current_user.id,
@@ -410,6 +422,8 @@ def confirm_project_document_endpoint(
     session: SessionDep,
 ) -> ProcessDocumentRead:
     """校验人工确认前置条件、转为 CONFIRMED 并触发内部 INDEX。"""
+    # 注释 9：确认属于业务状态转换，因此透传 expected_version 以保护人工检查
+    # 不受并发修改影响。
     return confirm_document(
         document=document,
         actor_id=current_user.id,
@@ -429,6 +443,8 @@ def cancel_project_document_confirmation_endpoint(
     session: SessionDep,
 ) -> ProcessDocumentRead:
     """取消确认、退出正式范围并清理 Final Chunk。"""
+    # 注释 10：取消确认会立即将文档移出正式范围；随后向量清理遵循 Service 中的
+    # 保守恢复规则。
     return cancel_confirmation(
         document=document,
         actor_id=current_user.id,
@@ -473,6 +489,8 @@ def create_document_checklist_link_endpoint(
     session: SessionDep,
 ) -> ChecklistLinkRead:
     """以文档和清单项版本号为前提人工确认档案关联。"""
+    # 注释 11：Service 会检查两类资源版本，因为关联会改变派生清单状态，
+    # 不能与文档更新竞争。
     return create_document_link(
         document=document,
         actor_id=current_user.id,
@@ -559,6 +577,8 @@ def delete_checklist_item_endpoint(
     session: SessionDep,
 ) -> Response:
     """删除项目清单项及其关联，并保留脱敏审计。"""
+    # 注释 12：该接口按契约不返回正文；所有派生状态处理都在响应发送前由 Service
+    # 在事务内完成。
     delete_checklist_item(
         project_id=project_context.project_id,
         actor_id=project_context.user_id,

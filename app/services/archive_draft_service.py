@@ -48,6 +48,7 @@ def _build_process_document_read(
     document: Document,
     archive_document: ArchiveDocument,
     field_values: Sequence[ArchiveFieldValue],
+    index_context_chunk_count: int | None = None,
 ) -> ProcessDocumentRead:
     """把草稿字段检查事实组合成项目文档响应。"""
     return ProcessDocumentRead(
@@ -70,6 +71,7 @@ def _build_process_document_read(
         version=archive_document.version,
         uploaded_at=document.created_at,
         updated_at=document.updated_at,
+        index_context_chunk_count=index_context_chunk_count,
     )
 
 

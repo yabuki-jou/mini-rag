@@ -40,6 +40,17 @@ class FakeCollection:
         return self.result
 
 
+@pytest.fixture(autouse=True)
+def stub_archive_reranker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """隔离检索测试的本地大模型加载，重排规则由各用例显式覆盖。"""
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.5] * len(contents),
+        raising=False,
+    )
+
+
 def _result(document_id: UUID, other_id: UUID) -> dict:
     return {
         "ids": [["a" * 64, "b" * 64]],
@@ -110,7 +121,7 @@ def test_retrieval_applies_distance_threshold_and_returns_evidence_fields(
     project_document_api,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """距离超过冻结阈值的候选被过滤，并保留文件名、定位和摘录。"""
+    """低于独立重排阈值的候选被过滤，并保留文件名、定位和摘录。"""
     client, engine, _ = project_document_api
     user_id = create_user(engine)
     project_id, document_id, _ = _confirmed_document(client, engine, user_id)
@@ -139,7 +150,12 @@ def test_retrieval_applies_distance_threshold_and_returns_evidence_fields(
     )
     monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
     monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", 0.2)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.9, 0.1],
+    )
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", 0.5, raising=False)
 
     with Session(engine) as session:
         project = session.get(Project, project_id)
@@ -242,3 +258,247 @@ def test_retrieval_records_eval_scope_and_final_items(
     }
     assert observed_by_name["archive_retrieval_result"]["returned_count"] == 1
     assert observed_by_name["archive_retrieval_result"]["items"][0]["document_id"] == str(document_id)
+
+
+def test_retrieval_reranks_only_validated_top_ten_candidates(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重排只能处理范围校验后的 Top-10，并保持最终 API 只返回请求数量。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    pending_id = _add_pending_document(engine, project_id)
+    collection = FakeCollection(
+        {
+            "ids": [["a" * 64, "b" * 64, "c" * 64, "d" * 64]],
+            "documents": [["低重排分数", "高重排分数", "待确认内容", "中等重排分数"]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                },
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 2,
+                    "location_end": 2,
+                },
+                {
+                    "document_id": str(pending_id),
+                    "filename": "待确认资料.txt",
+                    "location_type": "TEXT_LINE_RANGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                },
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 3,
+                    "location_end": 3,
+                },
+            ]],
+            "distances": [[0.1, 0.2, 0.01, 0.3]],
+        }
+    )
+    observed_contents: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        assert query == "项目阶段"
+        observed_contents.extend(contents)
+        return [0.1, 0.9, 0.4]
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        fake_score,
+        raising=False,
+    )
+    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="项目阶段",
+            top_k=1,
+            session=session,
+        )
+
+    assert collection.calls[0]["n_results"] == 10
+    assert observed_contents == ["低重排分数", "高重排分数", "中等重排分数"]
+    assert response.returned_count == 1
+    assert response.items[0].excerpt == "高重排分数"
+
+
+def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """旧距离阈值不能在重排前排除已通过正式范围校验的候选。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(
+        {
+            "ids": [["a" * 64, "b" * 64]],
+            "documents": [["低重排分数", "高重排分数"]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                },
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 2,
+                    "location_end": 2,
+                },
+            ]],
+            "distances": [[0.1, 0.9]],
+        }
+    )
+    observed_contents: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        assert query == "项目阶段"
+        observed_contents.extend(contents)
+        return [0.9 if content == "高重排分数" else 0.1 for content in contents]
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        fake_score,
+        raising=False,
+    )
+    monkeypatch.setattr(settings, "retrieval_distance_threshold", 0.2)
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", None, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="项目阶段",
+            top_k=1,
+            session=session,
+        )
+
+    assert collection.calls[0]["n_results"] == 10
+    assert observed_contents == ["低重排分数", "高重排分数"]
+    assert response.returned_count == 1
+    assert response.items[0].excerpt == "高重排分数"
+
+
+def test_retrieval_returns_reranker_score_with_compatible_dense_score(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """最终重排分数必须单独返回，且保留既有 Chroma 分数字段。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(
+        {
+            "ids": [["a" * 64]],
+            "documents": [["正式证据"]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                }
+            ]],
+            "distances": [[0.1]],
+        }
+    )
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.75],
+    )
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="项目阶段",
+            top_k=1,
+            session=session,
+        )
+
+    assert response.items[0].score == pytest.approx(0.9)
+    assert response.items[0].reranker_score == pytest.approx(0.75)
+
+
+def test_retrieval_orders_equal_reranker_scores_by_distance_then_chunk_id(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """重排分数并列时必须按原始 distance 和 Chunk ID 产生稳定顺序。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(
+        {
+            "ids": [["c" * 64, "b" * 64, "a" * 64]],
+            "documents": [["距离较远", "同距离后", "同距离前"]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": index,
+                    "location_end": index,
+                }
+                for index in (1, 2, 3)
+            ]],
+            "distances": [[0.3, 0.1, 0.1]],
+        }
+    )
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.5, 0.5, 0.5],
+    )
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="项目阶段",
+            top_k=3,
+            session=session,
+        )
+
+    assert [item.chunk_id for item in response.items] == ["a" * 64, "b" * 64, "c" * 64]

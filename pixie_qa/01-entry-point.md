@@ -1,76 +1,62 @@
-# Entry Point & Execution Flow
+# 入口与执行流程
 
-> **历史评测输入快照：** 本文中的请假接口、`decisions` 接口与 SQLite 业务库描述
-> 已不代表当前项目。它们仅用于解释历史评测材料，不得作为当前 API 或部署依据。
-> 当前范围见 `AGENTS.md` 与 `docs/api-design.md`。
+## 如何运行
 
-## How to run
-
-项目使用 Python 3.11 和 FastAPI。在项目根目录先执行 Alembic 迁移，再运行服务器：
+项目使用 Python 3.11、PostgreSQL、Chroma 与本地 BGE。完成本地 `.env` 配置后，在项目根目录执行：
 
 ```powershell
 C:\D\venvs\mrh\Scripts\python.exe -m alembic upgrade head
 C:\D\venvs\mrh\Scripts\python.exe run.py
 ```
 
-`run.py` 通过 Uvicorn 加载 `app.main:app`，应用 lifespan 会在接受请求前再次执行缺失迁移。真实用户通过 `http://127.0.0.1:8000/docs` 的 Swagger 或普通 HTTP 客户端操作。
+`run.py` 使用 Uvicorn 加载 `app.main:app`；应用启动时也会执行受控 Alembic 升级。真实用户通过 Swagger 或 Vue 工作台向 `http://127.0.0.1:8000` 发出 Bearer 认证 HTTP 请求。
 
-## Entry point
+## 应用入口
 
-- **File**: `run.py` → `app/main.py`
-- **Type**: 同步 FastAPI HTTP 服务
-- **Framework**: FastAPI、SQLModel、LangGraph
-- **Agent application boundary**: `app/routers/agent.py` → `app/services/agent_service.py` → `AdminAgentRuntime`
-- **Agent execution entry**: `AdminAgentRuntime.invoke()` 与 `AdminAgentRuntime.resume()`，但评测应从 HTTP Agent API 进入，不能绕过身份、会话和响应转换。
+- **文件**：`run.py` → `app/main.py`
+- **类型**：FastAPI HTTP 服务
+- **核心链路**：`app/routers/projects.py` → `retrieve_archive_chunks()` → PostgreSQL 正式文档闸门 → 本地 BGE → Chroma
+- **本轮评估对象**：`POST /projects/{project_id}/archive-retrieval`，因为它同时覆盖身份授权、正式档案范围、向量候选、排序与可追溯引用。
 
-## User-facing endpoints / interface
+## 面向用户的接口
 
-- **`POST /users`**
-  - Input: `{"name":"演示员工"}`
-  - Output: 用户 UUID。后续受保护请求通过 `X-User-ID` 使用该身份。
-- **`POST /knowledge-bases`**
-  - Input: `{"name":"员工行政制度"}`
-  - Output: 当前用户拥有的知识库 UUID。
-- **`POST /agent-sessions`**
-  - Input: `{"kb_id":"<UUID>"}` 和 `X-User-ID`
-  - Output: Agent 会话 UUID、知识库 UUID、Graph thread ID 和时间。
-- **`POST /agent-sessions/{session_id}/messages`**
-  - Input: `{"message":"<5–2000 字符自然语言>"}` 和 `X-User-ID`
-  - Output: `COMPLETED` 最终回答和可选制度引用，或 `REQUIRES_CONFIRMATION` 与唯一待确认请假草稿。
-- **`POST /agent-sessions/{session_id}/decisions`**
-  - Input: `{"action_id":"<UUID>","decision":"APPROVE|REJECT"}`
-  - Output: 恢复同一 Graph thread 后的最终回答；错误动作或无待确认动作返回 409。
-- **`GET /agent-sessions/{session_id}/messages`**
-  - Output: 只包含用户与助手自然语言内容的历史，不返回 ToolMessage 和内部 State。
-- **`GET /agent-sessions/{session_id}/tool-calls`**
-  - Output: 工具名、状态、累计耗时、安全参数/结果摘要和稳定错误码。
+- **`POST /auth/login`**
+  - 输入：用户名和密码。
+  - 输出：Access Token 与 Refresh Token；后续受保护接口使用 `Authorization: Bearer <Access Token>`。
+- **`POST /projects`、`POST /projects/{project_id}/documents`、解析与确认接口**
+  - 输入：项目资料、上传文件和受控确认操作。
+  - 输出：项目、档案、解析/确认状态及脱敏审计；这些操作建立正式检索可见的档案集合。
+- **`POST /projects/{project_id}/archive-retrieval`**
+  - 输入：`{"query":"<1 至 2000 字中文问题>","top_k":1..10}`，以及 Bearer Access Token。
+  - 输出：`items`、`requested_top_k`、`returned_count`。每个证据项包含原始 Chunk ID、文档 ID、文件名、定位范围、原文摘录和分数。
+- **`POST /projects/{project_id}/archive-questions`**
+  - 输入：问题和 Bearer Access Token。
+  - 输出：基于正式检索证据的问答结果；当没有证据时拒答。P14 未通过前不得把其真实 LLM 质量写为通过。
 
-## Execution flow
+## 执行流程
 
 ```text
 HTTP 请求
-→ X-User-ID 对应用户存在性校验
-→ AgentSession 所有权校验
-→ 应用服务从会话注入 user_id、kb_id、thread_id
-→ Runtime 从独立 Checkpoint SQLite 读取同一线程
-→ LangGraph 调用真实 DeepSeek 选择工具或追问
-→ ToolNode 调用 Milvus/业务 SQLite 领域服务
-→ 写工具生成草稿并 interrupt，决定接口使用 Command(resume=...)
-→ 应用服务转换最终回答、引用、历史和脱敏工具日志
-→ FastAPI 返回统一响应与 X-Request-ID
+→ Bearer Access Token 验证
+→ 项目归属与内部 kb_id 上下文注入
+→ PostgreSQL 查询 CONFIRMED 且未被删除阻断的 document_id
+→ BGE 编码查询
+→ Chroma 以 user_id + project_id + kb_id + document_id 过滤候选
+→ 服务再次校验候选元数据、原始引用和范围
+→ 返回按相关性排序的原始 Chunk 证据
 ```
 
-## Environment requirements
+阶段 C 接入后，最后一步之前会增加本地 Reranker：它只接收已通过范围校验的 Chroma Top-10 候选和查询正文，重排后仍返回同一份原始引用。
 
-| Variable | Purpose | Required? | Default / current check |
-| --- | --- | --- | --- |
-| `DATABASE_URL` | 用户、知识库、员工、请假和 Agent 审计业务库 | 否 | `sqlite:///./data/handwrite.db` |
-| `AGENT_CHECKPOINT_FILE` | LangGraph 多轮状态和 interrupt | 否 | `./data/agent_checkpoints.db` |
-| `DEEPSEEK_API_KEY` | 真实模型调用 | 是 | 已配置，仅检查存在性，未输出值 |
-| `DEEPSEEK_BASE_URL` | DeepSeek OpenAI 兼容地址 | 否 | `https://api.deepseek.com/v1` |
-| `DEEPSEEK_MODEL` | Agent 使用的聊天模型 | 否 | `deepseek-chat` |
-| `MILVUS_URI` | 制度 Chunk 向量检索 | 是（真实 RAG） | 当前配置 `http://localhost:19530` |
-| `MILVUS_TOKEN` | Milvus 认证 | 视服务配置 | 使用 SecretStr，不进入评测输出 |
-| `EMBEDDING_MODEL_PATH` | 本地中文 BGE Embedding | 是（真实 RAG） | 当前检查为不存在，不能宣称真实检索已可运行 |
+## 环境要求
 
-真实 DeepSeek 已具备配置条件。由于当前 Embedding 路径不存在，A-09 可以执行真实模型的工具选择与 Agent 编排评测，并通过评测注入控制外部业务/检索数据；不能把这种结果表述为真实 BGE + Milvus 端到端检索通过。
+| 变量 | 用途 | 是否需要 |
+| --- | --- | --- |
+| `DATABASE_URL` | PostgreSQL 业务事实、授权和档案状态 | 是 |
+| `CHROMA_HOST`、`CHROMA_PORT` | 本地 Chroma HTTP 服务 | 是 |
+| `EMBEDDING_MODEL_PATH`、`EMBEDDING_DEVICE` | 本地 BGE 查询向量 | 是 |
+| `AUTH_JWT_SECRET` | Bearer Access Token 验证 | 是 |
+| `ARCHIVE_EMBEDDING_CONTEXT_MODE` | Final Chunk 的字段上下文表示 | 是，当前由本地 `.env` 决定 |
+| 后续 Reranker 配置 | 本地模型路径、候选池和独立阈值 | 阶段 C 接入时新增；当前尚无运行时代码 |
+
+真实固定集运行只能使用用户确认的虚构档案与受控本地服务；不得把单元测试的 Mock 数据或历史请假资料作为质量通过证据。

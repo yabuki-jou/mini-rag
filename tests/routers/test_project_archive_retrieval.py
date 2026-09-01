@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
+from app.core.errors import AppError
 from app.models import Project
 from app.schemas.archive_retrieval import ArchiveRetrievalResponse
 from tests.routers.test_project_archive_catalog import _add_pending_document, _confirmed_document
@@ -63,3 +64,27 @@ def test_archive_retrieval_route_rejects_invalid_top_k(
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_archive_retrieval_route_maps_reranker_failure_to_stable_error(
+    project_document_api: tuple[TestClient, Engine, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """本地 Reranker 故障必须保持服务端稳定错误码，不能静默降级。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, _, _ = _confirmed_document(client, engine, user_id)
+
+    def fail_retrieve(**kwargs):
+        del kwargs
+        raise AppError(503, "RERANKER_UNAVAILABLE", "本地 Reranker 推理失败。")
+
+    monkeypatch.setattr("app.routers.projects.retrieve_archive_chunks", fail_retrieve)
+    response = client.post(
+        f"/projects/{project_id}/archive-retrieval",
+        headers=auth_headers(engine, user_id),
+        json={"query": "项目阶段", "top_k": 3},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "RERANKER_UNAVAILABLE"

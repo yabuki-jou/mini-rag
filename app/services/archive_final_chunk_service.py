@@ -1,7 +1,7 @@
 """构建智慧档案 Final Chunk，并封装独立 Chroma Collection 写入契约。"""
 
 from dataclasses import dataclass
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import json
 from functools import lru_cache
 from hashlib import sha256
@@ -127,15 +127,23 @@ def embed_final_chunks(
     document_id: UUID,
     chunks: Sequence[ArchiveFinalChunk],
     embedding_context: str = "",
+    embedding_contexts: Mapping[str, str] | None = None,
 ) -> list[ArchiveEmbeddedChunk]:
-    """使用确认后的档案上下文和原文片段生成 Final Chunk 向量。"""
+    """使用确认字段上下文和原文片段生成 Final Chunk 向量。"""
     if not chunks:
         return []
     normalized_context = embedding_context.strip()
+    if normalized_context and embedding_contexts:
+        raise ValueError("全局与按 Chunk 的向量上下文不能同时使用。")
+    normalized_contexts = {
+        chunk_id: context.strip()
+        for chunk_id, context in (embedding_contexts or {}).items()
+        if context.strip()
+    }
     embedding_inputs = [
         (
-            f"{normalized_context}\n原文片段：{chunk.content}"
-            if normalized_context
+            f"{context}\n原文片段：{chunk.content}"
+            if (context := normalized_contexts.get(chunk.chunk_id, normalized_context))
             else chunk.content
         )
         for chunk in chunks

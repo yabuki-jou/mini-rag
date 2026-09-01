@@ -85,6 +85,8 @@ def _mark_delete_failed(
 def delete_archive_document(*, document: Document, actor_id: UUID, session: Session) -> None:
     """物理删除项目文档，并在外部失败时保留可重入操作记录。"""
     document_id = document.id
+    # 注释 1：行锁只能串行化删除准备，无法让 Chroma 和文件系统具备事务性；
+    # 操作记录负责跨越后续外部调用保存恢复状态。
     current = session.exec(
         select(Document).where(Document.id == document_id).with_for_update()
     ).first()
@@ -104,6 +106,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
         .where(ArchiveOperation.document_id == document_id)
         .with_for_update()
     ).all()
+    # 注释 2：否则解析、建议或索引任务可能在删除期间重新创建数据；
+    # 拒绝并发任务可使删除保持单向流转。
     for operation in operations:
         if (
             operation.operation_status == ArchiveOperationStatus.RUNNING
@@ -150,6 +154,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
         delete_operation.finished_at = None
         delete_operation.started_at = now
         delete_operation.updated_at = now
+    # 注释 3：访问外部存储前先提交可见性阻断，避免部分删除的文档仍出现在
+    # 目录或检索 API 中。
     current.status = DocumentStatus.DELETING
     current.error_message = None
     current.updated_at = now
@@ -161,6 +167,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
     operation_id = delete_operation.id
     started_at = perf_counter()
     try:
+        # 注释 4：优先删除 Chroma，因为可被检索到的过期向量比删除失败后暂时保留
+        # 原文件的风险更高。
         deleted_chunk_count = delete_final_chunks(
             user_id=actor_id,
             project_id=project.id,
@@ -178,6 +186,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
         session.add(delete_operation)
         session.commit()
 
+        # 注释 5：文件步骤单独记录检查点；即使进程重启，重试也能从已持久化的
+        # 操作状态安全继续。
         delete_stored_document_file(current.storage_path)
         eval_wrap(
             {"step": "FILE_DELETE", "status": "completed"},
@@ -200,6 +210,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
             session.execute(delete(FieldEvidence).where(FieldEvidence.field_value_id.in_(field_ids)))
         session.execute(delete(ArchiveFieldValue).where(ArchiveFieldValue.document_id == document_id))
         session.execute(delete(ChecklistLink).where(ChecklistLink.document_id == document_id))
+        # 注释 6：只有外部清理完成后才删除数据库事实；外部步骤仍可能失败时，
+        # 必须保留标识符和恢复标记。
         # 先离开 CONFIRMED，才能在约束下清空当前快照和确认事实。
         archive_document.status = ArchiveDocumentStatus.PENDING_RECONFIRMATION
         archive_document.confirmed_by = None
@@ -236,6 +248,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
             description="物理删除服务向调用方交付的最终完成结果。",
         )
     except AppError as exc:
+        # 注释 7：预期业务失败在服务端保留稳定错误码，客户端对所有未完成删除
+        # 只接收一种可重试契约。
         _mark_delete_failed(document_id=document_id, operation_id=operation_id, session=session)
         eval_wrap(
             {"outcome": "incomplete", "failure_code": exc.code},
@@ -251,6 +265,8 @@ def delete_archive_document(*, document: Document, actor_id: UUID, session: Sess
         )
         raise AppError(503, "DOCUMENT_DELETE_INCOMPLETE", "文档删除未完成，可稍后重试。") from exc
     except Exception as exc:
+        # 注释 8：未知基础设施异常也走同一保守恢复路径，且不向 HTTP 响应暴露
+        # 异常文本。
         _mark_delete_failed(document_id=document_id, operation_id=operation_id, session=session)
         eval_wrap(
             {"outcome": "incomplete", "failure_code": "UNEXPECTED_EXTERNAL_FAILURE"},

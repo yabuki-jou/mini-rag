@@ -12,8 +12,10 @@ Chroma 的本机命名空间、范围过滤、精确删除，以及 Docker API�
 基线已确认；AV1-P01～P08、P09 确认—INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、
 P12 证据问答和 P13 物理删除的实现切片已完成。P09 已完成真实确认—INDEX 路由纵向链路、
 真实 Chroma/BGE canary 与取消确认清理；P11 已完成真实单文档 canary（512 维 cosine、命中 1 条、
-10 次请求 P95 约 125.97 ms）。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储
-故障恢复和完整 Vue 工作台端到端验收仍待 P14。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
+10 次请求 P95 约 125.97 ms）。P14 固定集已复验：当前三种纯稠密表示及阶段 C 本地 Reranker 均不能同时满足
+“有据至少 7/8、无据拒答 2/2”。阶段 C.1 已确认一题标准证据未进入完整 Chroma Top-10，且两个无据题仍有高 Reranker
+分数；不存在可冻结的独立重排阈值。Chunk 调整、查询表达、换模型或修改评测集均需另行重新授权；DeepSeek 问答质量、P13 真实跨存储故障恢复和完整 Vue 工作台
+端到端验收仍待完成。当前不推进标书投标、标书解析生成或投标合规审查。原员工请假领域
 已经删除，不再提供余额、申请、人工确认或决定接口。
 
 ## 架构
@@ -40,29 +42,34 @@ flowchart LR
 
 详细设计见：
 
-- [需求说明](docs/requirements.md)
-- [技术架构](docs/architecture.md)
-- [数据库设计](docs/database-design.md)
-- [API 设计](docs/api-design.md)
-- [智慧档案实施计划](docs/archive-v1-implementation-plan.md)
-- [Chroma 迁移决策](docs/chroma-migration-decision.md)
-- [Parser 冻结规则](docs/archive-v1-parser-design.md)
-- [既有 Agent 实施计划](docs/implementation-plan.md)
-- [Agent 逻辑导览](docs/agent-guide.md)
-- [Agent 演示步骤](docs/agent-demo.md)
+- [需求说明](docs/design/需求说明.md)
+- [技术架构](docs/design/技术架构.md)
+- [数据库设计](docs/design/数据库设计.md)
+- [API 设计](docs/design/接口设计.md)
+- [智慧档案实施计划](docs/implementation/智慧档案V1实施计划.md)
+- [P14 C.1 双排序诊断决策](docs/review/P14-rag检索质量改进/P14-C1-双排序诊断决策.md)
+- [检索质量问题分析与改进策略](docs/review/P14-rag检索质量改进/检索质量问题分析与改进策略.md)
+- [P14-C2 检索质量优化方案](docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md)
+- [Chroma 迁移决策](docs/design/Chroma迁移决策.md)
+- [Parser 冻结规则](docs/design/智慧档案V1解析器设计.md)
+- [既有 Agent 实施计划](docs/implementation/既有检索与智能体实施计划.md)
+- [Agent 逻辑导览](docs/implementation/智能体逻辑导览.md)
+- [Agent 演示步骤](docs/implementation/智能体演示步骤.md)
 
-以 `LEARNING_PLAN.md` 和对应实施计划为实时进度来源。`docs/review/`、`docs/stage/` 与
-`pixie_qa/` 中的材料保留其产生时的评审、学习或评测上下文，不作为当前实现状态的来源。
+以 `LEARNING_PLAN.md` 和对应实施计划为实时进度来源；P14 检索质量的当前任务以
+`docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md` 为唯一执行台账，证据与决策分别追溯到同目录的分析台账和 ADR。
+其余 `docs/review/`、`docs/stage/` 与 `pixie_qa/` 材料保留其产生时的评审、学习或评测上下文，
+不作为当前实现状态的来源。
 
 ## 主要能力
 
 - TXT、Markdown、PDF、DOCX 上传与解析。
-- BGE Embedding、向量入库、Top-K/Top-N 检索；Chroma cosine distance 的阈值尚待固定验收集标定。
+- BGE Embedding、向量入库、Top-K/Top-N 检索；阶段 C 以固定 Chroma Top-10 做本地 Reranker 重排，真实固定集未找到满足门槛的重排阈值。
 - 无依据拒答，带文档名、页码、摘录和分数的结构化引用。
 - Agent 会话所有权、LangGraph 多轮消息恢复、制度检索 Tool Calling。
 - 工具参数/结果脱敏、耗时和稳定错误码审计。
 - Alembic 管理 PostgreSQL Schema；当前本地 Compose 提供 PostgreSQL 与内部 Chroma 服务。云端部署策略和资源验收暂定，待 V1 完成后再评估。
-- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制、首次解析/受控失败记录/专用解析重试/四格式路由、P07 手工草稿和字段检查、P08 AI 建议/失败重试/安全 regenerate，以及 P09 确认/INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、P12 证据问答和 P13 物理删除切片；真实确认—INDEX、Chroma/BGE canary、取消确认清理和单文档 P95 基线已通过。相邻 Vue 工作台已接入认证、项目 CRUD、FR-031 清单 CRUD，以及 FR-032/033 项目级上传、处理列表、首次解析和专用解析重试的 DTO/API、Store 与页面，并通过正式 `5173/api → 8000` 代理 canary；两份虚构 TXT 覆盖 `UPLOADED → PARSED` 和 `PARSE_TEXT_UNAVAILABLE → PARSE_FAILED`，跨存储清理在 Chroma 心跳恢复后核对为零。固定问题集质量、DeepSeek 质量、P13 真实故障恢复、FR-034～FR-041 前端接入和完整端到端验收仍待 P14。
+- 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制、首次解析/受控失败记录/专用解析重试/四格式路由、P07 手工草稿和字段检查、P08 AI 建议/失败重试/安全 regenerate，以及 P09 确认/INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、P12 证据问答和 P13 物理删除切片；真实确认—INDEX、Chroma/BGE canary、取消确认清理和单文档 P95 基线已通过。P14 阶段 C 固定集的完整候选为有据 `7/8`、无据拒答 `0/2`、隔离 `2/2`；在拒绝全部无据候选时降为有据 `3/8`、无据拒答 `2/2`、隔离 `2/2`。阶段 C.1 的双排序诊断确认 `GROUNDED-07` 未进入完整 Top-10；故不能冻结阈值，且不得自动开始 Chunk 调整。相邻 Vue 工作台已接入认证、项目 CRUD、FR-031 清单 CRUD，以及 FR-032/033 项目级上传、处理列表、首次解析和专用解析重试的 DTO/API、Store 与页面，并通过正式 `5173/api → 8000` 代理 canary；FR-034～FR-041 前端接入、真实 DeepSeek、P13 真实故障恢复和完整端到端验收仍待 P14。
 
 ## 数据库表
 
@@ -182,7 +189,7 @@ docker compose config --quiet
 - 已实现 Argon2 账号密码、JWT 与单会话注销；revision `0010_account_auth` 已在当前 PostgreSQL 开发库实际迁移并核对认证表结构，专用 `POSTGRES_TEST_URL` 自动化迁移测试仍未配置。
 - Checkpoint SQLite 只适合单机运行。
 - 同步解析不适合大文件和高并发。
-- 没有 OCR、表格专用解析、混合检索、Rerank、多 Agent 或任务队列。
+- 没有 OCR、表格专用解析、混合检索、多 Agent 或任务队列。P14 已确认的唯一例外是本地 Reranker 对授权后的 Chroma Top-10 候选重排；真实固定集未找到可通过门槛的重排阈值，仍未通过质量验收。
 - 智慧档案的字段模型、分类与缺失规则、人工确认点、评测集和数据库设计基线已确认；
  Parser 冻结规则、虚构验收资料、迁移、模型和项目授权上下文已创建并验证；
  项目 CRUD/模板复制、清单项 API、项目内上传、解析、P08 AI 建议、P09 确认/INDEX/取消确认、

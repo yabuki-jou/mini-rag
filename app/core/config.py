@@ -36,6 +36,10 @@ class Settings(BaseSettings):
         embedding_device: Embedding 运行设备。
         embedding_dimension: Embedding 模型输出的向量维度。
         archive_embedding_context_mode: 正式档案 Chunk 向量中确认字段的表示方式。
+        archive_reranker_model_path: 本地正式档案 Reranker 模型目录。
+        archive_reranker_device: Reranker 运行设备。
+        archive_reranker_candidate_k: 每次交给 Reranker 的 Chroma 候选数量。
+        archive_reranker_score_threshold: 可选的最低 Reranker 分数；未标定时为 ``None``。
         chunk_size: 每个 Chunk 的目标字符数。
         chunk_overlap: 相邻 Chunk 重复保留的字符数。
         deepseek_api_key: DeepSeek API 密钥。
@@ -88,7 +92,15 @@ class Settings(BaseSettings):
     )
     embedding_device: str = "cpu"
     embedding_dimension: int = Field(default=512, gt=0)
-    archive_embedding_context_mode: Literal["none", "values", "labeled"] = "labeled"
+    archive_embedding_context_mode: Literal[
+        "none", "values", "labeled", "evidence_values"
+    ] = "labeled"
+
+    # Reranker 只服务于已完成授权与元数据校验的正式档案候选，默认使用本地 CPU。
+    archive_reranker_model_path: Path = Path("embedding_models/bge-reranker-base")
+    archive_reranker_device: str = "cpu"
+    archive_reranker_candidate_k: int = Field(default=10, ge=10, le=10)
+    archive_reranker_score_threshold: float | None = None
 
     # 递归字符切分器使用的目标大小和重叠字符数。
     chunk_size: int = Field(default=800, gt=0)
@@ -158,6 +170,11 @@ class Settings(BaseSettings):
     def embedding_path(self) -> Path:
         """本地 Embedding 模型目录的绝对路径。"""
         return self.resolve_path(self.embedding_model_path)
+
+    @property
+    def archive_reranker_path(self) -> Path:
+        """本地正式档案 Reranker 模型目录的绝对路径。"""
+        return self.resolve_path(self.archive_reranker_model_path)
 
     @property
     def log_path(self) -> Path:

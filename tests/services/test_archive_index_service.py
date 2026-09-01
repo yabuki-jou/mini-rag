@@ -2,6 +2,7 @@
 
 from collections.abc import Generator
 import json
+import logging
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from app.models import (
     ArchiveDocumentStatus,
     ArchiveFieldName,
     ArchiveFieldValue,
+    FieldEvidence,
     FieldReviewStatus,
     ArchiveOperation,
     ArchiveOperationStatus,
@@ -154,6 +156,32 @@ def _fake_embedded_chunks() -> list[ArchiveEmbeddedChunk]:
     ]
 
 
+def _two_fake_chunks() -> tuple[ArchiveFinalChunk, ...]:
+    """返回两个定位不同的 Final Chunk，用于验证字段证据不会跨片段扩散。"""
+    return (
+        ArchiveFinalChunk(
+            chunk_id="c" * 64,
+            content="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+            snapshot_hash="a" * 64,
+            parser_version="archive-parser-v1",
+        ),
+        ArchiveFinalChunk(
+            chunk_id="d" * 64,
+            content="例会记录正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=2,
+            location_end=2,
+            normalized_anchor="例会",
+            snapshot_hash="a" * 64,
+            parser_version="archive-parser-v1",
+        ),
+    )
+
+
 def test_index_confirmed_document_records_success_and_chunk_count(
     db_session: Session,
     tmp_path: Path,
@@ -214,6 +242,8 @@ def test_index_builds_embedding_context_from_confirmed_archive_fields(
     db_session.commit()
     captured: dict[str, object] = {}
     monkeypatch.setattr(archive_index_service, "build_final_chunks", lambda **_: _fake_chunks())
+    # 本测试验证历史 labeled 语义，不能受开发机 .env 的实验模式影响。
+    monkeypatch.setattr(archive_index_service.settings, "archive_embedding_context_mode", "labeled")
 
     def capture_embedding(**kwargs):
         captured.update(kwargs)
@@ -265,6 +295,218 @@ def test_embedding_context_modes_keep_only_confirmed_values() -> None:
         fields=fields,
         mode="labeled",
     ) == "档案文件：施工方案.txt\n档案标题：施工方案\n项目阶段：CONSTRUCTION"
+
+
+def test_evidence_value_contexts_include_only_confirmed_fields_with_current_evidence() -> None:
+    """evidence_values 必须按定位分配字段值，并排除无证据或未确认字段。"""
+    snapshot_id = UUID("00000000-0000-0000-0000-000000000002")
+    title = ArchiveFieldValue(
+        id=UUID("00000000-0000-0000-0000-000000000010"),
+        field_name=ArchiveFieldName.TITLE,
+        text_value="施工方案",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+    )
+    no_source = ArchiveFieldValue(
+        id=UUID("00000000-0000-0000-0000-000000000011"),
+        field_name=ArchiveFieldName.PROJECT_STAGE,
+        text_value="CONSTRUCTION",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+        no_source_evidence=True,
+    )
+    pending = ArchiveFieldValue(
+        id=UUID("00000000-0000-0000-0000-000000000012"),
+        field_name=ArchiveFieldName.KEYWORDS,
+        json_value=["例会"],
+        review_status=FieldReviewStatus.PENDING_CHECK,
+    )
+    evidences = [
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        ),
+        FieldEvidence(
+            field_value_id=no_source.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        ),
+        FieldEvidence(
+            field_value_id=pending.id,
+            snapshot_id=snapshot_id,
+            excerpt="例会记录正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=2,
+            location_end=2,
+            normalized_anchor="例会",
+        ),
+    ]
+
+    contexts = archive_index_service._build_evidence_value_contexts(
+        chunks=_two_fake_chunks(),
+        fields=[pending, no_source, title],
+        evidences=evidences,
+        snapshot_id=snapshot_id,
+    )
+
+    assert contexts == {"c" * 64: "施工方案"}
+
+
+def test_evidence_value_contexts_require_matching_snapshot_anchor_and_stable_order() -> None:
+    """证据上下文应拒绝过期或锚点不符记录，并按字段枚举顺序连接。"""
+    snapshot_id = UUID("00000000-0000-0000-0000-000000000002")
+    title = ArchiveFieldValue(
+        id=UUID("00000000-0000-0000-0000-000000000010"),
+        field_name=ArchiveFieldName.TITLE,
+        text_value="施工方案",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+    )
+    stage = ArchiveFieldValue(
+        id=UUID("00000000-0000-0000-0000-000000000011"),
+        field_name=ArchiveFieldName.PROJECT_STAGE,
+        text_value="CONSTRUCTION",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+    )
+    evidences = [
+        FieldEvidence(
+            field_value_id=stage.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        ),
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="不匹配锚点",
+        ),
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=UUID("00000000-0000-0000-0000-000000000003"),
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        ),
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        ),
+    ]
+
+    contexts = archive_index_service._build_evidence_value_contexts(
+        chunks=_two_fake_chunks(),
+        fields=[stage, title],
+        evidences=evidences,
+        snapshot_id=snapshot_id,
+    )
+
+    assert contexts == {"c" * 64: "施工方案\nCONSTRUCTION"}
+
+
+def test_index_passes_evidence_contexts_without_changing_legacy_modes(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """新模式只传递按 Chunk 分配的字段值，不改变既有全局模式的契约。"""
+    document, _, snapshot_id = _confirmed_document(db_session, tmp_path)
+    title = ArchiveFieldValue(
+        document_id=document.id,
+        field_name=ArchiveFieldName.TITLE,
+        text_value="施工方案",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+    )
+    db_session.add(title)
+    db_session.flush()
+    db_session.add(
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        )
+    )
+    db_session.commit()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(archive_index_service, "build_final_chunks", lambda **_: _two_fake_chunks())
+    monkeypatch.setattr(archive_index_service.settings, "archive_embedding_context_mode", "evidence_values")
+
+    def capture_embedding(**kwargs):
+        captured.update(kwargs)
+        return _fake_embedded_chunks()
+
+    monkeypatch.setattr(archive_index_service, "embed_final_chunks", capture_embedding)
+    monkeypatch.setattr(archive_index_service, "insert_final_chunks", lambda **_: 1)
+
+    result = archive_index_service.index_confirmed_document(document=document, session=db_session)
+
+    assert captured["embedding_context"] == ""
+    assert captured["embedding_contexts"] == {"c" * 64: "施工方案"}
+    assert result.contextual_chunk_count == 1
+
+
+def test_index_records_safe_evidence_context_count(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """evidence_values 索引应记录不含档案内容或标识的上下文覆盖数量。"""
+    document, _, snapshot_id = _confirmed_document(db_session, tmp_path)
+    title = ArchiveFieldValue(
+        document_id=document.id,
+        field_name=ArchiveFieldName.TITLE,
+        text_value="施工方案",
+        review_status=FieldReviewStatus.VALUE_CONFIRMED,
+    )
+    db_session.add(title)
+    db_session.flush()
+    db_session.add(
+        FieldEvidence(
+            field_value_id=title.id,
+            snapshot_id=snapshot_id,
+            excerpt="施工阶段正文",
+            location_type="TEXT_LINE_RANGE",
+            location_start=1,
+            location_end=1,
+            normalized_anchor="施工",
+        )
+    )
+    db_session.commit()
+    monkeypatch.setattr(archive_index_service, "build_final_chunks", lambda **_: _two_fake_chunks())
+    monkeypatch.setattr(archive_index_service.settings, "archive_embedding_context_mode", "evidence_values")
+    monkeypatch.setattr(archive_index_service, "embed_final_chunks", lambda **_: _fake_embedded_chunks())
+    monkeypatch.setattr(archive_index_service, "insert_final_chunks", lambda **_: 1)
+    caplog.set_level(logging.INFO, logger=archive_index_service.__name__)
+
+    archive_index_service.index_confirmed_document(document=document, session=db_session)
+
+    assert "archive_index_embedding_context mode=evidence_values contextual_chunk_count=1" in caplog.text
+    assert document.filename not in caplog.text
+    assert "施工方案" not in caplog.text
 
 
 def test_index_rejects_other_running_document_operation(

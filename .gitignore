@@ -9,9 +9,4 @@ logs/
 embedding_models/
 tests/pytest_docs/
 docs/
-!docs/
-docs/*
-!docs/agent-guide.md
-!docs/agent-demo.md
-!docs/archive-v1-implementation-plan.md
-!docs/archive-v1-parser-design.md
+

@@ -12,8 +12,8 @@ from app.models.common import utc_now
 
 
 # PostgreSQL 业务库使用 JSONB；SQLite 迁移测试仍可使用通用 JSON。
-# `None` must be stored as SQL NULL rather than the JSON literal `null` so the
-# field-name check constraints can distinguish an unused value column.
+# `None` 必须存为 SQL NULL，而不是 JSON 字面量 `null`，这样字段名检查约束才能
+# 区分未使用的值列。
 ARCHIVE_JSON = JSON(none_as_null=True).with_variant(
     JSONB(none_as_null=True), "postgresql"
 )

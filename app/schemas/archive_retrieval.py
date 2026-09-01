@@ -17,7 +17,7 @@ class ArchiveRetrievalRequest(BaseModel):
 
 
 class ArchiveRetrievalItemRead(BaseModel):
-    """返回一个正式原文 Chunk 的可追溯证据。"""
+    """返回一个正式原文 Chunk 的可追溯证据及最终重排分数。"""
 
     chunk_id: str = Field(min_length=1, max_length=64)
     document_id: UUID
@@ -27,6 +27,7 @@ class ArchiveRetrievalItemRead(BaseModel):
     location_end: int = Field(ge=1)
     excerpt: str = Field(min_length=1)
     score: float
+    reranker_score: float | None = None
 
 
 class ArchiveRetrievalResponse(BaseModel):

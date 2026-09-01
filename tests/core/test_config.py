@@ -2,6 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
+from pathlib import Path
 
 from app.core.config import Settings
 
@@ -38,6 +39,28 @@ def test_settings_supports_only_explicit_archive_embedding_context_modes() -> No
         ).archive_embedding_context_mode
         == "values"
     )
+    assert (
+        Settings(
+            _env_file=None,
+            archive_embedding_context_mode="evidence_values",
+        ).archive_embedding_context_mode
+        == "evidence_values"
+    )
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, archive_embedding_context_mode="unknown")
+
+
+def test_settings_default_to_local_archive_reranker_configuration() -> None:
+    """正式档案重排必须使用受控的本地模型与固定候选池。"""
+    settings = Settings(_env_file=None)
+
+    assert settings.archive_reranker_model_path == Path(
+        "embedding_models/bge-reranker-base"
+    )
+    assert settings.archive_reranker_device == "cpu"
+    assert settings.archive_reranker_candidate_k == 10
+    assert settings.archive_reranker_score_threshold is None
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, archive_reranker_candidate_k=9)

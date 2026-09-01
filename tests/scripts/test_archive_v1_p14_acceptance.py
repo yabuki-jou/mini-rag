@@ -8,15 +8,19 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+import scripts.archive_v1_p14_acceptance as acceptance_runner
 
 from scripts.archive_v1_p14_acceptance import (
     AcceptanceError,
+    build_safe_retrieval_diagnostics,
     build_manual_field_payload,
     choose_distance_threshold,
     is_confirmed_document_response,
     parse_registered_user_id,
+    choose_reranker_score_threshold,
     score_at_no_evidence_ceiling,
     item_contains_expected_evidence,
+    score_reranker_outcomes,
     score_retrieval_outcomes,
     write_aggregate_result,
     write_safe_diagnostic,
@@ -55,6 +59,13 @@ def _grounded(*, distance: float) -> dict[str, object]:
     }
 
 
+def _reranked_item(*, filename: str, reranker_score: float) -> dict[str, object]:
+    """构造带独立重排分数的最小正式检索项。"""
+    item = _item(filename=filename, distance=0.2)
+    item["reranker_score"] = reranker_score
+    return item
+
+
 def test_expected_evidence_requires_filename_location_and_excerpt() -> None:
     """标准证据必须同时满足文件、定位范围与摘录，不能仅按文件名误判。"""
     expected = _grounded(distance=0.2)["expected_evidence"]
@@ -65,6 +76,168 @@ def test_expected_evidence_requires_filename_location_and_excerpt() -> None:
     assert not item_contains_expected_evidence(
         _item(filename="alpha.txt", distance=0.2, excerpt="不同内容"), expected
     )
+
+
+def test_safe_retrieval_diagnostics_reports_expected_rank_and_nearest_error() -> None:
+    """有据题必须并列保留 dense 与 Reranker 的安全排序证据。"""
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "expected_evidence": {
+                "relative_path": "documents/alpha-secret.txt",
+                "items": [
+                    {
+                        "location_type": "TEXT_LINE_RANGE",
+                        "location_start": 3,
+                        "location_end": 3,
+                        "excerpt": "标准证据",
+                    }
+                ],
+            },
+            "items": [
+                {
+                    **_item(filename="alpha-secret.txt", distance=0.20),
+                    "reranker_score": 0.9,
+                },
+                {
+                    **_item(
+                        filename="alpha-secret.txt",
+                        distance=0.11,
+                        excerpt="错误候选正文",
+                    ),
+                    "document_id": "11111111-1111-1111-1111-111111111111",
+                    "reranker_score": 0.4,
+                },
+            ],
+        }
+    ]
+
+    diagnostics = build_safe_retrieval_diagnostics(outcomes)
+
+    assert diagnostics == [
+        {
+            "category": "GROUNDED",
+            "case_id": "GROUNDED-01",
+            "candidate_count": 2,
+            "expected_in_chroma_top_10": True,
+            "distance_gap": pytest.approx(-0.09),
+            "expected_candidate_rank": 2,
+            "expected_distance": 0.20,
+            "incorrect_candidate_kind": "SAME_DOCUMENT",
+            "nearest_candidate_distance": 0.11,
+            "nearest_incorrect_distance": 0.11,
+            "expected_reranker_rank": 1,
+            "expected_reranker_score": 0.9,
+            "strongest_incorrect_reranker_score": 0.4,
+            "reranker_score_gap": 0.5,
+            "strongest_reranker_incorrect_kind": "SAME_DOCUMENT",
+        }
+    ]
+    serialized = json.dumps(diagnostics, ensure_ascii=False)
+    for forbidden in (
+        "project-secret",
+        "alpha-secret.txt",
+        "错误候选正文",
+        "11111111-1111-1111-1111-111111111111",
+    ):
+        assert forbidden not in serialized
+
+
+def test_safe_retrieval_diagnostics_identifies_out_of_scope_candidates() -> None:
+    """无据题必须显式保留最强 Reranker 候选的分数与 dense 距离。"""
+    outcomes = [
+        {
+            "category": "NO_EVIDENCE",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "items": [
+                {
+                    **_item(
+                        filename="alpha-secret.txt",
+                        distance=0.4,
+                        excerpt="Reranker 最强候选正文",
+                    ),
+                    "reranker_score": 0.8,
+                },
+                _item(
+                    filename="foreign-secret.txt",
+                    distance=0.12,
+                    excerpt="其他项目原文",
+                ) | {"reranker_score": 0.2},
+            ],
+        },
+        {
+            "category": "ISOLATION",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "items": [],
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "items": [],
+        },
+    ]
+
+    diagnostics = build_safe_retrieval_diagnostics(outcomes)
+
+    assert diagnostics == [
+        {
+            "category": "NO_EVIDENCE",
+            "candidate_count": 2,
+            "distance_gap": None,
+            "expected_candidate_rank": None,
+            "expected_distance": None,
+            "incorrect_candidate_kind": "OUT_OF_SCOPE",
+            "nearest_candidate_distance": 0.12,
+            "nearest_incorrect_distance": 0.12,
+            "strongest_candidate_reranker_score": 0.8,
+            "strongest_candidate_dense_distance": 0.4,
+        },
+        {
+            "category": "ISOLATION",
+            "distance_gap": None,
+            "expected_candidate_rank": None,
+            "expected_distance": None,
+            "incorrect_candidate_kind": "NONE",
+            "nearest_candidate_distance": None,
+            "nearest_incorrect_distance": None,
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "candidate_count": 0,
+            "distance_gap": None,
+            "expected_candidate_rank": None,
+            "expected_distance": None,
+            "incorrect_candidate_kind": "NONE",
+            "nearest_candidate_distance": None,
+            "nearest_incorrect_distance": None,
+            "strongest_candidate_reranker_score": None,
+            "strongest_candidate_dense_distance": None,
+        },
+    ]
+
+
+def test_safe_retrieval_diagnostics_marks_incomplete_candidate_pool_without_false_recall_claim() -> None:
+    """候选不足 10 条时，缺失标准证据不能被断言为 Chroma Top-10 召回失败。"""
+    outcome = _grounded(distance=0.2)
+    outcome["allowed_filenames"] = ["alpha.txt"]
+    outcome["items"] = [
+        _item(filename="other.txt", distance=0.1, excerpt="错误候选")
+        | {"reranker_score": 0.6}
+        for _ in range(9)
+    ]
+
+    diagnostics = build_safe_retrieval_diagnostics([outcome])
+
+    assert diagnostics[0]["candidate_count"] == 9
+    assert diagnostics[0]["expected_candidate_rank"] is None
+    assert diagnostics[0]["expected_in_chroma_top_10"] is False
+    assert diagnostics[0]["expected_reranker_rank"] is None
+    assert diagnostics[0]["expected_reranker_score"] is None
 
 
 def test_threshold_selection_meets_recall_no_evidence_and_isolation_gates() -> None:
@@ -108,6 +281,35 @@ def test_threshold_selection_meets_recall_no_evidence_and_isolation_gates() -> N
     # 继续扩大到 0.45 会让无依据问题出现候选。
     assert threshold == pytest.approx(0.24)
     assert score["grounded_passed"] == 7
+    assert score["no_evidence_passed"] == 2
+    assert score["isolation_passed"] == 2
+    assert score["passed"] is True
+
+
+def test_reranker_threshold_selection_uses_only_final_reranker_scores() -> None:
+    """阶段 C 标定必须按重排分数下限过滤，而不能复用 dense distance。"""
+    outcomes: list[dict[str, object]] = []
+    for _ in range(7):
+        outcome = _grounded(distance=0.2)
+        outcome["items"][0]["reranker_score"] = 0.8
+        outcomes.append(outcome)
+    eighth_grounded = _grounded(distance=0.2)
+    eighth_grounded["items"][0]["reranker_score"] = 0.4
+    outcomes.append(eighth_grounded)
+    outcomes.extend(
+        [
+            {"category": "NO_EVIDENCE", "project_id": "alpha", "items": [_reranked_item(filename="alpha.txt", reranker_score=0.3)]},
+            {"category": "NO_EVIDENCE", "project_id": "beta", "items": [_reranked_item(filename="beta.txt", reranker_score=0.2)]},
+            {"category": "ISOLATION", "project_id": "alpha", "hidden_evidence_in_other_project": {"relative_path": "documents/beta.txt"}, "allowed_filenames": ["alpha.txt"], "items": [_reranked_item(filename="alpha.txt", reranker_score=0.8)]},
+            {"category": "ISOLATION", "project_id": "beta", "hidden_evidence_in_other_project": {"relative_path": "documents/alpha.txt"}, "allowed_filenames": ["beta.txt"], "items": [_reranked_item(filename="beta.txt", reranker_score=0.8)]},
+        ]
+    )
+
+    threshold, score = choose_reranker_score_threshold(outcomes)
+
+    assert threshold == pytest.approx(0.4)
+    assert score_reranker_outcomes(outcomes, threshold=threshold) == score
+    assert score["grounded_passed"] == 8
     assert score["no_evidence_passed"] == 2
     assert score["isolation_passed"] == 2
     assert score["passed"] is True
@@ -292,6 +494,42 @@ def test_run_persists_aggregate_before_entering_cleanup_finally() -> None:
     assert result_write < cleanup_finally
 
 
+def test_run_surfaces_cleanup_failure_after_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """主验收失败时，清理失败也必须显式阻断，不能留下静默残留。"""
+
+    class FakeApi:
+        """隔离运行器控制流的最小 HTTP 客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭连接池。"""
+
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+
+    def fail_seed(*_args: object, **_kwargs: object) -> object:
+        """模拟阈值标定前的主验收异常。"""
+        raise ValueError("主验收失败")
+
+    def fail_cleanup(**_: object) -> None:
+        """模拟跨存储清理失败。"""
+        raise AcceptanceError("P14 虚构验收数据清理未全部完成。")
+
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "p14be-fixture"),
+    )
+    monkeypatch.setattr(acceptance_runner, "_seed_confirmed_documents", fail_seed)
+    monkeypatch.setattr(acceptance_runner, "_cleanup_seeded_scope", fail_cleanup)
+
+    with pytest.raises(AcceptanceError, match="清理未全部完成"):
+        acceptance_runner.run_retrieval_calibration(base_url="http://fixture")
+
+
 def test_safe_diagnostic_omits_error_text_except_threshold_aggregates(tmp_path: Path) -> None:
     """诊断文件不能回写 HTTP 路径、资源标识或任何原文。"""
     target = tmp_path / "p14-diagnostic.json"
@@ -309,6 +547,43 @@ def test_safe_diagnostic_omits_error_text_except_threshold_aggregates(tmp_path: 
         "stage": "threshold_calibration",
         "threshold_aggregate": "grounded=6/8，no_evidence=2/2，isolation=2/2",
     }
+
+
+def test_safe_diagnostic_persists_only_the_sanitized_retrieval_diagnostics(
+    tmp_path: Path,
+) -> None:
+    """阈值失败时应保留可行动的逐题指标，但不得写入原始候选。"""
+    target = tmp_path / "p14-diagnostic-with-retrieval.json"
+    diagnostics = build_safe_retrieval_diagnostics(
+        [
+            {
+                "category": "NO_EVIDENCE",
+                "project_id": "project-secret",
+                "allowed_filenames": ["alpha-secret.txt"],
+                "items": [
+                    _item(
+                        filename="alpha-secret.txt",
+                        distance=0.12,
+                        excerpt="不应写入的原文",
+                    ) | {"reranker_score": 0.7}
+                ],
+            }
+        ]
+    )
+
+    write_safe_diagnostic(
+        target,
+        stage="threshold_calibration",
+        error=ValueError("grounded=6/8，no_evidence=2/2，isolation=2/2"),
+        retrieval_diagnostics=diagnostics,
+    )
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["retrieval_diagnostics"] == diagnostics
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "project-secret" not in serialized
+    assert "alpha-secret.txt" not in serialized
+    assert "不应写入的原文" not in serialized
 
 
 def test_safe_diagnostic_records_a_controlled_seed_code_without_http_path(tmp_path: Path) -> None:

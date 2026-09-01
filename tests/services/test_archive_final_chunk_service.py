@@ -227,3 +227,33 @@ def test_embed_final_chunks_uses_context_for_vector_only(
         "档案标题：施工方案\n资料类型：施工资料\n原文片段：第二段正文",
     ]
     assert [item.content for item in embedded] == ["第一段正文", "第二段正文"]
+
+
+def test_embed_final_chunks_uses_context_for_only_the_matching_chunk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """字段值上下文只能影响有原文证据的 Chunk，不能扩散到同档案全部片段。"""
+    class CapturingEmbeddings:
+        def __init__(self) -> None:
+            self.inputs: list[str] = []
+
+        def embed_documents(self, values: list[str]) -> list[list[float]]:
+            self.inputs = values
+            return [[0.1] * settings.embedding_dimension for _ in values]
+
+    embeddings = CapturingEmbeddings()
+    monkeypatch.setattr(archive_final_chunk_service, "get_embeddings", lambda: embeddings)
+    chunks = archive_final_chunk_service.build_final_chunks(
+        document_id=UUID("00000000-0000-0000-0000-000000000001"),
+        snapshot=_snapshot(tmp_path, UUID("00000000-0000-0000-0000-000000000001")),
+    )
+
+    embedded = archive_final_chunk_service.embed_final_chunks(
+        document_id=UUID("00000000-0000-0000-0000-000000000001"),
+        chunks=chunks,
+        embedding_contexts={chunks[0].chunk_id: "施工阶段"},
+    )
+
+    assert embeddings.inputs == ["施工阶段\n原文片段：第一段正文", "第二段正文"]
+    assert [item.content for item in embedded] == ["第一段正文", "第二段正文"]

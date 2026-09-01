@@ -8,7 +8,7 @@
 
 本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；AV1-P14 将相邻的 `mini-rag-milvus-vue` 作为本地 Vue 联调工作台，但不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
 
-现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01～P08、P09 确认/取消确认与 Final Collection 基础、P10 清单关联/目录/审计、P11 正式检索服务、P12 证据问答服务、P13 物理删除服务，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成对应实现切片。P09 已完成真实确认—INDEX 路由纵向链路、真实 Chroma/BGE canary 和取消确认清理验证；P11 已完成一次真实单文档检索 canary（512 维、cosine、命中 1 条、10 次请求 P95 约 125.97 ms）；P10～P13 的确定性服务/API 测试已通过。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复，以及 Vue 工作台的完整端到端验收仍待 P14。测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。当前下一步为 P14 全链路验收、文档收口和最终回归。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含 OCR、表格专用解析、混合检索、Rerank、多 Agent、Redis 任务队列和生产级分布式部署；P14 的相邻 Vue 工作台例外仅限本地联调，不扩大为公开前端产品。
+现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01～P08、P09 确认/取消确认与 Final Collection 基础、P10 清单关联/目录/审计、P11 正式检索服务、P12 证据问答服务、P13 物理删除服务，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成对应实现切片。P09 已完成真实确认—INDEX 路由纵向链路、真实 Chroma/BGE canary 和取消确认清理验证；P11 已完成一次真实单文档检索 canary（512 维、cosine、命中 1 条、10 次请求 P95 约 125.97 ms）；P10～P13 的确定性服务/API 测试已通过。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复，以及 Vue 工作台的完整端到端验收仍待 P14。测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。当前下一步为 P14 全链路验收、文档收口和最终回归。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含 OCR、表格专用解析、混合检索、多 Agent、Redis 任务队列和生产级分布式部署；用户已明确允许 P14 仅增加本地 `BAAI/bge-reranker-base`，对已通过授权和范围校验的 Chroma Top-10 候选重排，不扩大为 BM25、混合召回或远程排序服务。P14 的相邻 Vue 工作台例外仅限本地联调，不扩大为公开前端产品。
 
 全量 Chroma 迁移（旧制度检索和后续智慧档案）已确认；AV1-C01 已完成一次云主机上的 Chroma 独立内网、过滤、精确删除、容器重启持久化与空闲资源实验，AV1-C02 已完成运行时代码、离线单测、本机命名空间和本机 Docker 健康验证。云端完整栈资源验证不再阻塞当前开发，随部署决策一并暂缓至 V1 功能完成后。后续正式索引为 Chroma Final Collection；不得将历史 Milvus 验证、C01 空闲内存或本机健康检查写成完整部署通过。
 
@@ -32,11 +32,13 @@ search_company_policy      查询当前会话绑定知识库中的公司制度
 → 返回引用并把脱敏调用记录写入 PostgreSQL
 ```
 
-既有制度检索 Agent 的状态以 `docs/implementation-plan.md` 和本次实际验证为准；智慧档案 V1 的状态以 `docs/archive-v1-implementation-plan.md` 和本次实际验证为准。历史 `89 passed` 结果属于已删除请假领域的旧版本，不得作为当前版本测试结论。真实 BGE + Milvus + DeepSeek 单问题结果仍只证明当时的有限链路，不代表当前 PostgreSQL 部署或多文档质量已经复验。
+既有制度检索 Agent 的状态以 `docs/implementation/既有检索与智能体实施计划.md` 和本次实际验证为准；智慧档案 V1 的状态以 `docs/implementation/智慧档案V1实施计划.md` 和本次实际验证为准。历史 `89 passed` 结果属于已删除请假领域的旧版本，不得作为当前版本测试结论。真实 BGE + Milvus + DeepSeek 单问题结果仍只证明当时的有限链路，不代表当前 PostgreSQL 部署或多文档质量已经复验。
 
 验证边界：真实 BGE + Milvus + DeepSeek 的历史结果只证明当时的单文档、单问题链路；它不能证明 Chroma 或 2 vCPU / 2 GB 云端部署可用。若后续决定云端部署，必须重新完成并记录 Chroma 的内部网络、持久化、隔离、删除和资源可行性验证；本地 BGE 的持久化路径也需在实际配置修改后复验。
 
-详细需求、数据与接口分别以 `docs/requirements.md`、`database-design.md` 和 `api-design.md` 为准；实时进度以 `LEARNING_PLAN.md` 为准。正式企业知识库 Agent 位于 `app/agents/admin/`。
+详细需求、数据与接口分别以 `docs/design/需求说明.md`、`docs/design/数据库设计.md` 和 `docs/design/接口设计.md` 为准；实时进度以 `LEARNING_PLAN.md` 为准。正式企业知识库 Agent 位于 `app/agents/admin/`。
+
+AV1-P14 的正式档案检索质量相关改动必须遵循 `docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md` 的阶段顺序、TDD 要求和真实固定集验收门槛；只有用户明确更新该方案或重新确认产品边界时才能偏离。
 
 ## 文档驱动顺序
 
@@ -92,6 +94,7 @@ Router → Application Service → Agent / Domain Service
 - 遵循 `pyguide_zh-CN.md` 中适用于本项目的规则。
 - 模块、公开类和公开函数写职责明确的文档字符串。
 - 关键代码段注释“为什么”，不做逐行翻译式注释。
+- 所有新增或修改的代码注释与文档字符串必须使用中文；代码标识符、协议名、错误码和必要的技术专有名词除外。
 - API Schema、数据库 Model、内部 dataclass 分开定义。
 - 已知业务错误使用 `AppError`；数据库提交失败后先 `rollback()`。
 - 不修改无关文件，不覆盖用户已有未提交改动。
