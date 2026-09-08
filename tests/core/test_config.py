@@ -30,6 +30,17 @@ def test_settings_default_to_project_chroma_namespace() -> None:
     assert settings.chroma_final_collection == "archive_final_chunks"
 
 
+def test_settings_default_to_formal_bge_base_embedding() -> None:
+    """正式默认 Embedding 必须固定为项目根相对的 bge-base/768。"""
+    settings = Settings(_env_file=None)
+
+    assert settings.embedding_model_path == Path(
+        "../../../models/embedding_models/bge-base-zh-v1.5"
+    )
+    assert settings.embedding_dimension == 768
+    assert settings.archive_embedding_context_mode == "evidence_values"
+
+
 def test_settings_supports_only_explicit_archive_embedding_context_modes() -> None:
     """正式索引的向量上下文模式必须是受控枚举，便于固定集复现实验。"""
     assert (
@@ -59,11 +70,19 @@ def test_settings_default_to_local_archive_reranker_configuration() -> None:
         "embedding_models/bge-reranker-base"
     )
     assert settings.archive_reranker_device == "cpu"
-    assert settings.archive_reranker_candidate_k == 20
+    assert settings.archive_reranker_candidate_k == 30
+    assert settings.archive_reranker_query_mode == "c4_a"
     assert settings.archive_reranker_score_threshold is None
 
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, archive_reranker_candidate_k=19)
+        Settings(_env_file=None, archive_reranker_candidate_k=29)
 
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, archive_reranker_candidate_k=21)
+        Settings(_env_file=None, archive_reranker_candidate_k=31)
+
+    assert (
+        Settings(_env_file=None, archive_reranker_query_mode="c4_b").archive_reranker_query_mode
+        == "c4_b"
+    )
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, archive_reranker_query_mode="unknown")

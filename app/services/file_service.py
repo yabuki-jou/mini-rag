@@ -204,6 +204,34 @@ def _cleanup_partial_file(target_path: Path) -> None:
         pass
 
 
+def _remove_empty_document_storage_directories(
+    *,
+    storage_root: Path,
+    relative_path: Path,
+    document_directory: Path,
+) -> None:
+    """在文件删除后依次清理空文档目录和空知识库目录。"""
+    try:
+        document_directory.rmdir()
+    except OSError:
+        # 目录非空、已被并发清理或暂时被占用时，文件删除结果仍然有效。
+        logger.debug("文档存储目录暂不清理。")
+        return
+
+    # 仅对标准 kb_id/document_id/filename 布局清理知识库目录，避免递归触及
+    # 旧路径或存储根目录。
+    if len(relative_path.parts) != 3:
+        return
+    knowledge_base_directory = document_directory.parent
+    if knowledge_base_directory.parent != storage_root:
+        return
+    try:
+        knowledge_base_directory.rmdir()
+    except OSError:
+        # 同一知识库仍有其他文档、目录已不存在或被占用时必须保留。
+        logger.debug("知识库存储目录暂不清理。")
+
+
 def delete_stored_document_file(storage_path: str) -> None:
     """在配置的文件目录内幂等删除一个文档原文件。
 
@@ -245,15 +273,11 @@ def delete_stored_document_file(storage_path: str) -> None:
             message="文档原文件删除失败。",
         ) from exc
 
-    try:
-        # 只清理当前文档的空目录，不递归删除，也不删除知识库目录。
-        target_path.parent.rmdir()
-    except OSError:
-        # 目录不存在、非空或暂时被占用都不影响文件已删除这一事实。
-        logger.debug(
-            "document storage directory retained path=%s",
-            target_path.parent,
-        )
+    _remove_empty_document_storage_directories(
+        storage_root=storage_root,
+        relative_path=relative_path,
+        document_directory=target_path.parent,
+    )
 
 
 def delete_stored_snapshot_file(storage_path: str) -> None:
@@ -299,11 +323,9 @@ def delete_stored_snapshot_file(storage_path: str) -> None:
             message="解析快照删除失败。",
         ) from exc
 
-    try:
-        # 原文件步骤可能因快照仍存在而未能删除目录，此处再清理一次空目录。
-        target_path.parent.rmdir()
-    except OSError:
-        logger.debug(
-            "snapshot storage directory retained path=%s",
-            target_path.parent,
-        )
+    # 原文件步骤可能因快照仍存在而未能删除目录，此处会再次清理空文档和知识库目录。
+    _remove_empty_document_storage_directories(
+        storage_root=storage_root,
+        relative_path=relative_path,
+        document_directory=target_path.parent,
+    )

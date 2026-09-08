@@ -24,3 +24,20 @@
 
 未覆盖：项目/清单 CRUD、上传解析、手工草稿和 AI 字段建议继续由确定性单元、服务和 API
 测试覆盖。本轮真实质量评测优先覆盖尚未验收的检索阈值、DeepSeek 问答和跨存储恢复。
+
+## D5 最小工程评测标准
+
+本轮数据集不是固定 12 题真实验收集，只有四条虚构/脱敏问答样本，目标是验证评测
+工程能正确承载生产问答服务的输出与语义评审：
+
+1. `archive_answer_contract` 确定性检查 `answer_status`、非空 `answer`、引用对象
+   字段、引用数量，以及 `archive_question_decision` 的 `has_evidence` 和数量字段。
+2. `archive_evidence_faithfulness` 由 Agent evaluator 延后评审回答是否只使用提示中的
+   证据、引用是否可追溯；它不是本地 Mock 质量分数。
+3. `archive_refusal_quality` 由 Agent evaluator 延后评审相近但缺事实和高分无据案例，
+   要求明确证据不足、不得把相近摘录改写成金额或日期等业务事实。
+
+主 Agent 已执行真实 DeepSeek smoke，并完成后两项 Agent evaluator 评审：4 条样本、
+12 个评分项均为 `1.0`，其中两个候选非空的无据问题均拒答。该结果仅表示 Runnable、
+输入注入、结构检查和这四条语义样本通过，不表示正式 12 题的召回率、拒答率或回答
+忠实性达到 P14 门槛。

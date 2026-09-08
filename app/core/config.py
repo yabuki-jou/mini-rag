@@ -39,6 +39,7 @@ class Settings(BaseSettings):
         archive_reranker_model_path: 本地正式档案 Reranker 模型目录。
         archive_reranker_device: Reranker 运行设备。
         archive_reranker_candidate_k: 每次交给 Reranker 的固定 Chroma 候选数量。
+        archive_reranker_query_mode: Reranker 查询表达实验模式；默认使用 C4-A 基线。
         archive_reranker_score_threshold: 可选的最低 Reranker 分数；未标定时为 ``None``。
         chunk_size: 每个 Chunk 的目标字符数。
         chunk_overlap: 相邻 Chunk 重复保留的字符数。
@@ -88,18 +89,19 @@ class Settings(BaseSettings):
 
     # 本地 Embedding 模型及其输出维度配置。
     embedding_model_path: Path = Path(
-        "../py-doc/py-doc-deepseek-server/models/bge-small-zh-v1.5"
+        "../../../models/embedding_models/bge-base-zh-v1.5"
     )
     embedding_device: str = "cpu"
-    embedding_dimension: int = Field(default=512, gt=0)
+    embedding_dimension: int = Field(default=768, gt=0)
     archive_embedding_context_mode: Literal[
         "none", "values", "labeled", "evidence_values"
-    ] = "labeled"
+    ] = "evidence_values"
 
     # Reranker 只服务于已完成授权与元数据校验的正式档案候选，固定使用本地 CPU。
     archive_reranker_model_path: Path = Path("embedding_models/bge-reranker-base")
     archive_reranker_device: str = "cpu"
-    archive_reranker_candidate_k: int = Field(default=20, ge=20, le=20)
+    archive_reranker_candidate_k: int = Field(default=30, ge=30, le=30)
+    archive_reranker_query_mode: Literal["c4_a", "c4_b"] = "c4_a"
     archive_reranker_score_threshold: float | None = None
 
     # 递归字符切分器使用的目标大小和重叠字符数。

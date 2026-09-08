@@ -277,7 +277,7 @@ def retrieve_project_archive_diagnostic_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ArchiveRetrievalDiagnosticResponse:
-    """仅在开发环境返回固定集所需的 Top-20 双排序脱敏诊断。"""
+    """仅在开发环境返回固定集所需的 Top-30 双排序脱敏诊断。"""
     if settings.app_env != "development":
         raise AppError(404, "NOT_FOUND", "资源不存在。")
     return retrieve_archive_diagnostics(

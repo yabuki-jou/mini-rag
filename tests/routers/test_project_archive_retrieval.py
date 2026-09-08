@@ -94,7 +94,7 @@ def test_archive_retrieval_diagnostic_route_is_dev_only_and_returns_safe_project
     project_document_api: tuple[TestClient, Engine, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C3-A 路由必须隐藏于公开 Schema，并只返回脱敏的双排序投影。"""
+    """C4-A 路由必须隐藏于公开 Schema，并只返回脱敏的双排序投影。"""
     client, engine, _ = project_document_api
     user_id = create_user(engine)
     project_id, _, _ = _confirmed_document(client, engine, user_id)
@@ -102,15 +102,24 @@ def test_archive_retrieval_diagnostic_route_is_dev_only_and_returns_safe_project
     def fake_diagnostic(**kwargs):
         assert kwargs["query"] == "项目阶段"
         return {
-            "chroma_candidate_count": 20,
-            "candidate_count": 20,
+            "chroma_candidate_count": 30,
+            "candidate_count": 30,
             "candidates": [
                 {
+                    "candidate_key": "c" * 64,
                     "dense_rank": 12,
                     "dense_distance": 0.4,
                     "reranker_rank": 1,
                     "reranker_score": 0.9,
                     "matches_expected_evidence": True,
+                    "public_coverage_match": True,
+                    "candidate_kind": "UNKNOWN",
+                    "isolation_violation": False,
+                    "chunk_id": "raw-sensitive-chunk-id",
+                    "document_id": "raw-sensitive-document-id",
+                    "filename": "敏感文件.pdf",
+                    "excerpt": "敏感原文",
+                    "path": "C:/sensitive/path",
                 }
             ],
         }
@@ -123,8 +132,28 @@ def test_archive_retrieval_diagnostic_route_is_dev_only_and_returns_safe_project
     )
 
     assert response.status_code == 200
-    assert response.json()["candidate_count"] == 20
+    assert response.json()["candidate_count"] == 30
+    candidate = response.json()["candidates"][0]
+    assert candidate == {
+        "candidate_key": "c" * 64,
+        "dense_rank": 12,
+        "dense_distance": 0.4,
+        "reranker_rank": 1,
+        "reranker_score": 0.9,
+        "matches_expected_evidence": True,
+        "public_coverage_match": True,
+        "candidate_kind": "UNKNOWN",
+        "isolation_violation": False,
+    }
     assert "项目阶段" not in response.text
+    for forbidden in (
+        "raw-sensitive-chunk-id",
+        "raw-sensitive-document-id",
+        "敏感文件.pdf",
+        "敏感原文",
+        "C:/sensitive/path",
+    ):
+        assert forbidden not in response.text
     openapi = client.get("/openapi.json")
     assert "/projects/{project_id}/archive-retrieval-diagnostic" not in openapi.json()["paths"]
 

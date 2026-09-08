@@ -163,6 +163,43 @@ def test_insert_final_chunks_writes_server_scoped_metadata(
     ]
 
 
+def test_insert_final_chunks_can_write_to_explicit_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1 重建必须能把向量写到显式实验 Collection，而不是全局正式 Collection。"""
+    formal_collection = Mock()
+    experiment_collection = Mock()
+    monkeypatch.setattr(
+        archive_final_chunk_service,
+        "get_final_collection",
+        lambda: formal_collection,
+    )
+    chunk = archive_final_chunk_service.ArchiveEmbeddedChunk(
+        chunk_id="e" * 64,
+        content="实验正文",
+        embedding=[0.1, 0.2],
+        location_type="TEXT_LINE_RANGE",
+        location_start=1,
+        location_end=1,
+        normalized_anchor=None,
+        snapshot_hash="a" * 64,
+        parser_version="archive-parser-v1",
+    )
+
+    assert archive_final_chunk_service.insert_final_chunks(
+        user_id=UUID("00000000-0000-0000-0000-000000000010"),
+        project_id=UUID("00000000-0000-0000-0000-000000000011"),
+        kb_id=UUID("00000000-0000-0000-0000-000000000012"),
+        document_id=UUID("00000000-0000-0000-0000-000000000013"),
+        filename="实验.txt",
+        chunks=[chunk],
+        collection=experiment_collection,
+    ) == 1
+
+    experiment_collection.upsert.assert_called_once()
+    formal_collection.upsert.assert_not_called()
+
+
 def test_insert_final_chunks_maps_chroma_failure_to_safe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

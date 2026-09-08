@@ -1,20 +1,30 @@
 # 项目协作说明
 
-开始处理本项目之前，请先阅读根目录的 `LEARNING_PLAN.md`，并以其中记录的学习路线和当前进度为准。
+开始处理本项目之前，阅读本文件后，再依次阅读：`LEARNING_PLAN.md`、`docs/stage/handoff.md`、`docs/decisions.md`。实际代码与 Git 状态优先于状态文档；交接文档提供当前事实，决策台账提供稳定决策。
 
 # Mini RAG 项目协作规则
 
-## 项目定位
+## 项目定位与长期边界
 
-本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；AV1-P14 将相邻的 `mini-rag-milvus-vue` 作为本地 Vue 联调工作台，但不以公开多用户网站为部署目标。当前运行与开发基线均为本地环境；是否部署到云端、部署拓扑和资源规格均为暂定事项，必须在 V1 功能开发完成后另行评估和确认。Chroma 代码和 Compose 迁移已完成本地验证；不得把历史云主机实验或本地健康检查写成已完成云端部署。
+本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；相邻 Vue 工作台仅用于本地联调，不以公开多用户网站或公开前端产品为部署目标。当前运行与开发基线为本地环境；是否部署到云端、部署拓扑和资源规格须在 V1 功能完成后另行评估确认。
 
-现有能力包括 RAG 后端、PostgreSQL/Alembic 业务库、制度检索工具，以及带 SQLite Checkpointer 的单 Agent Graph。独立 Agent API 支持会话、消息、历史和脱敏工具日志查询。员工请假领域、写工具、人工确认与决定接口已经删除。当前唯一后续业务方向是“智慧档案与企业文档智能”：需求、架构、数据库、API 与实施计划基线已确认；AV1-P01～P08、P09 确认/取消确认与 Final Collection 基础、P10 清单关联/目录/审计、P11 正式检索服务、P12 证据问答服务、P13 物理删除服务，以及 AV1-A01 账号密码认证、JWT 会话与 Bearer 身份切换的隔离验证均已完成对应实现切片。P09 已完成真实确认—INDEX 路由纵向链路、真实 Chroma/BGE canary 和取消确认清理验证；P11 已完成一次真实单文档检索 canary（512 维、cosine、命中 1 条、10 次请求 P95 约 125.97 ms）；P10～P13 的确定性服务/API 测试已通过。固定问题集的检索阈值/召回质量、DeepSeek 问答质量、P13 真实跨存储故障恢复，以及 Vue 工作台的完整端到端验收仍待 P14。测试数据与临时文件已清理。`0005_archive_v1_schema`～`0008_legacy_business_comments` 已在目标 PostgreSQL 空库实际前向迁移；`0009_chroma_vector_comments` 与 revision `0010_account_auth` 也已在当前 PostgreSQL 开发库实际前向迁移并核对结构。当前下一步为 P14 全链路验收、文档收口和最终回归。当前不推进标书投标、标书解析生成或投标合规审查方向。当前不包含 OCR、表格专用解析、混合检索、多 Agent、Redis 任务队列和生产级分布式部署；用户已明确允许 P14 仅增加本地 `BAAI/bge-reranker-base`，对已通过授权和范围校验的 Chroma Top-10 候选重排，不扩大为 BM25、混合召回或远程排序服务。P14 的相邻 Vue 工作台例外仅限本地联调，不扩大为公开前端产品。
+当前业务方向是“智慧档案与企业文档智能”及既有只读企业制度 Agent。已删除的员工请假领域及其写工具、人工确认/决定接口不恢复；不推进标书投标、标书解析生成、投标合规审查、OCR、表格专用解析、业务运行时多 Agent 编排、BM25/混合检索、Redis 任务队列或生产级分布式部署。正式向量能力使用 Chroma；不得把历史 Milvus、云主机实验或本机健康检查写成完整云端部署结论。未来云端网络与资源方案待部署决策后确定。
 
-全量 Chroma 迁移（旧制度检索和后续智慧档案）已确认；AV1-C01 已完成一次云主机上的 Chroma 独立内网、过滤、精确删除、容器重启持久化与空闲资源实验，AV1-C02 已完成运行时代码、离线单测、本机命名空间和本机 Docker 健康验证。云端完整栈资源验证不再阻塞当前开发，随部署决策一并暂缓至 V1 功能完成后。后续正式索引为 Chroma Final Collection；不得将历史 Milvus 验证、C01 空闲内存或本机健康检查写成完整部署通过。
+## 当前状态与决策入口
 
-## P14-C2 当前授权覆盖
+实时进度、当前授权、阻塞项、验证证据和下一步读取 `docs/stage/handoff.md`；稳定的产品、架构、数据、安全、质量和范围决策读取 `docs/decisions.md`；详细阶段方案以 handoff 指向的仓库文件为准。AGENTS.md 不维护阶段编号、实验流水或易变化的测试数字。AV1-P14 正式检索质量改动必须遵循 handoff 指向的最新已确认方案、TDD 要求和真实固定集验收门槛。
 
-用户已明确授权将正式档案检索交给本地 Reranker 的 Chroma 候选池固定扩大为 Top-20；公开接口仍最多返回 10 条。C.3-A 已增加仅开发环境可用的完整 Top-20 脱敏诊断，C.3-B 已完成字段值表示复验，C.3-C 又按独立授权完成一次固定查询表达复验；这些步骤均不改变公开检索行为。C.3-C 使用固定表达 `档案证据检索问题：{query}`，未更换模型、Chunk、候选池或评测集，质量门槛仍未通过。除已完成的候选池、诊断观测和两次受控复验外，不得自动执行新的查询模板、换模型、Chunk/窗口调整、Top-30 或评测集修改。
+## 状态与决策文档维护协议
+
+- 任务开始读取 `AGENTS.md`、`LEARNING_PLAN.md`、`docs/stage/handoff.md`、`docs/decisions.md`。
+- 用户确认重要的产品、架构、数据、安全、质量或范围决策后，追加到 `docs/decisions.md`；不得把助手推测写成已确认。
+- 阶段完成、发生阻塞、完成真实验证或准备切换对话时，更新 `docs/stage/handoff.md`。
+- 只有长期规则变化才修改 AGENTS.md；普通实现细节和实验流水不进入 AGENTS.md。
+- 更新前核对实际代码、Git 状态和测试结果；冲突以实际代码为准，并在交接或决策文档记录差异。
+- decisions.md 原则上只追加；决策改变时将旧项标为“已废弃”，并链接替代决策 ID。
+- handoff.md 是可重写的当前快照，不承担长期决策台账职责。
+- 三份文档均不得记录 `.env`、密钥、凭据、Token、数据库内容或业务数据。
+- 普通代码任务无需机械更新三份文档，只有上述触发事件发生时才更新。
 
 ## 企业知识库 Agent 当前范围
 
@@ -36,13 +46,9 @@ search_company_policy      查询当前会话绑定知识库中的公司制度
 → 返回引用并把脱敏调用记录写入 PostgreSQL
 ```
 
-既有制度检索 Agent 的状态以 `docs/implementation/既有检索与智能体实施计划.md` 和本次实际验证为准；智慧档案 V1 的状态以 `docs/implementation/智慧档案V1实施计划.md` 和本次实际验证为准。历史 `89 passed` 结果属于已删除请假领域的旧版本，不得作为当前版本测试结论。真实 BGE + Milvus + DeepSeek 单问题结果仍只证明当时的有限链路，不代表当前 PostgreSQL 部署或多文档质量已经复验。
+既有制度检索 Agent 的实现与验证以 `docs/implementation/既有检索与智能体实施计划.md` 和实际代码为准；智慧档案 V1 的实现与验证以 `docs/implementation/智慧档案V1实施计划.md`、handoff 和实际代码为准。历史测试或单问题真实模型结果不得冒充当前版本或完整质量结论。
 
-验证边界：真实 BGE + Milvus + DeepSeek 的历史结果只证明当时的单文档、单问题链路；它不能证明 Chroma 或 2 vCPU / 2 GB 云端部署可用。若后续决定云端部署，必须重新完成并记录 Chroma 的内部网络、持久化、隔离、删除和资源可行性验证；本地 BGE 的持久化路径也需在实际配置修改后复验。
-
-详细需求、数据与接口分别以 `docs/design/需求说明.md`、`docs/design/数据库设计.md` 和 `docs/design/接口设计.md` 为准；实时进度以 `LEARNING_PLAN.md` 为准。正式企业知识库 Agent 位于 `app/agents/admin/`。
-
-AV1-P14 的正式档案检索质量相关改动必须遵循 `docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md` 的阶段顺序、TDD 要求和真实固定集验收门槛；只有用户明确更新该方案或重新确认产品边界时才能偏离。
+详细需求、数据与接口分别以 `docs/design/需求说明.md`、`docs/design/数据库设计.md` 和 `docs/design/接口设计.md` 为准；正式企业知识库 Agent 位于 `app/agents/admin/`。
 
 ## 文档驱动顺序
 
@@ -78,7 +84,7 @@ Router → Application Service → Agent / Domain Service
 - LangGraph Checkpoint 使用独立 SQLite 文件，只保存可序列化的执行状态和消息，不代替业务表。
 - `document_id` 必须贯穿 PostgreSQL、文件路径和 Chroma。
 - 受保护接口必须先验证 Bearer Access Token、真实存在的用户和资源归属；不得保留 `X-User-ID` 身份后门。
-- Chroma 检索必须包含 `user_id + kb_id`；文档删除必须再包含 `document_id`。当前本地开发中，Compose 内 API 使用内部网络访问 Chroma；宿主机调试仅可使用回环地址 `127.0.0.1:8001`，不得暴露到局域网或公网。业务客户端只能访问 FastAPI；未来云端网络拓扑待部署决策后确定。
+- Chroma 检索必须包含 `user_id + kb_id`；文档删除必须再包含 `document_id`。本地 Compose 内 API 使用内部网络访问 Chroma；宿主机调试仅可使用回环地址 `127.0.0.1:8001`，不得暴露到局域网或公网。业务客户端只能访问 FastAPI。
 - 不接受客户端覆盖资源的 `owner_id` 或 `user_id`。
 - Agent 工具的 `user_id` 和 `kb_id` 必须由已验证上下文注入，不能由模型生成。
 - Agent Graph State 只能保存可序列化数据，不得保存数据库 Session、Engine、模型客户端或向量库客户端。
@@ -97,14 +103,16 @@ Router → Application Service → Agent / Domain Service
 
 - 遵循 `pyguide_zh-CN.md` 中适用于本项目的规则。
 - 模块、公开类和公开函数写职责明确的文档字符串。
+- 函数参数必须添加注释。
 - 关键代码段注释“为什么”，不做逐行翻译式注释。
 - 所有新增或修改的代码注释与文档字符串必须使用中文；代码标识符、协议名、错误码和必要的技术专有名词除外。
 - API Schema、数据库 Model、内部 dataclass 分开定义。
 - 已知业务错误使用 `AppError`；数据库提交失败后先 `rollback()`。
 - 不修改无关文件，不覆盖用户已有未提交改动。
-- 测试目录必须镜像被测代码的层目录：`app/agents/`、`app/core/`、`app/dependencies/`、`app/models/`、`app/routers/`、`app/schemas/`、`app/services/` 分别对应 `tests/` 下的同名目录；跨层 HTTP 集成测试归入 `tests/routers/`，测试辅助代码归入 `tests/support/`。移动文件时必须同步更新相对路径和文档中的测试路径。
+- 混合工作区只显式暂存获准文件，禁止使用 `git add -A`；提交前必须重新核对工作区范围。
+- 测试目录必须镜像被测代码的层目录：`app/agents/`、`app/core/`、`app/dependencies/`、`app/models/`、`app/routers/`、`app/schemas/`、`app/services/` 分别对应 `tests/` 下的同名目录；跨层 HTTP 集成测试归入 `tests/routers/`，测试辅助代码归入 `tests/support/`。移动文件时同步更新相对路径和文档中的测试路径。
 - 后续开发编码采用 TDD：每个可观察行为先新增或修改一个会失败的测试并实际运行（RED），随后只写使该测试通过的最小实现（GREEN），最后仅在相关测试持续通过时重构（REFACTOR）。完成一个学习步骤前再运行相关测试、全量测试和 `compileall`；不得把“预期会失败”当作已验证的 RED 证据。
-- TDD 的单元、服务和 API 测试验证确定性行为（契约、权限、事务、状态和错误）。涉及 DeepSeek 等真实 LLM 输出的事实性、引用完整性或语义质量时，必须另行使用真实模型和固定评估资料完成评估；Mock 只能用于隔离普通单元测试，不能作为 LLM 质量通过的证据。
+- TDD 的单元、服务和 API 测试验证确定性行为。涉及 DeepSeek 等真实 LLM 输出的事实性、引用完整性或语义质量时，必须另行使用真实模型和固定评估资料完成评估；Mock 只能用于隔离普通单元测试，不能作为 LLM 质量通过的证据。
 
 ## 命令
 
@@ -118,9 +126,7 @@ python -m pytest -q
 python -m compileall -q app tests
 ```
 
-本机也可使用 `C:\D\venvs\mrh\Scripts\python.exe`。项目目前没有 Ruff、Black、Mypy 或覆盖率阈值配置；未实际运行时不得声称这些检查通过。
-
-`python run.py` 启动时也会执行 Alembic upgrade。基线迁移只检查旧表结构，不读取或打印业务数据；发现字段不兼容时必须停止，不得直接 `stamp` 掩盖冲突。
+本机也可使用 `C:\D\venvs\mrh\Scripts\python.exe`。项目目前没有 Ruff、Black、Mypy 或覆盖率阈值配置；未实际运行时不得声称这些检查通过。`python run.py` 启动时也会执行 Alembic upgrade。基线迁移只检查旧表结构，不读取或打印业务数据；发现字段不兼容时必须停止，不得直接 `stamp` 掩盖冲突。
 
 ## 完成标准
 
@@ -130,3 +136,21 @@ python -m compileall -q app tests
 - API、SQLite、Chroma、README 与 `docs/` 保持一致。
 - 明确列出未实现、部分实现和当前环境无法验证的内容。
 - 提交前排除 `.env`、`data/`、`logs/`、IDE 临时文件和真实密钥。
+
+# 多 Agent 开发工作流
+
+## 主 Agent
+
+GPT-5.6 Sol 作为主 Agent。
+
+主 Agent 负责：需求分析、文档审查、架构决策、实现方案规划、任务拆分和最终实现审查。在进入代码实现阶段之前，主 Agent 必须先产出清晰、明确、可执行的实现计划（Implementation Plan）。
+
+## 实现 Agent
+
+当实现任务已经足够明确、边界清晰且适合独立执行时，应优先将任务委派给 GPT-5.6 Luna 子 Agent。Luna 负责代码实现、测试编写、常规 Bug 修复、机械性重构、Lint/格式化处理和重复性批量修改，并严格按照既定实现计划执行。
+
+Luna 不得自行修改整体架构、既定需求、任务范围、对外公开 API 或核心数据库结构。如发现必须进行上述变更，应停止扩大修改，并交回 GPT-5.6 Sol 主 Agent 重新分析、决策和更新实现计划。
+
+## 实现审查
+
+代码实现完成后，由 GPT-5.6 Sol 主 Agent 审查 Git Diff、实现计划完成度、需求符合性、测试完整性、API 与数据模型一致性、范围扩张、遗漏、偏离和不必要修改。发现问题时，主 Agent 生成范围清晰的修正任务，再委派 GPT-5.6 Luna 执行。

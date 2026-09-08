@@ -1,5 +1,6 @@
 """验证 AV1-P11 正式检索的授权范围、阈值和结果转换。"""
 
+import re
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,7 +8,8 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.models import ArchiveDocumentStatus, Project
+from app.models import ArchiveDocumentStatus, EvidenceLocationType, Project
+from app.schemas.archive_retrieval import ArchiveRetrievalItemRead
 from app.services import archive_retrieval_service
 from tests.routers.test_project_archive_catalog import (
     _add_pending_document,
@@ -22,6 +24,127 @@ def test_build_archive_query_expression_is_stable_and_strips_whitespace() -> Non
     assert archive_retrieval_service._build_archive_query_expression(
         "  项目阶段  "
     ) == "档案证据检索问题：项目阶段"
+
+
+def _diagnostic_item(
+    *,
+    chunk_id: str = "raw-sensitive-chunk-id",
+    filename: str = "正式资料.pdf",
+    location_start: int = 2,
+    location_end: int = 4,
+    excerpt: str = "标准 证据\n内容",
+) -> ArchiveRetrievalItemRead:
+    """构造诊断匹配单测使用的正式检索项。
+
+    Args:
+        chunk_id: 原始 Chunk 标识。
+        filename: 候选所属文件名。
+        location_start: 候选定位起点。
+        location_end: 候选定位终点。
+        excerpt: 候选原文摘录。
+    """
+    return ArchiveRetrievalItemRead(
+        chunk_id=chunk_id,
+        document_id=uuid4(),
+        filename=filename,
+        location_type=EvidenceLocationType.PDF_PAGE,
+        location_start=location_start,
+        location_end=location_end,
+        excerpt=excerpt,
+        score=0.8,
+        reranker_score=0.9,
+    )
+
+
+def test_diagnostic_candidate_key_is_stable_opaque_and_domain_separated() -> None:
+    """候选键必须稳定脱敏，且不同原始 Chunk ID 不能得到相同键。"""
+    first = archive_retrieval_service._diagnostic_candidate_key(
+        chunk_id="raw-sensitive-chunk-id"
+    )
+    repeated = archive_retrieval_service._diagnostic_candidate_key(
+        chunk_id="raw-sensitive-chunk-id"
+    )
+    different = archive_retrieval_service._diagnostic_candidate_key(
+        chunk_id="another-sensitive-chunk-id"
+    )
+
+    assert first == repeated
+    assert first != different
+    assert re.fullmatch(r"[0-9a-f]{64}", first)
+    assert "raw-sensitive-chunk-id" not in first
+
+
+def test_public_coverage_accepts_container_location_and_normalized_excerpt() -> None:
+    """01/05 式范围覆盖应公开命中，但不得被误记为严格命中。"""
+    item = _diagnostic_item()
+    expected_evidence = {
+        "relative_path": "documents/正式资料.pdf",
+        "items": [{
+            "location_type": "PDF_PAGE",
+            "location_start": 3,
+            "location_end": 3,
+            "excerpt": "标准证据内容",
+        }],
+    }
+
+    assert archive_retrieval_service._candidate_matches_expected_evidence(
+        item=item,
+        expected_evidence=expected_evidence,
+    ) is False
+    assert archive_retrieval_service._candidate_publicly_covers_expected_evidence(
+        item=item,
+        expected_evidence=expected_evidence,
+    ) is True
+
+
+def test_diagnostic_candidate_kind_is_unknown_without_expected_evidence() -> None:
+    """无标准证据题不得根据文件信息推断候选类别。"""
+    assert archive_retrieval_service._diagnostic_candidate_kind(
+        item=_diagnostic_item(),
+        expected_evidence=None,
+    ) == "UNKNOWN"
+
+
+def test_c4b_query_expression_only_changes_reranker_side(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C4-B 只能改变 Reranker 查询，BGE 查询必须保持 C4-A 基线。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, formal_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(_result(formal_id, uuid4()))
+    embeddings = FakeEmbeddings()
+    reranker_queries: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        reranker_queries.append(query)
+        return [0.5] * len(contents)
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
+    monkeypatch.setattr(settings, "archive_reranker_query_mode", "c4_b", raising=False)
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", None, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        archive_retrieval_service.retrieve_archive_chunks(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="  项目阶段  ",
+            top_k=5,
+            session=session,
+        )
+
+    assert embeddings.queries == [
+        "为这个句子生成表示以用于检索相关文章：档案证据检索问题：项目阶段"
+    ]
+    assert reranker_queries == [
+        "请从项目档案中查找与问题直接匹配的原文证据：项目阶段"
+    ]
 
 
 class FakeEmbeddings:
@@ -275,11 +398,11 @@ def test_retrieval_records_eval_scope_and_final_items(
     assert observed_by_name["archive_retrieval_result"]["items"][0]["document_id"] == str(document_id)
 
 
-def test_retrieval_reranks_only_validated_top_twenty_candidates(
+def test_retrieval_reranks_only_validated_top_thirty_candidates(
     project_document_api,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """重排只能处理范围校验后的 Top-20，并保持最终 API 只返回请求数量。"""
+    """重排只能处理范围校验后的 Top-30，并保持最终 API 只返回请求数量。"""
     client, engine, _ = project_document_api
     user_id = create_user(engine)
     project_id, document_id, _ = _confirmed_document(client, engine, user_id)
@@ -350,13 +473,13 @@ def test_retrieval_reranks_only_validated_top_twenty_candidates(
             session=session,
         )
 
-    assert collection.calls[0]["n_results"] == 20
+    assert collection.calls[0]["n_results"] == 30
     assert observed_contents == ["低重排分数", "高重排分数", "中等重排分数"]
     assert response.returned_count == 1
     assert response.items[0].excerpt == "高重排分数"
 
 
-def test_retrieval_passes_all_top_twenty_candidates_to_reranker(
+def test_retrieval_passes_all_top_thirty_candidates_to_reranker(
     project_document_api,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -372,14 +495,14 @@ def test_retrieval_passes_all_top_twenty_candidates_to_reranker(
             "location_start": index + 1,
             "location_end": index + 1,
         }
-        for index in range(20)
+        for index in range(30)
     ]
     collection = FakeCollection(
         {
-            "ids": [[f"{index:064d}" for index in range(20)]],
-            "documents": [[f"候选-{index + 1}" for index in range(20)]],
+            "ids": [[f"{index:064d}" for index in range(30)]],
+            "documents": [[f"候选-{index + 1}" for index in range(30)]],
             "metadatas": [[item for item in items]],
-            "distances": [[0.1 + index * 0.01 for index in range(20)]],
+            "distances": [[0.1 + index * 0.01 for index in range(30)]],
         }
     )
     observed_contents: list[str] = []
@@ -412,8 +535,8 @@ def test_retrieval_passes_all_top_twenty_candidates_to_reranker(
             session=session,
         )
 
-    assert collection.calls[0]["n_results"] == 20
-    assert len(observed_contents) == 20
+    assert collection.calls[0]["n_results"] == 30
+    assert len(observed_contents) == 30
     assert response.returned_count == 1
     assert response.items[0].excerpt == "候选-20"
 
@@ -479,7 +602,7 @@ def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
             session=session,
         )
 
-    assert collection.calls[0]["n_results"] == 20
+    assert collection.calls[0]["n_results"] == 30
     assert observed_contents == ["低重排分数", "高重排分数"]
     assert response.returned_count == 1
     assert response.items[0].excerpt == "高重排分数"
@@ -581,11 +704,11 @@ def test_retrieval_orders_equal_reranker_scores_by_distance_then_chunk_id(
     assert [item.chunk_id for item in response.items] == ["a" * 64, "b" * 64, "c" * 64]
 
 
-def test_retrieval_diagnostics_keeps_full_validated_top_twenty_before_threshold(
+def test_retrieval_diagnostics_keeps_full_validated_top_thirty_before_threshold(
     project_document_api,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C3-A 诊断必须看到完整校验候选，不能被公开阈值或返回数量截断。"""
+    """C4-A 诊断必须看到完整校验候选，不能被公开阈值或返回数量截断。"""
     client, engine, _ = project_document_api
     user_id = create_user(engine)
     project_id, document_id, _ = _confirmed_document(client, engine, user_id)
@@ -619,6 +742,7 @@ def test_retrieval_diagnostics_keeps_full_validated_top_twenty_before_threshold(
         "score_archive_candidates",
         lambda *, query, contents: [0.2, 0.9],
     )
+    monkeypatch.setattr(settings, "archive_reranker_query_mode", "c4_b", raising=False)
     monkeypatch.setattr(settings, "archive_reranker_score_threshold", 0.95, raising=False)
 
     with Session(engine) as session:
@@ -643,11 +767,23 @@ def test_retrieval_diagnostics_keeps_full_validated_top_twenty_before_threshold(
 
     assert response.chroma_candidate_count == 2
     assert response.candidate_count == 2
+    assert response.reranker_query_mode == "c4_b"
     assert len(response.candidates) == 2
     assert response.candidates[1].dense_rank == 2
     assert response.candidates[1].reranker_rank == 1
     assert response.candidates[1].matches_expected_evidence is True
+    assert response.candidates[1].public_coverage_match is True
+    assert response.candidates[1].candidate_kind == "SAME_DOCUMENT"
+    assert response.candidates[1].isolation_violation is False
+    assert re.fullmatch(r"[0-9a-f]{64}", response.candidates[1].candidate_key)
+    assert response.candidates[0].candidate_key != response.candidates[1].candidate_key
     assert response.candidates[1].reranker_score == pytest.approx(0.9)
     serialized = response.model_dump_json()
-    for forbidden in ("正式资料.pdf", "标准证据", str(document_id)):
+    for forbidden in (
+        "正式资料.pdf",
+        "标准证据",
+        str(document_id),
+        "a" * 64,
+        "b" * 64,
+    ):
         assert forbidden not in serialized

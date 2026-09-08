@@ -1,0 +1,203 @@
+{
+  "name": "archive-question-d5-smoke",
+  "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+  "evaluators": [
+    "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
+    "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
+    "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality"
+  ],
+  "entries": [
+    {
+      "description": "直接有据：PX-ALPHA 的归档状态在唯一候选中明确出现",
+      "input_data": {
+        "question": "PX-ALPHA 项目的归档状态是什么？"
+      },
+      "eval_input": [
+        {
+          "name": "archive_question_retrieval",
+          "value": {
+            "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalResponse",
+            "py/state": {
+              "__dict__": {
+                "items": [
+                  {
+                    "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalItemRead",
+                    "py/state": {
+                      "__dict__": {
+                        "chunk_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "document_id": {"py/object": "uuid.UUID", "hex": "11111111111111111111111111111111"},
+                        "filename": "PX-ALPHA-summary.txt",
+                        "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
+                        "location_start": 4,
+                        "location_end": 4,
+                        "excerpt": "Fictional project PX-ALPHA archive status: CONFIRMED.",
+                        "score": 0.91,
+                        "reranker_score": 0.88
+                      }
+                    }
+                  }
+                ],
+                "requested_top_k": 5,
+                "returned_count": 1
+              }
+            }
+          }
+        }
+      ],
+      "eval_metadata": {
+        "case_kind": "DIRECT_EVIDENCE",
+        "expected_answer_status": "ANSWERED",
+        "direct_evidence_required": true
+      }
+    },
+    {
+      "description": "多个候选：回答 PX-BETA 责任单位时只能引用支持该事实的候选",
+      "input_data": {
+        "question": "PX-BETA 的归档责任单位是什么？"
+      },
+      "eval_input": [
+        {
+          "name": "archive_question_retrieval",
+          "value": {
+            "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalResponse",
+            "py/state": {
+              "__dict__": {
+                "items": [
+                  {
+                    "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalItemRead",
+                    "py/state": {
+                      "__dict__": {
+                        "chunk_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "document_id": {"py/object": "uuid.UUID", "hex": "22222222222222222222222222222222"},
+                        "filename": "PX-BETA-cover.txt",
+                        "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
+                        "location_start": 2,
+                        "location_end": 2,
+                        "excerpt": "Fictional project PX-BETA archive responsibility unit: North Star Build Lab.",
+                        "score": 0.9,
+                        "reranker_score": 0.86
+                      }
+                    }
+                  },
+                  {
+                    "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalItemRead",
+                    "py/state": {
+                      "__dict__": {
+                        "chunk_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "document_id": {"py/object": "uuid.UUID", "hex": "22222222222222222222222222222222"},
+                        "filename": "PX-BETA-timeline.txt",
+                        "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
+                        "location_start": 8,
+                        "location_end": 9,
+                        "excerpt": "Fictional project PX-BETA milestone: archive index review planned for cycle 3.",
+                        "score": 0.84,
+                        "reranker_score": 0.72
+                      }
+                    }
+                  }
+                ],
+                "requested_top_k": 5,
+                "returned_count": 2
+              }
+            }
+          }
+        }
+      ],
+      "eval_metadata": {
+        "case_kind": "MULTIPLE_CANDIDATES",
+        "expected_answer_status": "ANSWERED",
+        "direct_evidence_required": true,
+        "supporting_chunk_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "description": "相近但缺关键事实：PX-GAMMA 候选提到进度却没有合同金额",
+      "input_data": {
+        "question": "PX-GAMMA 的合同金额是多少？"
+      },
+      "eval_input": [
+        {
+          "name": "archive_question_retrieval",
+          "value": {
+            "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalResponse",
+            "py/state": {
+              "__dict__": {
+                "items": [
+                  {
+                    "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalItemRead",
+                    "py/state": {
+                      "__dict__": {
+                        "chunk_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        "document_id": {"py/object": "uuid.UUID", "hex": "33333333333333333333333333333333"},
+                        "filename": "PX-GAMMA-progress.txt",
+                        "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
+                        "location_start": 11,
+                        "location_end": 12,
+                        "excerpt": "Fictional project PX-GAMMA progress: foundation inspection completed; handover remains pending.",
+                        "score": 0.93,
+                        "reranker_score": 0.91
+                      }
+                    }
+                  }
+                ],
+                "requested_top_k": 5,
+                "returned_count": 1
+              }
+            }
+          }
+        }
+      ],
+      "eval_metadata": {
+        "case_kind": "RELATED_BUT_MISSING_FACT",
+        "expected_answer_status": "REFUSED_NO_EVIDENCE",
+        "direct_evidence_required": false,
+        "must_refuse_missing_fact": true
+      }
+    },
+    {
+      "description": "高分无据：PX-DELTA 候选分数很高但只说明归档状态，没有预算总额",
+      "input_data": {
+        "question": "PX-DELTA 的预算总额是多少？"
+      },
+      "eval_input": [
+        {
+          "name": "archive_question_retrieval",
+          "value": {
+            "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalResponse",
+            "py/state": {
+              "__dict__": {
+                "items": [
+                  {
+                    "py/object": "app.schemas.archive_retrieval.ArchiveRetrievalItemRead",
+                    "py/state": {
+                      "__dict__": {
+                        "chunk_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                        "document_id": {"py/object": "uuid.UUID", "hex": "44444444444444444444444444444444"},
+                        "filename": "PX-DELTA-status.txt",
+                        "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
+                        "location_start": 3,
+                        "location_end": 3,
+                        "excerpt": "Fictional project PX-DELTA archive status: CONFIRMED.",
+                        "score": 0.995,
+                        "reranker_score": 0.992
+                      }
+                    }
+                  }
+                ],
+                "requested_top_k": 5,
+                "returned_count": 1
+              }
+            }
+          }
+        }
+      ],
+      "eval_metadata": {
+        "case_kind": "HIGH_SCORE_NO_DIRECT_EVIDENCE",
+        "expected_answer_status": "REFUSED_NO_EVIDENCE",
+        "direct_evidence_required": false,
+        "must_refuse_missing_fact": true,
+        "note": "候选存在会进入当前生产服务的模型分支；本案例专门观察模型是否仍保持证据边界。"
+      }
+    }
+  ]
+}

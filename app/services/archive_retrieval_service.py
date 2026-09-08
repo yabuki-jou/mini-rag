@@ -1,5 +1,6 @@
 """执行智慧档案正式范围内的 Chroma 证据检索。"""
 
+import hashlib
 import logging
 from time import perf_counter
 from typing import Any
@@ -25,6 +26,7 @@ from app.schemas.archive_retrieval import (
     ArchiveRetrievalResponse,
 )
 from app.services.archive_catalog_service import _blocked_document_ids
+from app.services.archive_evidence_match_service import item_contains_expected_evidence
 from app.services.archive_final_chunk_service import get_final_collection
 from app.services.model_service import get_embeddings
 from app.services.archive_reranker_service import score_archive_candidates
@@ -32,17 +34,27 @@ from app.services.archive_reranker_service import score_archive_candidates
 
 logger = logging.getLogger(__name__)
 
-# bge-small-zh-v1.5 的文档语料向量不加指令；查询侧使用公开推荐的检索前缀，
+# bge-base-zh-v1.5 的文档语料向量不加指令；查询侧使用公开推荐的检索前缀，
 # 避免问题句与原文片段处于不一致的语义表示空间。
 _BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
 _ARCHIVE_QUERY_EXPRESSION_PREFIX = "档案证据检索问题："
+_C4B_RERANKER_QUERY_EXPRESSION_PREFIX = "请从项目档案中查找与问题直接匹配的原文证据："
+_DIAGNOSTIC_CANDIDATE_KEY_DOMAIN = "mini-rag.archive-retrieval-diagnostic.candidate.v1"
 _ArchiveCandidate = tuple[float, ArchiveRetrievalItemRead]
 _RerankedArchiveCandidate = tuple[float, float, ArchiveRetrievalItemRead]
 
 
 def _build_archive_query_expression(query: str) -> str:
-    """构造固定、可复现且同时供召回与重排使用的查询表达。"""
+    """构造 C4-A 基线查询表达，供 BGE 召回侧保持稳定。"""
     return f"{_ARCHIVE_QUERY_EXPRESSION_PREFIX}{query.strip()}"
+
+
+def _build_archive_reranker_query_expression(query: str) -> str:
+    """按受控实验模式构造 Reranker 查询，不改变 BGE 的召回表达。"""
+    normalized_query = query.strip()
+    if settings.archive_reranker_query_mode == "c4_b":
+        return f"{_C4B_RERANKER_QUERY_EXPRESSION_PREFIX}{normalized_query}"
+    return _build_archive_query_expression(normalized_query)
 
 
 def _query_values(result: dict[str, Any], name: str) -> list[Any]:
@@ -134,7 +146,7 @@ def _score_and_order_candidates(
 ) -> list[_RerankedArchiveCandidate]:
     """为所有已校验候选评分并排序，供公开检索和诊断共用。"""
     rerank_scores = score_archive_candidates(
-        query=_build_archive_query_expression(query),
+        query=_build_archive_reranker_query_expression(query),
         contents=[item.excerpt for _, item in candidates],
     )
     reranked_candidates = [
@@ -173,7 +185,7 @@ def _query_validated_candidates(
     query: str,
     formal_ids: list[UUID],
 ) -> tuple[int, list[_ArchiveCandidate]]:
-    """执行一次 Top-20 Chroma 查询并返回原始数与范围校验后的候选。"""
+    """执行一次 Top-30 Chroma 查询并返回原始数与范围校验后的候选。"""
     scope_filter = _scope_filter(
         user_id=user_id,
         project_id=project_id,
@@ -242,12 +254,37 @@ def _candidate_matches_expected_evidence(
     return False
 
 
+def _candidate_publicly_covers_expected_evidence(
+    *, item: ArchiveRetrievalItemRead, expected_evidence: object
+) -> bool:
+    """按公开验收的范围覆盖语义判断候选是否包含标准证据。
+
+    Args:
+        item: 已通过正式文档范围校验的候选。
+        expected_evidence: 固定评测集中的标准证据标注。
+    """
+    return item_contains_expected_evidence(
+        item.model_dump(mode="python"),
+        expected_evidence,
+    )
+
+
+def _diagnostic_candidate_key(*, chunk_id: str) -> str:
+    """将原始 Chunk ID 投影为带固定域前缀的稳定 SHA-256 标识。
+
+    Args:
+        chunk_id: 仅在服务端内存中使用的原始 Chunk 标识。
+    """
+    digest_input = f"{_DIAGNOSTIC_CANDIDATE_KEY_DOMAIN}\0{chunk_id}".encode("utf-8")
+    return hashlib.sha256(digest_input).hexdigest()
+
+
 def _diagnostic_candidate_kind(
     *, item: ArchiveRetrievalItemRead, expected_evidence: object | None
-) -> str | None:
+) -> str:
     """把候选归为安全类别，不向诊断响应暴露文件或文档标识。"""
     if not isinstance(expected_evidence, dict):
-        return None
+        return "UNKNOWN"
     relative_path = expected_evidence.get("relative_path")
     expected_filename = str(relative_path).replace("\\", "/").rsplit("/", 1)[-1]
     return "SAME_DOCUMENT" if item.filename == expected_filename else "OTHER_DOCUMENT"
@@ -262,7 +299,7 @@ def retrieve_archive_diagnostics(
     expected_evidence: object | None,
     session: Session,
 ) -> ArchiveRetrievalDiagnosticResponse:
-    """返回开发环境固定集所需的完整 Top-20 双排序脱敏诊断。"""
+    """返回开发环境固定集所需的完整 Top-30 双排序脱敏诊断。"""
     if not query or not query.strip():
         raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
     formal_ids = _formal_document_ids(
@@ -275,6 +312,7 @@ def retrieve_archive_diagnostics(
         return ArchiveRetrievalDiagnosticResponse(
             chroma_candidate_count=0,
             candidate_count=0,
+            reranker_query_mode=settings.archive_reranker_query_mode,
             candidates=[],
         )
     chroma_count, candidates = _query_validated_candidates(
@@ -302,6 +340,7 @@ def retrieve_archive_diagnostics(
     }
     diagnostics = [
         ArchiveRetrievalDiagnosticCandidateRead(
+            candidate_key=_diagnostic_candidate_key(chunk_id=item.chunk_id),
             dense_rank=dense_ranks[item.chunk_id][0],
             dense_distance=dense_ranks[item.chunk_id][1],
             reranker_rank=reranker_ranks[item.chunk_id],
@@ -310,16 +349,23 @@ def retrieve_archive_diagnostics(
                 item=item,
                 expected_evidence=expected_evidence,
             ),
+            public_coverage_match=_candidate_publicly_covers_expected_evidence(
+                item=item,
+                expected_evidence=expected_evidence,
+            ),
             candidate_kind=_diagnostic_candidate_kind(
                 item=item,
                 expected_evidence=expected_evidence,
             ),
+            # 候选只有通过 formal_ids 的服务端范围复核后才会进入本投影。
+            isolation_violation=False,
         )
         for _, item in dense_candidates
     ]
     return ArchiveRetrievalDiagnosticResponse(
         chroma_candidate_count=chroma_count,
         candidate_count=len(candidates),
+        reranker_query_mode=settings.archive_reranker_query_mode,
         candidates=diagnostics,
     )
 

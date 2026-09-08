@@ -14,7 +14,9 @@ services:
       AGENT_CHECKPOINT_FILE: /app/data/agent_checkpoints.db
       FILE_STORAGE_DIR: /app/data/files
       LOG_FILE: /app/logs/app.log
-      EMBEDDING_MODEL_PATH: /models/bge-small-zh-v1.5
+      EMBEDDING_MODEL_PATH: /models/bge-base-zh-v1.5
+      EMBEDDING_DIMENSION: "768"
+      ARCHIVE_EMBEDDING_CONTEXT_MODE: evidence_values
       # Compose 网络通过服务名寻址，容器内的 localhost 只指向 API 自身。
       CHROMA_HOST: chroma
       CHROMA_PORT: "8000"
@@ -32,8 +34,8 @@ services:
       - app_logs:/app/logs
       # 默认使用当前工作区已有模型；其他机器可通过同名环境变量覆盖源目录。
       - type: bind
-        source: ${EMBEDDING_MODEL_HOST_PATH:-../../py-doc/py-doc-deepseek-server/models/bge-small-zh-v1.5}
-        target: /models/bge-small-zh-v1.5
+        source: ${EMBEDDING_MODEL_HOST_PATH:-../../../models/embedding_models/bge-base-zh-v1.5}
+        target: /models/bge-base-zh-v1.5
         read_only: true
 
   postgres:

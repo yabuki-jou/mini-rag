@@ -1,6 +1,6 @@
 """定义智慧档案正式检索的请求与证据响应契约。"""
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,12 +51,15 @@ class ArchiveRetrievalDiagnosticRequest(BaseModel):
 class ArchiveRetrievalDiagnosticCandidateRead(BaseModel):
     """返回候选的双排序数值，不包含文档标识、文件名或原文。"""
 
+    candidate_key: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     dense_rank: int = Field(ge=1)
     dense_distance: float
     reranker_rank: int = Field(ge=1)
     reranker_score: float
     matches_expected_evidence: bool
-    candidate_kind: str | None = None
+    public_coverage_match: bool
+    candidate_kind: Literal["SAME_DOCUMENT", "OTHER_DOCUMENT", "UNKNOWN"]
+    isolation_violation: bool
 
 
 class ArchiveRetrievalDiagnosticResponse(BaseModel):
@@ -64,4 +67,5 @@ class ArchiveRetrievalDiagnosticResponse(BaseModel):
 
     chroma_candidate_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
+    reranker_query_mode: Literal["c4_a", "c4_b"] = "c4_a"
     candidates: list[ArchiveRetrievalDiagnosticCandidateRead]

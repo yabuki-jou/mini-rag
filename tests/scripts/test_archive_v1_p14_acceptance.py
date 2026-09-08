@@ -12,6 +12,8 @@ import scripts.archive_v1_p14_acceptance as acceptance_runner
 
 from scripts.archive_v1_p14_acceptance import (
     AcceptanceError,
+    build_c4a_candidate_pool_diagnostics,
+    build_c4a_aggregate_result,
     build_safe_retrieval_diagnostics,
     build_manual_field_payload,
     choose_distance_threshold,
@@ -64,6 +66,38 @@ def _reranked_item(*, filename: str, reranker_score: float) -> dict[str, object]
     item = _item(filename=filename, distance=0.2)
     item["reranker_score"] = reranker_score
     return item
+
+
+def _d4_snapshot_outcomes() -> list[dict[str, object]]:
+    """构造 D4-A 分支使用的 12 题、每题 30 候选内存结果。"""
+    categories = ["GROUNDED"] * 8 + ["NO_EVIDENCE"] * 2 + ["ISOLATION"] * 2
+    outcomes: list[dict[str, object]] = []
+    for question_index, category in enumerate(categories):
+        candidates = []
+        for rank in range(1, 31):
+            candidates.append(
+                {
+                    "candidate_key": f"{question_index:02x}{rank:062x}",
+                    "reranker_rank": rank,
+                    "reranker_score": 1.0 - rank * 0.001,
+                    "public_coverage_match": category == "GROUNDED" and rank == 1,
+                    "matches_expected_evidence": (
+                        category == "GROUNDED" and rank == 1 and question_index < 6
+                    ),
+                    "isolation_violation": False,
+                    "candidate_kind": "SAME_DOCUMENT",
+                }
+            )
+        outcomes.append(
+            {
+                "case_id": f"Q-{question_index + 1:02d}",
+                "category": category,
+                "diagnostic_candidate_count": 30,
+                "diagnostic_chroma_candidate_count": 30,
+                "internal_candidates": candidates,
+            }
+        )
+    return outcomes
 
 
 def test_expected_evidence_requires_filename_location_and_excerpt() -> None:
@@ -240,8 +274,8 @@ def test_safe_retrieval_diagnostics_marks_incomplete_candidate_pool_without_fals
     assert diagnostics[0]["expected_reranker_score"] is None
 
 
-def test_safe_retrieval_diagnostics_prefers_internal_top_twenty_dual_ranking() -> None:
-    """运行器必须保留内部 Top-20 的 dense 与 Reranker 独立排名。"""
+def test_safe_retrieval_diagnostics_prefers_internal_top_thirty_dual_ranking() -> None:
+    """运行器必须保留内部 Top-30 的 dense 与 Reranker 独立排名。"""
     outcome = _grounded(distance=0.2)
     outcome["allowed_filenames"] = ["alpha.txt"]
     outcome["internal_candidates"] = [
@@ -260,18 +294,225 @@ def test_safe_retrieval_diagnostics_prefers_internal_top_twenty_dual_ranking() -
             "matches_expected_evidence": False,
         },
     ]
-    outcome["diagnostic_candidate_count"] = 20
-    outcome["diagnostic_chroma_candidate_count"] = 20
+    outcome["diagnostic_candidate_count"] = 30
+    outcome["diagnostic_chroma_candidate_count"] = 30
 
     diagnostics = build_safe_retrieval_diagnostics([outcome])
 
-    assert diagnostics[0]["candidate_count"] == 20
+    assert diagnostics[0]["candidate_count"] == 30
     assert diagnostics[0]["expected_candidate_rank"] == 12
     assert diagnostics[0]["expected_in_chroma_top_10"] is False
     assert diagnostics[0]["expected_reranker_rank"] == 1
     assert diagnostics[0]["expected_reranker_score"] == pytest.approx(0.9)
     assert diagnostics[0]["nearest_candidate_distance"] == pytest.approx(0.1)
-    assert diagnostics[0]["chroma_candidate_count"] == 20
+    assert diagnostics[0]["chroma_candidate_count"] == 30
+
+
+def test_c4a_diagnostics_marks_complete_top_thirty_and_compares_no_evidence_baseline() -> None:
+    """C4-A 必须记录完整 Top-30，并保留两个无据题的 Top-20 对照分数。"""
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "expected_evidence": _grounded(distance=0.2)["expected_evidence"],
+            "items": [_reranked_item(filename="alpha-secret.txt", reranker_score=0.9)],
+            "internal_candidates": [
+                {
+                    "dense_rank": 7,
+                    "dense_distance": 0.2,
+                    "reranker_rank": 1,
+                    "reranker_score": 0.9,
+                    "matches_expected_evidence": True,
+                }
+            ],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "items": [_reranked_item(filename="alpha-secret.txt", reranker_score=0.8)],
+            "internal_candidates": [
+                {
+                    "dense_rank": 1,
+                    "dense_distance": 0.25,
+                    "reranker_rank": 1,
+                    "reranker_score": 0.8,
+                    "matches_expected_evidence": False,
+                }
+            ],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha-secret.txt"],
+            "items": [],
+            "internal_candidates": [],
+            "diagnostic_candidate_count": 0,
+            "diagnostic_chroma_candidate_count": 0,
+        },
+    ]
+
+    diagnostics = build_c4a_candidate_pool_diagnostics(outcomes)
+
+    assert diagnostics[0]["candidate_pool_complete"] is True
+    assert diagnostics[0]["standard_evidence_in_complete_top_30"] is True
+    assert diagnostics[1]["case_id"] == "NO_EVIDENCE-01"
+    assert diagnostics[1]["candidate_pool_complete"] is True
+    assert diagnostics[1]["top20_baseline_strongest_candidate_reranker_score"] == pytest.approx(0.973935)
+    assert diagnostics[1]["top20_baseline_strongest_candidate_dense_distance"] == pytest.approx(0.287029)
+    assert diagnostics[1]["reranker_score_delta_vs_top20"] == pytest.approx(-0.173935)
+    assert diagnostics[2]["case_id"] == "NO_EVIDENCE-02"
+    assert diagnostics[2]["strongest_candidate_reranker_score"] is None
+    assert diagnostics[2]["top20_baseline_strongest_candidate_reranker_score"] == pytest.approx(0.707142)
+
+
+def test_c4a_diagnostics_projects_isolation_candidate_count() -> None:
+    """C4-A 必须把隔离题的 Chroma 候选数也投影到候选池完整性诊断。"""
+    outcomes = [
+        {
+            "category": "ISOLATION",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha.txt"],
+            "hidden_evidence_in_other_project": {
+                "relative_path": "documents/beta.txt"
+            },
+            "items": [_reranked_item(filename="alpha.txt", reranker_score=0.8)],
+            "internal_candidates": [
+                {
+                    "dense_rank": 1,
+                    "dense_distance": 0.2,
+                    "reranker_rank": 1,
+                    "reranker_score": 0.8,
+                    "matches_expected_evidence": False,
+                    "candidate_kind": "SAME_DOCUMENT",
+                }
+            ],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+        }
+    ]
+
+    diagnostics = build_c4a_candidate_pool_diagnostics(outcomes)
+
+    assert diagnostics[0]["candidate_count"] == 30
+    assert diagnostics[0]["chroma_candidate_count"] == 30
+    assert diagnostics[0]["candidate_pool_complete"] is True
+
+
+def test_c4a_diagnostics_distinguishes_public_coverage_from_exact_match() -> None:
+    """C4-A 必须显式区分公开 Chunk 覆盖式匹配与诊断精确匹配。"""
+    expected_evidence = _grounded(distance=0.2)["expected_evidence"]
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "project-secret",
+            "allowed_filenames": ["alpha.txt"],
+            "expected_evidence": expected_evidence,
+            "items": [
+                {
+                    **_reranked_item(filename="alpha.txt", reranker_score=0.8),
+                    "location_end": 5,
+                    "excerpt": "前缀 标准证据 后缀",
+                }
+            ],
+            "internal_candidates": [
+                {
+                    "dense_rank": 1,
+                    "dense_distance": 0.2,
+                    "reranker_rank": 1,
+                    "reranker_score": 0.8,
+                    "matches_expected_evidence": False,
+                    "candidate_kind": "SAME_DOCUMENT",
+                }
+            ],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+        }
+    ]
+
+    diagnostics = build_c4a_candidate_pool_diagnostics(outcomes)
+
+    assert diagnostics[0]["public_result_contains_expected_evidence"] is True
+    assert diagnostics[0]["standard_evidence_in_complete_top_30"] is False
+    assert diagnostics[0]["matching_semantics_disagree"] is True
+
+    result = build_c4a_aggregate_result(
+        outcomes,
+        diagnostics,
+        latency_p95_ms=100.0,
+        index_context_summary={
+            "document_count": 1,
+            "contextual_chunk_count": 1,
+            "zero_context_document_count": 0,
+        },
+    )
+
+    assert result["grounded_public_coverage_hits"] == 1
+    assert result["grounded_matching_semantics_disagreement_count"] == 1
+
+
+def test_c4a_aggregate_records_candidate_pool_and_latency_without_threshold() -> None:
+    """C4-A 聚合只记录候选池、当前未过滤结果和 P95，不生成阈值。"""
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "alpha",
+            "allowed_filenames": ["alpha.txt"],
+            "expected_evidence": _grounded(distance=0.2)["expected_evidence"],
+            "items": [_reranked_item(filename="alpha.txt", reranker_score=0.9)],
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "project_id": "alpha",
+            "allowed_filenames": ["alpha.txt"],
+            "items": [_reranked_item(filename="alpha.txt", reranker_score=0.8)],
+        },
+    ]
+    diagnostics = [
+        {
+            "category": "GROUNDED",
+            "case_id": "GROUNDED-01",
+            "candidate_count": 30,
+            "chroma_candidate_count": 30,
+            "candidate_pool_complete": True,
+            "standard_evidence_in_complete_top_30": True,
+            "public_result_contains_expected_evidence": True,
+            "matching_semantics_disagree": False,
+        },
+        {
+            "category": "NO_EVIDENCE",
+            "case_id": "NO_EVIDENCE-01",
+            "candidate_count": 30,
+            "chroma_candidate_count": 30,
+            "candidate_pool_complete": True,
+            "strongest_candidate_reranker_score": 0.8,
+            "strongest_candidate_dense_distance": 0.2,
+        },
+    ]
+
+    result = build_c4a_aggregate_result(
+        outcomes,
+        diagnostics,
+        latency_p95_ms=12345.67,
+        index_context_summary={
+            "document_count": 12,
+            "contextual_chunk_count": 63,
+            "zero_context_document_count": 0,
+        },
+    )
+
+    assert result["candidate_pool_expected_count"] == 30
+    assert result["grounded_candidate_pool_hits"] == 1
+    assert result["grounded_public_coverage_hits"] == 1
+    assert result["grounded_matching_semantics_disagreement_count"] == 0
+    assert result["no_evidence_rejected_count"] == 0
+    assert result["latency_p95_ms"] == pytest.approx(12345.67)
+    assert "reranker_score_threshold" not in result
 
 
 def test_threshold_selection_meets_recall_no_evidence_and_isolation_gates() -> None:
@@ -443,6 +684,910 @@ def test_cli_guard_runs_only_after_all_helper_definitions() -> None:
     assert all(
         not isinstance(node, (ast.FunctionDef, ast.ClassDef))
         for node in module.body[guard_index + 1 :]
+    )
+
+
+def test_c4_phases_are_explicit_and_threshold_calibration_is_separate() -> None:
+    """C4-A 与 C4-B 必须显式选择，阈值标定仍是独立阶段。"""
+    script_path = Path(__file__).parents[2] / "scripts" / "archive_v1_p14_acceptance.py"
+    module = ast.parse(script_path.read_text(encoding="utf-8"))
+    main_function = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    phase_argument = next(
+        node
+        for node in ast.walk(main_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "--phase"
+    )
+    keyword_values = {
+        keyword.arg: keyword.value for keyword in phase_argument.keywords
+    }
+    assert isinstance(keyword_values["default"], ast.Constant)
+    assert keyword_values["default"].value == "c4-a"
+    assert isinstance(keyword_values["choices"], (ast.Tuple, ast.List))
+    assert {
+        element.value
+        for element in keyword_values["choices"].elts
+        if isinstance(element, ast.Constant)
+    } == {
+        "c4-a",
+        "c4-b",
+        "d4-a-snapshot",
+        "threshold-calibration",
+        "d5-capture",
+        "d6b-capture",
+    }
+
+    calibration_call = next(
+        node
+        for node in ast.walk(main_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_retrieval_calibration"
+    )
+    calibrate_keyword = next(
+        keyword
+        for keyword in calibration_call.keywords
+        if keyword.arg == "calibrate_threshold"
+    )
+    assert isinstance(calibrate_keyword.value, ast.Compare)
+    assert isinstance(calibrate_keyword.value.comparators[0], ast.Constant)
+    assert calibrate_keyword.value.comparators[0].value == "threshold-calibration"
+
+    snapshot_argument = next(
+        node
+        for node in ast.walk(main_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "--snapshot-file"
+    )
+    assert snapshot_argument is not None
+
+    snapshot_keyword = next(
+        keyword
+        for keyword in calibration_call.keywords
+        if keyword.arg == "snapshot_file"
+    )
+    assert isinstance(snapshot_keyword.value, ast.Attribute)
+    assert snapshot_keyword.value.attr == "snapshot_file"
+
+
+def test_collect_retrieval_outcomes_preserves_fixed_question_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4-A 内存结果必须保留标注中的固定题 ID，且不得保存问题正文。"""
+
+    class FakeApi:
+        """返回公开检索与内部诊断的最小客户端。"""
+
+        def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            """根据调用顺序返回公开结果或诊断占位。"""
+            if _args[1].endswith("archive-retrieval"):
+                return {"items": []}
+            return {"diagnostic": True}
+
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_safe_internal_diagnostic",
+        lambda _payload: {
+            "candidates": [],
+            "candidate_count": 0,
+            "chroma_candidate_count": 0,
+            "reranker_query_mode": "c4_a",
+        },
+    )
+
+    outcomes, _ = acceptance_runner._collect_retrieval_outcomes(
+        FakeApi(),
+        question_label={
+            "questions": [
+                {
+                    "id": "Q-01",
+                    "project_id": "alpha",
+                    "category": "NO_EVIDENCE",
+                    "question": "只用于请求，不得保留",
+                }
+            ]
+        },
+        project_ids={"alpha": "project-id"},
+        filenames_by_project={"alpha": ["alpha.txt"]},
+    )
+
+    assert outcomes[0]["case_id"] == "Q-01"
+    assert "question" not in outcomes[0]
+    assert "query" not in outcomes[0]
+
+
+def test_collect_retrieval_outcomes_supports_d5_top_five_candidates() -> None:
+    """D5 捕获必须把真实问答检索请求固定为 Top-5。"""
+    class FakeApi:
+        """记录 D5 捕获请求的最小客户端。"""
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def request(
+            self,
+            method: str,
+            path: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            self.calls.append({"method": method, "path": path, **kwargs})
+            if path.endswith("archive-retrieval"):
+                return {
+                    "items": [_item(filename="alpha.txt", distance=0.2)],
+                    "requested_top_k": 5,
+                    "returned_count": 1,
+                }
+            return {"diagnostic": True}
+
+    api = FakeApi()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            acceptance_runner,
+            "_read_safe_internal_diagnostic",
+            lambda _payload: {
+                "candidates": [],
+                "candidate_count": 30,
+                "chroma_candidate_count": 30,
+                "reranker_query_mode": "c4_a",
+            },
+        )
+        outcomes, _ = acceptance_runner._collect_retrieval_outcomes(
+            api,
+            question_label={
+                "questions": [
+                    {
+                        "id": "Q-01",
+                        "project_id": "alpha",
+                        "category": "GROUNDED",
+                        "question": "D5 问题",
+                        "expected_evidence": {"items": []},
+                    }
+                ]
+            },
+            project_ids={"alpha": "project-id"},
+            filenames_by_project={"alpha": ["alpha.txt"]},
+            top_k=5,
+            include_ground_truth_in_diagnostic=False,
+            )
+    finally:
+        monkeypatch.undo()
+
+    retrieval_call = next(
+        call for call in api.calls if str(call["path"]).endswith("archive-retrieval")
+    )
+    assert retrieval_call["payload"] == {"query": "D5 问题", "top_k": 5}
+    assert outcomes[0]["retrieval_requested_top_k"] == 5
+    diagnostic_calls = [
+        call
+        for call in api.calls
+        if str(call["path"]).endswith("archive-retrieval-diagnostic")
+    ]
+    assert diagnostic_calls
+    assert "expected_evidence" not in diagnostic_calls[0]["payload"]
+
+
+def test_d5_capture_phase_writes_twelve_pixie_entries_and_safe_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D5 阶段应写入 12 条候选捕获，并将聚合文件限制为安全指标。"""
+    class FakeApi:
+        """隔离 D5 阶段控制流的最小客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭客户端。"""
+
+    questions = [
+        {
+            "id": f"Q-{index:02d}",
+            "project_id": "alpha" if index <= 8 else "beta",
+            "category": (
+                "GROUNDED"
+                if index <= 8
+                else "NO_EVIDENCE"
+                if index <= 10
+                else "ISOLATION"
+            ),
+            "question": f"问题 {index}",
+            "expected_answer": f"答案 {index}" if index <= 8 else None,
+            "expected_evidence": {
+                "relative_path": "documents/alpha-secret.txt",
+                "items": [
+                    {
+                        "location_type": "TEXT_LINE_RANGE",
+                        "location_start": 1,
+                        "location_end": 1,
+                        "excerpt": "真实候选摘录",
+                    }
+                ],
+            }
+            if index <= 8
+            else None,
+        }
+        for index in range(1, 13)
+    ]
+    outcomes = [
+        {
+            "case_id": question["id"],
+            "category": question["category"],
+            "project_id": question["project_id"],
+            "expected_evidence": question["expected_evidence"],
+            "items": [
+                {
+                    "document_id": "11111111-1111-1111-1111-111111111111",
+                    "filename": "alpha-secret.txt",
+                    "location_type": "TEXT_LINE_RANGE",
+                    "location_start": 1,
+                    "location_end": 1,
+                    "excerpt": "真实候选摘录",
+                    "score": 0.9,
+                }
+            ],
+            "allowed_filenames": ["alpha-secret.txt"],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+            "retrieval_latency_ms": float(index),
+        }
+        for index, question in enumerate(questions, start=1)
+    ]
+    captured: dict[str, object] = {}
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda path: (
+            {"dataset_id": "fixture", "questions": questions}
+            if "question" in str(path)
+            else {"dataset_id": "fixture"}
+        ),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "fixture"),
+    )
+
+    def fake_seed(
+        _api: object,
+        *,
+        project_ids: dict[str, str],
+        **_kwargs: object,
+    ) -> tuple[dict[str, list[str]], list[int]]:
+        project_ids.update({"alpha": "project-alpha", "beta": "project-beta"})
+        return {"alpha": ["alpha-secret.txt"], "beta": ["beta-secret.txt"]}, [1] * 12
+
+    monkeypatch.setattr(acceptance_runner, "_seed_confirmed_documents", fake_seed)
+
+    def fake_collect(
+        _api: object,
+        *,
+        top_k: int,
+        **_kwargs: object,
+    ) -> tuple[list[dict[str, object]], list[float]]:
+        captured["top_k"] = top_k
+        captured["include_ground_truth_in_diagnostic"] = _kwargs[
+            "include_ground_truth_in_diagnostic"
+        ]
+        return outcomes, [float(index) for index in range(1, 13)]
+
+    monkeypatch.setattr(acceptance_runner, "_collect_retrieval_outcomes", fake_collect)
+    monkeypatch.setattr(
+        acceptance_runner, "_cleanup_seeded_scope", lambda *_args, **_kwargs: None
+    )
+
+    dataset_file = tmp_path / "nested" / "d5-capture.json"
+    result_file = tmp_path / "safe-result.json"
+    result = acceptance_runner.run_retrieval_calibration(
+        base_url="http://fixture",
+        result_file=result_file,
+        d5_dataset_file=dataset_file,
+        calibrate_threshold=False,
+        phase="d5-capture",
+    )
+
+    dataset = json.loads(dataset_file.read_text(encoding="utf-8"))
+    aggregate = json.loads(result_file.read_text(encoding="utf-8"))
+    assert captured["top_k"] == 5
+    assert captured["include_ground_truth_in_diagnostic"] is False
+    assert len(dataset["entries"]) == 12
+    assert all(set(entry["input_data"]) == {"question"} for entry in dataset["entries"])
+    assert dataset["entries"][0]["eval_metadata"]["expected_answer"] == "答案 1"
+    assert dataset["entries"][0]["eval_metadata"]["expected_evidence"] == {
+        "relative_path": "documents/alpha-secret.txt",
+        "items": [
+            {
+                "location_type": "TEXT_LINE_RANGE",
+                "location_start": 1,
+                "location_end": 1,
+                "excerpt": "真实候选摘录",
+            }
+        ],
+    }
+    assert dataset["evaluators"] == [
+        "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
+        "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
+        "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
+        "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+    ]
+    assert [
+        entry["eval_metadata"]["category"] for entry in dataset["entries"]
+    ] == ["GROUNDED"] * 8 + ["NO_EVIDENCE"] * 2 + ["ISOLATION"] * 2
+    assert dataset["entries"][0]["eval_metadata"]["public_coverage_match"] is True
+    assert dataset["entries"][8]["eval_metadata"]["public_coverage_match"] is False
+    assert all(
+        entry["eval_metadata"]["candidate_pool_complete"] is True
+        and "retrieval_latency_ms" in entry["eval_metadata"]
+        for entry in dataset["entries"]
+    )
+    serialized_aggregate = json.dumps(aggregate, ensure_ascii=False)
+    assert result["question_count"] == 12
+    assert result["public_coverage_grounded_count"] == 8
+    assert all(secret not in serialized_aggregate for secret in ("问题", "filename", "摘录"))
+    assert "11111111-1111-1111-1111-111111111111" not in serialized_aggregate
+
+
+def test_d5_capture_requires_target_and_removes_stale_file_before_external_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D5 缺少目标或前置失败时不得误读旧捕获文件。"""
+    target = tmp_path / "stale-d5.json"
+    target.write_text('{"stale": true}', encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: (_ for _ in ()).throw(
+            acceptance_runner.AcceptanceError("固定集读取失败。")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="D5 捕获数据集文件"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            calibrate_threshold=False,
+            phase="d5-capture",
+        )
+
+    with pytest.raises(acceptance_runner.AcceptanceError, match="固定集读取失败"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            d5_dataset_file=target,
+            calibrate_threshold=False,
+            phase="d5-capture",
+        )
+    assert not target.exists()
+
+
+def test_d6b_capture_writes_twelve_top_eight_pixie_entries_and_marks_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D6-B 必须请求 Top-8 并写出明确标记 D6-B 的 12 条数据集记录。"""
+
+    class FakeApi:
+        """隔离 D6-B 阶段控制流的最小客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭客户端。"""
+
+    questions = [
+        {
+            "id": f"Q-{index:02d}",
+            "project_id": "alpha" if index <= 8 else "beta",
+            "category": "GROUNDED" if index <= 8 else "NO_EVIDENCE",
+            "question": f"D6-B 问题 {index}",
+            "expected_answer": f"答案 {index}" if index <= 8 else None,
+            "expected_evidence": {"items": []} if index <= 8 else None,
+        }
+        for index in range(1, 13)
+    ]
+    outcomes = [
+        {
+            "case_id": question["id"],
+            "category": question["category"],
+            "project_id": question["project_id"],
+            "expected_evidence": question["expected_evidence"],
+            "items": [],
+            "allowed_filenames": ["alpha.txt"],
+            "diagnostic_candidate_count": 30,
+            "diagnostic_chroma_candidate_count": 30,
+            "retrieval_requested_top_k": 8,
+            "retrieval_returned_count": 0,
+            "retrieval_latency_ms": 1.0,
+        }
+        for question in questions
+    ]
+    captured: dict[str, object] = {}
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda path: (
+            {"dataset_id": "fixture", "questions": questions}
+            if "question" in str(path)
+            else {"dataset_id": "fixture"}
+        ),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "fixture"),
+    )
+
+    def fake_seed(
+        _api: object,
+        *,
+        project_ids: dict[str, str],
+        **_kwargs: object,
+    ) -> tuple[dict[str, list[str]], list[int]]:
+        project_ids.update({"alpha": "project-alpha", "beta": "project-beta"})
+        return {"alpha": ["alpha.txt"], "beta": ["beta.txt"]}, [1] * 12
+
+    monkeypatch.setattr(acceptance_runner, "_seed_confirmed_documents", fake_seed)
+
+    def fake_collect(
+        _api: object,
+        *,
+        top_k: int,
+        **_kwargs: object,
+    ) -> tuple[list[dict[str, object]], list[float]]:
+        captured["top_k"] = top_k
+        captured["include_ground_truth_in_diagnostic"] = _kwargs[
+            "include_ground_truth_in_diagnostic"
+        ]
+        return outcomes, [float(index) for index in range(1, 13)]
+
+    monkeypatch.setattr(acceptance_runner, "_collect_retrieval_outcomes", fake_collect)
+    monkeypatch.setattr(
+        acceptance_runner, "_cleanup_seeded_scope", lambda *_args, **_kwargs: None
+    )
+
+    dataset_file = tmp_path / "nested" / "d6b-capture.json"
+    result = acceptance_runner.run_retrieval_calibration(
+        base_url="http://fixture",
+        d6b_dataset_file=dataset_file,
+        calibrate_threshold=False,
+        phase="d6b-capture",
+    )
+
+    dataset = json.loads(dataset_file.read_text(encoding="utf-8"))
+    assert captured == {
+        "top_k": 8,
+        "include_ground_truth_in_diagnostic": False,
+    }
+    assert len(dataset["entries"]) == 12
+    assert dataset["name"] == "archive-question-d6b-top8-captured"
+    assert "D6-B" in dataset["description"]
+    assert "Top-8" in dataset["description"]
+    assert all(
+        entry["eval_input"][0]["value"]["requested_top_k"] == 8
+        for entry in dataset["entries"]
+    )
+    assert result["d6b_dataset_written"] is True
+
+
+def test_d6b_capture_requires_own_target_and_rejects_d5_target_before_external_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D6-B 路径缺失或误用 D5 参数时必须在外部调用前失败。"""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        acceptance_runner,
+        "P14Api",
+        lambda _: calls.append("api") or pytest.fail("路径校验后不得创建客户端"),
+    )
+
+    with pytest.raises(ValueError, match="D6-B 捕获数据集文件"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            calibrate_threshold=False,
+            phase="d6b-capture",
+        )
+
+    with pytest.raises(ValueError, match="D5 捕获数据集文件仅允许 d5-capture"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            d5_dataset_file=tmp_path / "wrong.json",
+            calibrate_threshold=False,
+            phase="d6b-capture",
+        )
+
+    target = tmp_path / "stale-d6b.json"
+    target.write_text('{"stale": true}', encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: (_ for _ in ()).throw(
+            acceptance_runner.AcceptanceError("固定集读取失败。")
+        ),
+    )
+    with pytest.raises(acceptance_runner.AcceptanceError, match="固定集读取失败"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            d6b_dataset_file=target,
+            calibrate_threshold=False,
+            phase="d6b-capture",
+        )
+
+    assert calls == []
+    assert not target.exists()
+
+
+def test_internal_diagnostic_preserves_only_d4_candidate_fields() -> None:
+    """诊断读取层必须保留 D4 标签，同时丢弃服务端额外敏感字段。"""
+    candidate = {
+        "dense_rank": 1,
+        "dense_distance": 0.2,
+        "reranker_rank": 1,
+        "reranker_score": 0.9,
+        "matches_expected_evidence": False,
+        "candidate_kind": "SAME_DOCUMENT",
+        "candidate_key": "a" * 64,
+        "public_coverage_match": True,
+        "isolation_violation": False,
+        "content": "不得保留的正文",
+        "document_id": "不得保留的文档标识",
+    }
+
+    diagnostic = acceptance_runner._read_safe_internal_diagnostic(
+        {
+            "candidate_count": 1,
+            "chroma_candidate_count": 1,
+            "reranker_query_mode": "c4_a",
+            "candidates": [candidate],
+        }
+    )
+
+    projected = diagnostic["candidates"][0]
+    assert projected["candidate_key"] == "a" * 64
+    assert projected["public_coverage_match"] is True
+    assert projected["isolation_violation"] is False
+    assert "content" not in projected
+    assert "document_id" not in projected
+
+
+def test_d4a_phase_requires_snapshot_file_before_external_work() -> None:
+    """显式选择 D4-A 时必须提供快照路径，避免真实运行后无证据落盘。"""
+    with pytest.raises(ValueError, match="D4-A 快照文件"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            calibrate_threshold=False,
+            phase="d4-a-snapshot",
+        )
+
+
+def test_d4a_cli_without_snapshot_file_fails_stably(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """命令行遗漏快照路径时必须在任何外部调用前返回稳定失败。"""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["archive_v1_p14_acceptance.py", "--phase", "d4-a-snapshot"],
+    )
+
+    assert acceptance_runner.main() == 1
+    assert capsys.readouterr().out.strip() == (
+        "P14 retrieval evaluation failed: D4-A 快照文件不能为空。"
+    )
+
+
+def test_snapshot_file_is_rejected_outside_d4a_phase(tmp_path: Path) -> None:
+    """非 D4-A 阶段不得意外写出包含逐候选分数的快照。"""
+    with pytest.raises(ValueError, match="仅允许 D4-A"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            snapshot_file=tmp_path / "unexpected.json",
+            calibrate_threshold=False,
+            phase="c4-a",
+        )
+
+
+def test_d4a_phase_removes_stale_snapshot_before_external_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """新一轮启动后不得保留可被误认成本轮结果的旧快照。"""
+    snapshot_file = tmp_path / "stale-snapshot.json"
+    snapshot_file.write_text('{"stale": true}', encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: (_ for _ in ()).throw(
+            acceptance_runner.AcceptanceError("固定集读取失败。")
+        ),
+    )
+
+    with pytest.raises(acceptance_runner.AcceptanceError, match="固定集读取失败"):
+        acceptance_runner.run_retrieval_calibration(
+            base_url="http://fixture",
+            snapshot_file=snapshot_file,
+            calibrate_threshold=False,
+            phase="d4-a-snapshot",
+        )
+
+    assert not snapshot_file.exists()
+
+
+def test_d4a_run_writes_snapshot_without_threshold_calibration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D4-A 只写脱敏 Top-30 快照和聚合结果，不得执行阈值标定。"""
+
+    class FakeApi:
+        """隔离 D4-A 控制流的最小客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭客户端。"""
+
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+    outcomes = _d4_snapshot_outcomes()
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: {"dataset_id": "fixture"},
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "fixture"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_seed_confirmed_documents",
+        lambda *_args, **_kwargs: ({"alpha": ["alpha.txt"]}, [2] * 12),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_collect_retrieval_outcomes",
+        lambda *_args, **_kwargs: (outcomes, [float(index) for index in range(1, 13)]),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "choose_reranker_score_threshold",
+        lambda _outcomes: pytest.fail("D4-A 不得调用阈值标定"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_cleanup_seeded_scope",
+        lambda *_args, **_kwargs: None,
+    )
+
+    snapshot_file = tmp_path / "d4-a" / "snapshot.json"
+    result = acceptance_runner.run_retrieval_calibration(
+        base_url="http://fixture",
+        snapshot_file=snapshot_file,
+        calibrate_threshold=False,
+        phase="d4-a-snapshot",
+    )
+
+    snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    assert len(snapshot["questions"]) == 12
+    assert all(len(question["candidates"]) == 30 for question in snapshot["questions"])
+    assert result == {
+        "candidate_pool_expected_count": 30,
+        "candidate_pool_complete_question_count": 12,
+        "candidate_pool_incomplete_question_count": 0,
+        "contextual_chunk_count": 24,
+        "document_count": 12,
+        "grounded_question_count": 8,
+        "isolation_question_count": 2,
+        "latency_p95_ms": 12.0,
+        "no_evidence_question_count": 2,
+        "question_count": 12,
+        "snapshot_written": True,
+        "zero_context_document_count": 0,
+    }
+
+
+def test_c4b_run_writes_query_expression_stage_without_threshold_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """C4-B 只记录查询表达复验，不得隐式进入阈值标定。"""
+
+    class FakeApi:
+        """隔离 C4-B 控制流的最小客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭客户端。"""
+
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "alpha",
+            "allowed_filenames": ["alpha.txt"],
+            "expected_evidence": _grounded(distance=0.2)["expected_evidence"],
+            "items": [_reranked_item(filename="alpha.txt", reranker_score=0.9)],
+        }
+    ]
+    diagnostics = [
+        {
+            "category": "GROUNDED",
+            "case_id": "GROUNDED-01",
+            "candidate_pool_complete": True,
+            "standard_evidence_in_complete_top_30": True,
+        }
+    ]
+
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: {"dataset_id": "fixture"},
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "fixture"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_seed_confirmed_documents",
+        lambda *_args, **_kwargs: ({"alpha": ["alpha.txt"]}, [1]),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_collect_retrieval_outcomes",
+        lambda *_args, **_kwargs: (outcomes, [12.3]),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "build_c4a_candidate_pool_diagnostics",
+        lambda _outcomes: diagnostics,
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "build_c4a_aggregate_result",
+        lambda *_args, **_kwargs: {
+            "candidate_pool_expected_count": 30,
+            "quality_gate_at_current_unfiltered_results": False,
+        },
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "choose_reranker_score_threshold",
+        lambda _outcomes: pytest.fail("C4-B 不得调用阈值标定"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_cleanup_seeded_scope",
+        lambda *_args, **_kwargs: None,
+    )
+
+    diagnostic_file = tmp_path / "p14-c4b-diagnostic.json"
+    result = acceptance_runner.run_retrieval_calibration(
+        base_url="http://fixture",
+        diagnostic_file=diagnostic_file,
+        calibrate_threshold=False,
+        phase="c4-b",
+    )
+
+    assert result["candidate_pool_expected_count"] == 30
+    assert json.loads(diagnostic_file.read_text(encoding="utf-8"))["stage"] == (
+        "c4_b_query_expression"
+    )
+
+
+def test_c4a_run_writes_observation_without_threshold_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """C4-A 运行分支只能写候选池观测，不能隐式调用阈值标定。"""
+
+    class FakeApi:
+        """隔离 C4-A 控制流的最小客户端。"""
+
+        headers: dict[str, str] = {}
+
+        def close(self) -> None:
+            """模拟关闭客户端。"""
+
+    user_id = UUID("12345678-1234-5678-1234-567812345678")
+    outcomes = [
+        {
+            "category": "GROUNDED",
+            "project_id": "alpha",
+            "allowed_filenames": ["alpha.txt"],
+            "items": [_reranked_item(filename="alpha.txt", reranker_score=0.9)],
+        }
+    ]
+    diagnostics = [
+        {
+            "category": "GROUNDED",
+            "case_id": "GROUNDED-01",
+            "candidate_pool_complete": True,
+            "standard_evidence_in_complete_top_30": True,
+        }
+    ]
+
+    monkeypatch.setattr(acceptance_runner, "P14Api", lambda _: FakeApi())
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_read_label",
+        lambda _path: {"dataset_id": "fixture"},
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_register_and_login",
+        lambda *_args, **_kwargs: (user_id, "fixture"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_seed_confirmed_documents",
+        lambda *_args, **_kwargs: ({"alpha": ["alpha.txt"]}, [1]),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_collect_retrieval_outcomes",
+        lambda *_args, **_kwargs: (outcomes, [12.3]),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "build_safe_retrieval_diagnostics",
+        lambda _outcomes: diagnostics,
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "build_c4a_candidate_pool_diagnostics",
+        lambda _outcomes: diagnostics,
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "build_c4a_aggregate_result",
+        lambda *_args, **_kwargs: {
+            "candidate_pool_expected_count": 30,
+            "quality_gate_at_current_unfiltered_results": False,
+        },
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "choose_reranker_score_threshold",
+        lambda _outcomes: pytest.fail("C4-A 不得调用阈值标定"),
+    )
+    monkeypatch.setattr(
+        acceptance_runner,
+        "_cleanup_seeded_scope",
+        lambda *_args, **_kwargs: None,
+    )
+
+    diagnostic_file = tmp_path / "p14-c4a-diagnostic.json"
+    result = acceptance_runner.run_retrieval_calibration(
+        base_url="http://fixture",
+        diagnostic_file=diagnostic_file,
+        calibrate_threshold=False,
+    )
+
+    assert result["candidate_pool_expected_count"] == 30
+    assert json.loads(diagnostic_file.read_text(encoding="utf-8"))["stage"] == (
+        "c4_a_candidate_pool"
     )
 
 

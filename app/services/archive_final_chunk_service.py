@@ -7,6 +7,7 @@ from functools import lru_cache
 from hashlib import sha256
 import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from app.core.config import settings
@@ -215,15 +216,17 @@ def insert_final_chunks(
     document_id: UUID,
     filename: str,
     chunks: list[ArchiveEmbeddedChunk],
+    collection: Any | None = None,
 ) -> int:
-    """将带服务端范围和快照元数据的 Chunk 写入 Final Collection。"""
+    """将带服务端范围和快照元数据的 Chunk 写入指定 Final Collection。"""
     if not chunks:
         return 0
     if any(not chunk.embedding for chunk in chunks):
         raise AppError(500, "FINAL_CHUNK_EMBEDDING_INVALID", "Final Chunk 向量无效。")
 
     try:
-        get_final_collection().upsert(
+        target_collection = collection if collection is not None else get_final_collection()
+        target_collection.upsert(
             ids=[chunk.chunk_id for chunk in chunks],
             documents=[chunk.content for chunk in chunks],
             embeddings=[chunk.embedding for chunk in chunks],

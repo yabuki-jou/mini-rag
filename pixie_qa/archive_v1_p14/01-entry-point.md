@@ -45,3 +45,17 @@ Uvicorn 导入 `app.main:app`，绑定回环地址 `127.0.0.1:8000`；运行时�
 | `DEEPSEEK_API_KEY` | DeepSeek 调用凭据 | 是（真实 AI 评估） | 不记录凭据或请求内容。 |
 | `AUTH_JWT_SECRET` | Access Token 验证 | 是（受保护接口） | 缺失时认证接口安全拒绝服务。 |
 | 检索 Top-K/Top-N/距离阈值 | 检索标定 | 是（质量验收） | 阈值仅能由固定验收集标定后冻结。 |
+
+## D5 Runnable 入口
+
+- **File**: `pixie_qa/archive_v1_p14/run_app.py`
+- **Class**: `ArchiveQuestionRunnable`
+- **Typed input**: `ArchiveQuestionArgs`，仅包含 `question` 字段。
+- **Production call**: `answer_archive_question(user_id, project_id, kb_id, question, session)`。
+
+Runnable 使用三个固定的虚构 UUID 表示已验证上下文，不能由数据集覆盖；同步生产
+服务放在 `asyncio.to_thread()` 中，并由 `asyncio.Semaphore(1)` 串行化。服务中的
+`eval_wrap(name="archive_question_retrieval", purpose="input")` 会被 Pixie 替换为
+数据集提供的 `ArchiveRetrievalResponse`，使 smoke 可以控制候选而无需重复构造
+PostgreSQL/Chroma 数据。主 Agent 已执行真实 Pixie smoke；有候选时生产服务仍进入
+DeepSeek 分支，最终结果和 Agent evaluator 评审保存于对应 Pixie 结果目录。

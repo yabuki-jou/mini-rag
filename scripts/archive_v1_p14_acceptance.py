@@ -14,6 +14,18 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from app.services.archive_evidence_match_service import (
+    item_contains_expected_evidence as _shared_item_contains_expected_evidence,
+)
+
+if __package__:
+    from scripts.p14_d4_threshold_feasibility import (
+        build_safe_snapshot,
+        write_safe_snapshot,
+    )
+else:
+    from p14_d4_threshold_feasibility import build_safe_snapshot, write_safe_snapshot
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVALUATION_ROOT = PROJECT_ROOT / "tests" / "pytest_docs"
@@ -27,6 +39,17 @@ ARCHIVE_FIELD_NAMES = (
     "VERSION_NUMBER",
     "PROJECT_STAGE",
     "KEYWORDS",
+)
+C4A_CANDIDATE_POOL_SIZE = 30
+C4A_TOP20_NO_EVIDENCE_BASELINE = (
+    {
+        "strongest_candidate_reranker_score": 0.973935,
+        "strongest_candidate_dense_distance": 0.287029,
+    },
+    {
+        "strongest_candidate_reranker_score": 0.707142,
+        "strongest_candidate_dense_distance": 0.311391,
+    },
 )
 
 
@@ -345,37 +368,64 @@ def _collect_retrieval_outcomes(
     question_label: dict[str, Any],
     project_ids: dict[str, str],
     filenames_by_project: dict[str, list[str]],
+    top_k: int = 10,
+    include_ground_truth_in_diagnostic: bool = True,
 ) -> tuple[list[dict[str, object]], list[float]]:
-    """在未过滤候选的服务上收集固定问题集响应和请求耗时。"""
+    """在未过滤候选的服务上收集固定问题集响应和请求耗时。
+
+    `include_ground_truth_in_diagnostic` 仅为历史阈值诊断保留；D5 捕获必须关闭，
+    这样 Ground Truth 只会进入离线数据集元数据，不会进入生产请求。
+    """
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("检索候选数量必须是正整数。")
     questions = _as_object_list(question_label.get("questions"), name="questions")
     outcomes: list[dict[str, object]] = []
     latencies_ms: list[float] = []
     for question in questions:
         try:
+            case_id = question["id"]
             project_key = str(question["project_id"])
             project_id = project_ids[project_key]
             category = str(question["category"])
             content = str(question["question"])
         except KeyError as exc:
-            raise AcceptanceError("P14 问题标注缺少项目、类别或问题。") from exc
+            raise AcceptanceError("P14 问题标注缺少标识、项目、类别或问题。") from exc
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise AcceptanceError("P14 问题标注包含无效问题标识。")
         started_at = time.perf_counter()
         response = _require_object(
             api.request(
                 "POST",
                 f"/projects/{project_id}/archive-retrieval",
                 expected_statuses=(200,),
-                payload={"query": content, "top_k": 10},
+                payload={"query": content, "top_k": top_k},
             ),
             step="正式检索",
         )
-        latencies_ms.append((time.perf_counter() - started_at) * 1000)
+        retrieval_latency_ms = (time.perf_counter() - started_at) * 1000
+        latencies_ms.append(retrieval_latency_ms)
         raw_items = response.get("items")
         if not isinstance(raw_items, list) or not all(
             isinstance(item, dict) for item in raw_items
         ):
             raise AcceptanceError("正式检索响应缺少有效 items。")
+        requested_top_k = response.get("requested_top_k", top_k)
+        returned_count = response.get("returned_count", len(raw_items))
+        if (
+            isinstance(requested_top_k, bool)
+            or not isinstance(requested_top_k, int)
+            or requested_top_k != top_k
+            or isinstance(returned_count, bool)
+            or not isinstance(returned_count, int)
+            or returned_count != len(raw_items)
+        ):
+            raise AcceptanceError("正式检索响应的候选计数不一致。")
         diagnostic_payload: dict[str, object] = {"query": content}
-        if category == "GROUNDED" and "expected_evidence" in question:
+        if (
+            include_ground_truth_in_diagnostic
+            and category == "GROUNDED"
+            and "expected_evidence" in question
+        ):
             diagnostic_payload["expected_evidence"] = question["expected_evidence"]
         diagnostic_response = _require_object(
             api.request(
@@ -384,10 +434,11 @@ def _collect_retrieval_outcomes(
                 expected_statuses=(200,),
                 payload=diagnostic_payload,
             ),
-            step="Top-20 双排序诊断",
+            step="Top-30 双排序诊断",
         )
         diagnostic_candidates = _read_safe_internal_diagnostic(diagnostic_response)
         outcome: dict[str, object] = {
+            "case_id": case_id,
             "category": category,
             "project_id": project_key,
             "items": raw_items,
@@ -397,6 +448,10 @@ def _collect_retrieval_outcomes(
             "diagnostic_chroma_candidate_count": diagnostic_candidates[
                 "chroma_candidate_count"
             ],
+            "reranker_query_mode": diagnostic_candidates["reranker_query_mode"],
+            "retrieval_requested_top_k": requested_top_k,
+            "retrieval_returned_count": returned_count,
+            "retrieval_latency_ms": retrieval_latency_ms,
         }
         for optional_key in ("expected_evidence", "hidden_evidence_in_other_project"):
             if optional_key in question:
@@ -409,6 +464,7 @@ def _read_safe_internal_diagnostic(payload: dict[str, Any]) -> dict[str, object]
     """校验诊断接口的数值投影，拒绝任何非脱敏或结构不完整响应。"""
     candidate_count = payload.get("candidate_count")
     chroma_candidate_count = payload.get("chroma_candidate_count")
+    reranker_query_mode = payload.get("reranker_query_mode", "c4_a")
     candidates = payload.get("candidates")
     if (
         isinstance(candidate_count, bool)
@@ -417,13 +473,14 @@ def _read_safe_internal_diagnostic(payload: dict[str, Any]) -> dict[str, object]
         or isinstance(chroma_candidate_count, bool)
         or not isinstance(chroma_candidate_count, int)
         or chroma_candidate_count < 0
+        or reranker_query_mode not in {"c4_a", "c4_b"}
         or not isinstance(candidates, list)
     ):
-        raise AcceptanceError("Top-20 双排序诊断响应结构无效。")
+        raise AcceptanceError("Top-30 双排序诊断响应结构无效。")
     safe_candidates: list[dict[str, object]] = []
     for candidate in candidates:
         if not isinstance(candidate, dict):
-            raise AcceptanceError("Top-20 双排序诊断候选结构无效。")
+            raise AcceptanceError("Top-30 双排序诊断候选结构无效。")
         dense_rank = candidate.get("dense_rank")
         dense_distance = candidate.get("dense_distance")
         reranker_rank = candidate.get("reranker_rank")
@@ -444,27 +501,59 @@ def _read_safe_internal_diagnostic(payload: dict[str, Any]) -> dict[str, object]
             or not isinstance(reranker_score, (int, float))
             or not math.isfinite(float(reranker_score))
             or not isinstance(matches, bool)
-            or (candidate_kind is not None and candidate_kind not in {
-                "SAME_DOCUMENT",
-                "OTHER_DOCUMENT",
-            })
+            or (
+                candidate_kind is not None
+                and candidate_kind
+                not in {"SAME_DOCUMENT", "OTHER_DOCUMENT", "UNKNOWN"}
+            )
         ):
-            raise AcceptanceError("Top-20 双排序诊断数值无效。")
-        safe_candidates.append(
-            {
-                "dense_rank": dense_rank,
-                "dense_distance": float(dense_distance),
-                "reranker_rank": reranker_rank,
-                "reranker_score": float(reranker_score),
-                "matches_expected_evidence": matches,
-                "candidate_kind": candidate_kind,
-            }
-        )
+            raise AcceptanceError("Top-30 双排序诊断数值无效。")
+        safe_candidate: dict[str, object] = {
+            "dense_rank": dense_rank,
+            "dense_distance": float(dense_distance),
+            "reranker_rank": reranker_rank,
+            "reranker_score": float(reranker_score),
+            "matches_expected_evidence": matches,
+            "candidate_kind": candidate_kind,
+        }
+        d4_keys = {
+            "candidate_key",
+            "public_coverage_match",
+            "isolation_violation",
+        }
+        present_d4_keys = d4_keys.intersection(candidate)
+        if present_d4_keys and present_d4_keys != d4_keys:
+            raise AcceptanceError("Top-30 双排序诊断 D4 字段不完整。")
+        if present_d4_keys:
+            candidate_key = candidate["candidate_key"]
+            public_coverage_match = candidate["public_coverage_match"]
+            isolation_violation = candidate["isolation_violation"]
+            if (
+                not isinstance(candidate_key, str)
+                or re.fullmatch(r"[0-9a-f]{64}", candidate_key) is None
+                or not isinstance(public_coverage_match, bool)
+                or not isinstance(isolation_violation, bool)
+                or candidate_kind not in {
+                    "SAME_DOCUMENT",
+                    "OTHER_DOCUMENT",
+                    "UNKNOWN",
+                }
+            ):
+                raise AcceptanceError("Top-30 双排序诊断 D4 字段无效。")
+            safe_candidate.update(
+                {
+                    "candidate_key": candidate_key,
+                    "public_coverage_match": public_coverage_match,
+                    "isolation_violation": isolation_violation,
+                }
+            )
+        safe_candidates.append(safe_candidate)
     if len(safe_candidates) != candidate_count:
-        raise AcceptanceError("Top-20 双排序诊断候选数量不一致。")
+        raise AcceptanceError("Top-30 双排序诊断候选数量不一致。")
     return {
         "chroma_candidate_count": chroma_candidate_count,
         "candidate_count": candidate_count,
+        "reranker_query_mode": reranker_query_mode,
         "candidates": safe_candidates,
     }
 
@@ -485,6 +574,145 @@ def write_aggregate_result(path: Path, result: dict[str, int | float | bool]) ->
     path.write_text(
         json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def build_d5_capture_dataset(
+    question_label: dict[str, Any],
+    outcomes: list[dict[str, object]],
+) -> dict[str, object]:
+    """把真实 Top-5 候选和离线 Ground Truth 组合为 Pixie 捕获数据集。"""
+    questions = _as_object_list(question_label.get("questions"), name="questions")
+    if len(questions) != 12 or len(outcomes) != 12:
+        raise AcceptanceError("D5 捕获必须恰好包含 12 道固定问题。")
+    questions_by_id: dict[str, dict[str, Any]] = {}
+    for question in questions:
+        case_id = question.get("id")
+        if not isinstance(case_id, str) or not case_id.strip() or case_id in questions_by_id:
+            raise AcceptanceError("D5 问题标注包含重复或无效问题标识。")
+        questions_by_id[case_id] = question
+    entries: list[dict[str, object]] = []
+    seen_case_ids: set[str] = set()
+    for outcome in outcomes:
+        case_id = outcome.get("case_id")
+        if not isinstance(case_id, str) or case_id in seen_case_ids or case_id not in questions_by_id:
+            raise AcceptanceError("D5 检索结果与固定问题标注无法一一对应。")
+        seen_case_ids.add(case_id)
+        question = questions_by_id[case_id]
+        items = outcome.get("items")
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            raise AcceptanceError("D5 捕获缺少有效正式候选。")
+        candidate_count = outcome.get("diagnostic_candidate_count")
+        chroma_candidate_count = outcome.get("diagnostic_chroma_candidate_count")
+        retrieval_latency_ms = outcome.get("retrieval_latency_ms")
+        if (
+            isinstance(candidate_count, bool)
+            or not isinstance(candidate_count, int)
+            or candidate_count < 0
+            or isinstance(chroma_candidate_count, bool)
+            or not isinstance(chroma_candidate_count, int)
+            or chroma_candidate_count < 0
+            or isinstance(retrieval_latency_ms, bool)
+            or not isinstance(retrieval_latency_ms, (int, float))
+            or not math.isfinite(float(retrieval_latency_ms))
+            or retrieval_latency_ms < 0
+        ):
+            raise AcceptanceError("D5 捕获缺少安全的候选池计数或检索耗时。")
+        category = str(outcome.get("category", question.get("category", "")))
+        expected_evidence = question.get("expected_evidence")
+        # D5 的覆盖指标必须基于正式公开 Top-5 返回项计算，不能读取诊断或把 Ground Truth 注入请求。
+        public_coverage_match = (
+            category == "GROUNDED"
+            and any(
+                item_contains_expected_evidence(item, expected_evidence)
+                for item in items
+            )
+        )
+        entries.append(
+            {
+                "description": "D5 固定题集真实检索捕获",
+                "input_data": {"question": question["question"]},
+                "eval_input": [
+                    {
+                        "name": "archive_question_retrieval",
+                        "value": {
+                            "items": items,
+                            "requested_top_k": outcome.get("retrieval_requested_top_k", 5),
+                            "returned_count": outcome.get(
+                                "retrieval_returned_count", len(items)
+                            ),
+                        },
+                    }
+                ],
+                "eval_metadata": {
+                    "case_id": case_id,
+                    "case_kind": category,
+                    "category": category,
+                    "expected_answer_status": (
+                        "ANSWERED" if category == "GROUNDED" else "REFUSED_NO_EVIDENCE"
+                    ),
+                    "direct_evidence_required": category == "GROUNDED",
+                    "public_coverage_match": public_coverage_match,
+                    # 这些字段是离线评测元数据，绝不进入生产检索请求。
+                    "expected_answer": question.get("expected_answer"),
+                    "expected_evidence": expected_evidence,
+                    "hidden_evidence_in_other_project": question.get(
+                        "hidden_evidence_in_other_project"
+                    ),
+                    "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+                    "candidate_count": candidate_count,
+                    "chroma_candidate_count": chroma_candidate_count,
+                    "candidate_pool_complete": (
+                        candidate_count == C4A_CANDIDATE_POOL_SIZE
+                        and chroma_candidate_count == C4A_CANDIDATE_POOL_SIZE
+                    ),
+                    "retrieval_latency_ms": round(float(retrieval_latency_ms), 2),
+                },
+            }
+        )
+    if seen_case_ids != set(questions_by_id):
+        raise AcceptanceError("D5 检索结果缺少固定问题。")
+    return {
+        "name": "archive-question-d5-captured",
+        "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+        "evaluators": [
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+        ],
+        "entries": entries,
+    }
+
+
+def write_d5_capture_dataset(path: Path, dataset: dict[str, object]) -> None:
+    """原子写入仅供 Pixie 使用的 D5 捕获数据集。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(dataset, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def build_d6b_capture_dataset(
+    question_label: dict[str, Any],
+    outcomes: list[dict[str, object]],
+) -> dict[str, object]:
+    """把真实 Top-8 候选和离线标注组合为明确的 D6-B 数据集。"""
+    for outcome in outcomes:
+        if outcome.get("retrieval_requested_top_k") != 8:
+            raise AcceptanceError("D6-B 捕获结果的问答候选数量必须是 Top-8。")
+    dataset = build_d5_capture_dataset(question_label, outcomes)
+    dataset["name"] = "archive-question-d6b-top8-captured"
+    dataset["description"] = "D6-B Top-8 固定题集真实检索捕获"
+    for entry in dataset["entries"]:
+        if isinstance(entry, dict):
+            entry["description"] = "D6-B Top-8 固定题集真实检索捕获"
+    return dataset
 
 
 def write_safe_diagnostic(
@@ -605,8 +833,74 @@ def run_retrieval_calibration(
     base_url: str,
     result_file: Path | None = None,
     diagnostic_file: Path | None = None,
+    snapshot_file: Path | None = None,
+    d5_dataset_file: Path | None = None,
+    d6b_dataset_file: Path | None = None,
+    calibrate_threshold: bool = True,
+    phase: str | None = None,
 ) -> dict[str, int | float | bool]:
-    """执行完整真实检索链路并返回仅含聚合指标的 P11 验收结果。"""
+    """执行完整真实检索链路，并按阶段返回安全聚合指标。"""
+    selected_phase = phase or (
+        "threshold-calibration" if calibrate_threshold else "c4-a"
+    )
+    if selected_phase not in {
+        "c4-a",
+        "c4-b",
+        "d4-a-snapshot",
+        "threshold-calibration",
+        "d5-capture",
+        "d6b-capture",
+    }:
+        raise ValueError(
+            "P14 阶段必须是 c4-a、c4-b、d4-a-snapshot、threshold-calibration、d5-capture 或 d6b-capture。"
+        )
+    if (selected_phase == "threshold-calibration") != calibrate_threshold:
+        raise ValueError("P14 阶段与阈值标定开关不一致。")
+    if selected_phase == "d4-a-snapshot" and snapshot_file is None:
+        raise ValueError("D4-A 快照文件不能为空。")
+    if selected_phase != "d4-a-snapshot" and snapshot_file is not None:
+        raise ValueError("快照文件仅允许 D4-A 阶段使用。")
+    if selected_phase == "d5-capture" and d5_dataset_file is None:
+        raise ValueError("D5 捕获数据集文件不能为空。")
+    if selected_phase != "d5-capture" and d5_dataset_file is not None:
+        raise ValueError("D5 捕获数据集文件仅允许 d5-capture 阶段使用。")
+    if selected_phase == "d6b-capture" and d6b_dataset_file is None:
+        raise ValueError("D6-B 捕获数据集文件不能为空。")
+    if selected_phase != "d6b-capture" and d6b_dataset_file is not None:
+        raise ValueError("D6-B 捕获数据集文件仅允许 d6b-capture 阶段使用。")
+    protected_paths = {
+        QUESTION_LABEL_PATH.resolve(),
+        DOCUMENT_LABEL_PATH.resolve(),
+    }
+    protected_paths.update(
+        path.resolve()
+        for path in (result_file, diagnostic_file)
+        if path is not None
+    )
+    if snapshot_file is not None and snapshot_file.resolve() in protected_paths:
+        raise ValueError("D4-A 快照文件不得覆盖输入或其他输出文件。")
+    if d5_dataset_file is not None:
+        if d5_dataset_file.resolve() in protected_paths:
+            raise ValueError("D5 捕获数据集文件不得覆盖输入或其他输出文件。")
+        try:
+            # 在任何外部工作前移除旧捕获，防止失败后误读上一轮结果。
+            d5_dataset_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AcceptanceError("D5 旧捕获数据集无法安全清理。") from exc
+    if d6b_dataset_file is not None:
+        if d6b_dataset_file.resolve() in protected_paths:
+            raise ValueError("D6-B 捕获数据集文件不得覆盖输入或其他输出文件。")
+        try:
+            # 在任何外部工作前移除旧捕获，防止失败后误读上一轮结果。
+            d6b_dataset_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AcceptanceError("D6-B 旧捕获数据集无法安全清理。") from exc
+    elif snapshot_file is not None:
+        try:
+            # 在任何外部工作前移除旧快照，防止失败后误读上一轮结果。
+            snapshot_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AcceptanceError("D4-A 旧快照无法安全清理。") from exc
     question_label = _read_label(QUESTION_LABEL_PATH)
     document_label = _read_label(DOCUMENT_LABEL_PATH)
     if question_label.get("dataset_id") != document_label.get("dataset_id"):
@@ -643,7 +937,113 @@ def run_retrieval_calibration(
             question_label=question_label,
             project_ids=project_ids,
             filenames_by_project=filenames_by_project,
+            top_k=(
+                5
+                if selected_phase == "d5-capture"
+                else 8
+                if selected_phase == "d6b-capture"
+                else 10
+            ),
+            include_ground_truth_in_diagnostic=selected_phase
+            not in {"d5-capture", "d6b-capture"},
         )
+        if selected_phase in {"d5-capture", "d6b-capture"}:
+            is_d6b = selected_phase == "d6b-capture"
+            stage = "d6b_capture" if is_d6b else "d5_capture"
+            dataset = (
+                build_d6b_capture_dataset(question_label, outcomes)
+                if is_d6b
+                else build_d5_capture_dataset(question_label, outcomes)
+            )
+            dataset_file = d6b_dataset_file if is_d6b else d5_dataset_file
+            write_d5_capture_dataset(dataset_file, dataset)
+            category_counts = {
+                category: sum(outcome.get("category") == category for outcome in outcomes)
+                for category in ("GROUNDED", "NO_EVIDENCE", "ISOLATION")
+            }
+            complete_count = sum(
+                outcome.get("diagnostic_candidate_count") == C4A_CANDIDATE_POOL_SIZE
+                and outcome.get("diagnostic_chroma_candidate_count")
+                == C4A_CANDIDATE_POOL_SIZE
+                for outcome in outcomes
+            )
+            public_coverage_grounded_count = sum(
+                outcome.get("category") == "GROUNDED"
+                and any(
+                    item_contains_expected_evidence(
+                        item, outcome.get("expected_evidence")
+                    )
+                    for item in outcome.get("items", [])
+                    if isinstance(item, dict)
+                )
+                for outcome in outcomes
+            )
+            result = {
+                "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+                "candidate_pool_complete_question_count": complete_count,
+                "candidate_pool_incomplete_question_count": len(outcomes) - complete_count,
+                "grounded_question_count": category_counts["GROUNDED"],
+                "public_coverage_grounded_count": public_coverage_grounded_count,
+                "no_evidence_question_count": category_counts["NO_EVIDENCE"],
+                "isolation_question_count": category_counts["ISOLATION"],
+                "latency_p95_ms": round(_p95_ms(latencies_ms), 2),
+                "question_count": len(outcomes),
+                ("d6b_dataset_written" if is_d6b else "d5_dataset_written"): True,
+                **index_context_summary,
+            }
+            if result_file is not None:
+                write_aggregate_result(result_file, result)
+            return result
+        if selected_phase == "d4-a-snapshot":
+            stage = "d4_a_snapshot"
+            snapshot = build_safe_snapshot(outcomes)
+            # 快照先经过严格白名单投影与校验，再原子替换目标文件。
+            write_safe_snapshot(snapshot_file, snapshot)
+            category_counts = {
+                category: sum(outcome.get("category") == category for outcome in outcomes)
+                for category in ("GROUNDED", "NO_EVIDENCE", "ISOLATION")
+            }
+            result: dict[str, int | float | bool] = {
+                "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+                "candidate_pool_complete_question_count": len(outcomes),
+                "candidate_pool_incomplete_question_count": 0,
+                "grounded_question_count": category_counts["GROUNDED"],
+                "no_evidence_question_count": category_counts["NO_EVIDENCE"],
+                "isolation_question_count": category_counts["ISOLATION"],
+                "latency_p95_ms": round(_p95_ms(latencies_ms), 2),
+                "question_count": len(outcomes),
+                "snapshot_written": True,
+                **index_context_summary,
+            }
+            if result_file is not None:
+                write_aggregate_result(result_file, result)
+            return result
+        if selected_phase in {"c4-a", "c4-b"}:
+            stage = (
+                "c4_a_candidate_pool"
+                if selected_phase == "c4-a"
+                else "c4_b_query_expression"
+            )
+            retrieval_diagnostics = build_c4a_candidate_pool_diagnostics(outcomes)
+            result = build_c4a_aggregate_result(
+                outcomes,
+                retrieval_diagnostics,
+                latency_p95_ms=_p95_ms(latencies_ms),
+                index_context_summary=index_context_summary,
+            )
+            if result_file is not None:
+                # 先保存无敏感聚合指标，再进入可能较慢的跨存储清理。
+                write_aggregate_result(result_file, result)
+            if diagnostic_file is not None:
+                write_c4a_diagnostic(
+                    diagnostic_file,
+                    retrieval_diagnostics=retrieval_diagnostics,
+                    index_context_summary=index_context_summary,
+                    latency_p95_ms=_p95_ms(latencies_ms),
+                    stage=stage,
+                    reranker_query_mode=_uniform_query_mode(outcomes),
+                )
+            return result
         retrieval_diagnostics = build_safe_retrieval_diagnostics(outcomes)
         stage = "threshold_calibration"
         threshold, score = choose_reranker_score_threshold(outcomes)
@@ -660,6 +1060,16 @@ def run_retrieval_calibration(
         return result
     except BaseException as exc:
         primary_error = exc
+        if d5_dataset_file is not None:
+            try:
+                d5_dataset_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if d6b_dataset_file is not None:
+            try:
+                d6b_dataset_file.unlink(missing_ok=True)
+            except OSError:
+                pass
         if diagnostic_file is not None:
             write_safe_diagnostic(
                 path=diagnostic_file,
@@ -684,6 +1094,16 @@ def run_retrieval_calibration(
                 cleanup_error = exc
         api.close()
         if cleanup_error is not None:
+            if d5_dataset_file is not None:
+                try:
+                    d5_dataset_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if d6b_dataset_file is not None:
+                try:
+                    d6b_dataset_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
             # 清理失败意味着虚构验收资料可能残留，必须优先暴露稳定错误，不能被主流程异常掩盖。
             raise AcceptanceError("P14 虚构验收数据清理未全部完成。") from cleanup_error
 
@@ -694,23 +1114,39 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--result-file", type=Path)
     parser.add_argument("--diagnostic-file", type=Path)
+    parser.add_argument("--snapshot-file", type=Path)
+    parser.add_argument("--d5-dataset-file", type=Path)
+    parser.add_argument("--d6b-dataset-file", type=Path)
+    parser.add_argument(
+        "--phase",
+        choices=(
+            "c4-a",
+            "c4-b",
+            "d4-a-snapshot",
+            "threshold-calibration",
+            "d5-capture",
+            "d6b-capture",
+        ),
+        default="c4-a",
+        help="默认只执行 C4-A；其他阶段必须显式选择。",
+    )
     args = parser.parse_args()
     try:
         result = run_retrieval_calibration(
             base_url=str(args.base_url),
             result_file=args.result_file,
             diagnostic_file=args.diagnostic_file,
+            snapshot_file=args.snapshot_file,
+            d5_dataset_file=args.d5_dataset_file,
+            d6b_dataset_file=args.d6b_dataset_file,
+            calibrate_threshold=args.phase == "threshold-calibration",
+            phase=args.phase,
         )
     except (AcceptanceError, ValueError, httpx.HTTPError) as exc:
         print(f"P14 retrieval evaluation failed: {exc}")
         return 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
-
-
-def _normalized_text(value: object) -> str:
-    """以稳定的空白与大小写规则比较人工标注和检索摘录。"""
-    return re.sub(r"\s+", "", str(value)).casefold()
 
 
 def _item_distance(item: dict[str, object]) -> float:
@@ -765,37 +1201,7 @@ def item_contains_expected_evidence(
     item: dict[str, object], expected_evidence: object
 ) -> bool:
     """判断一个检索项是否包含人工标注的文件、定位和原文摘录。"""
-    if not isinstance(expected_evidence, dict):
-        return False
-    if str(item.get("filename")) != _filename_from_relative_path(
-        expected_evidence.get("relative_path", "")
-    ):
-        return False
-    expected_items = expected_evidence.get("items")
-    if not isinstance(expected_items, list) or not expected_items:
-        return False
-
-    for expected in expected_items:
-        if not isinstance(expected, dict):
-            return False
-        try:
-            same_location_type = str(item["location_type"]) == str(
-                expected["location_type"]
-            )
-            contains_location = (
-                int(item["location_start"])
-                <= int(expected["location_start"])
-                <= int(expected["location_end"])
-                <= int(item["location_end"])
-            )
-            contains_excerpt = _normalized_text(expected["excerpt"]) in _normalized_text(
-                item["excerpt"]
-            )
-        except (KeyError, TypeError, ValueError):
-            return False
-        if not (same_location_type and contains_location and contains_excerpt):
-            return False
-    return True
+    return _shared_item_contains_expected_evidence(item, expected_evidence)
 
 
 def _diagnostic_candidate_kind(
@@ -845,7 +1251,7 @@ def _reranker_ranked_items(
 def _internal_diagnostic_candidates(
     outcome: dict[str, object],
 ) -> list[dict[str, object]] | None:
-    """读取服务端 Top-20 的安全数值投影；旧结果没有该字段时返回空值。"""
+    """读取服务端候选池的安全数值投影；旧结果没有该字段时返回空值。"""
     raw_candidates = outcome.get("internal_candidates")
     if raw_candidates is None:
         return None
@@ -860,7 +1266,7 @@ def _internal_diagnostic_candidates(
     )
     for candidate in raw_candidates:
         if not isinstance(candidate, dict) or any(key not in candidate for key in required):
-            raise ValueError("问题结果包含不完整的 Top-20 诊断候选。")
+            raise ValueError("问题结果包含不完整的候选诊断。")
         if (
             isinstance(candidate["dense_rank"], bool)
             or not isinstance(candidate["dense_rank"], int)
@@ -876,7 +1282,7 @@ def _internal_diagnostic_candidates(
             or not math.isfinite(float(candidate["reranker_score"]))
             or not isinstance(candidate["matches_expected_evidence"], bool)
         ):
-            raise ValueError("问题结果包含无效的 Top-20 诊断数值。")
+            raise ValueError("问题结果包含无效的候选诊断数值。")
     return raw_candidates
 
 
@@ -907,6 +1313,7 @@ def build_safe_retrieval_diagnostics(
 
         items = [item for item in raw_items if isinstance(item, dict)]
         internal_candidates = _internal_diagnostic_candidates(outcome)
+        dense_ranked_items: list[tuple[int, dict[str, object], float]] = []
         if internal_candidates is None:
             dense_ranked_items = _dense_ranked_items(items)
             expected_dense = next(
@@ -1161,6 +1568,188 @@ def build_safe_retrieval_diagnostics(
             )
         diagnostics.append(diagnostic)
     return diagnostics
+
+
+def build_c4a_candidate_pool_diagnostics(
+    outcomes: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """为 C4-A 增加 Top-30 完整性和 Top-20 无据基线对照。"""
+    diagnostics = build_safe_retrieval_diagnostics(outcomes)
+    no_evidence_index = 0
+    for outcome, diagnostic in zip(outcomes, diagnostics, strict=True):
+        # 隔离题不需要标准证据字段，但 C4-A 仍需展示安全的候选池数量。
+        if "candidate_count" not in diagnostic:
+            candidate_count = outcome.get("diagnostic_candidate_count")
+            chroma_candidate_count = outcome.get("diagnostic_chroma_candidate_count")
+            if isinstance(candidate_count, int) and not isinstance(candidate_count, bool):
+                diagnostic["candidate_count"] = candidate_count
+            if isinstance(chroma_candidate_count, int) and not isinstance(
+                chroma_candidate_count, bool
+            ):
+                diagnostic["chroma_candidate_count"] = chroma_candidate_count
+        candidate_count = diagnostic.get("candidate_count")
+        chroma_candidate_count = diagnostic.get("chroma_candidate_count")
+        candidate_pool_complete = (
+            candidate_count == C4A_CANDIDATE_POOL_SIZE
+            and chroma_candidate_count == C4A_CANDIDATE_POOL_SIZE
+        )
+        diagnostic["candidate_pool_expected_count"] = C4A_CANDIDATE_POOL_SIZE
+        diagnostic["candidate_pool_complete"] = candidate_pool_complete
+        if diagnostic.get("category") == "GROUNDED":
+            expected_evidence = outcome.get("expected_evidence")
+            public_result_contains_expected_evidence = any(
+                item_contains_expected_evidence(item, expected_evidence)
+                for item in outcome.get("items", [])
+                if isinstance(item, dict)
+            )
+            diagnostic["standard_evidence_in_complete_top_30"] = bool(
+                candidate_pool_complete
+                and diagnostic.get("expected_candidate_rank") is not None
+            )
+            diagnostic["public_result_contains_expected_evidence"] = (
+                public_result_contains_expected_evidence
+            )
+            diagnostic["matching_semantics_disagree"] = bool(
+                candidate_pool_complete
+                and public_result_contains_expected_evidence
+                and diagnostic["standard_evidence_in_complete_top_30"] is False
+            )
+        elif diagnostic.get("category") == "NO_EVIDENCE":
+            if no_evidence_index >= len(C4A_TOP20_NO_EVIDENCE_BASELINE):
+                raise ValueError("固定集无据问题数量超过 Top-20 对照基线。")
+            baseline = C4A_TOP20_NO_EVIDENCE_BASELINE[no_evidence_index]
+            diagnostic["case_id"] = f"NO_EVIDENCE-{no_evidence_index + 1:02d}"
+            diagnostic.update(
+                {
+                    "top20_baseline_strongest_candidate_reranker_score": baseline[
+                        "strongest_candidate_reranker_score"
+                    ],
+                    "top20_baseline_strongest_candidate_dense_distance": baseline[
+                        "strongest_candidate_dense_distance"
+                    ],
+                    "reranker_score_delta_vs_top20": (
+                        round(
+                            float(diagnostic["strongest_candidate_reranker_score"])
+                            - float(baseline["strongest_candidate_reranker_score"]),
+                            6,
+                        )
+                        if diagnostic["strongest_candidate_reranker_score"] is not None
+                        else None
+                    ),
+                    "dense_distance_delta_vs_top20": (
+                        round(
+                            float(diagnostic["strongest_candidate_dense_distance"])
+                            - float(baseline["strongest_candidate_dense_distance"]),
+                            6,
+                        )
+                        if diagnostic["strongest_candidate_dense_distance"] is not None
+                        else None
+                    ),
+                }
+            )
+            no_evidence_index += 1
+    return diagnostics
+
+
+def build_c4a_aggregate_result(
+    outcomes: list[dict[str, object]],
+    diagnostics: list[dict[str, object]],
+    *,
+    latency_p95_ms: float,
+    index_context_summary: dict[str, int],
+) -> dict[str, int | float | bool]:
+    """构造只观测候选池的 C4-A 聚合结果，不生成重排阈值。"""
+    scores = [
+        _item_reranker_score(item)
+        for outcome in outcomes
+        for item in outcome.get("items", [])
+        if isinstance(item, dict)
+    ]
+    if not scores:
+        raise ValueError("固定问题集没有可用于 C4-A 聚合的重排分数。")
+    unfiltered_score = score_reranker_outcomes(outcomes, threshold=min(scores))
+    grounded_diagnostics = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.get("category") == "GROUNDED"
+    ]
+    grounded_in_pool = sum(
+        diagnostic.get("standard_evidence_in_complete_top_30") is True
+        for diagnostic in grounded_diagnostics
+    )
+    grounded_public_coverage = sum(
+        diagnostic.get("public_result_contains_expected_evidence") is True
+        for diagnostic in grounded_diagnostics
+    )
+    matching_semantics_disagreement = sum(
+        diagnostic.get("matching_semantics_disagree") is True
+        for diagnostic in grounded_diagnostics
+    )
+    complete_pool_count = sum(
+        diagnostic.get("candidate_pool_complete") is True
+        for diagnostic in diagnostics
+    )
+    result: dict[str, int | float | bool] = {
+        "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+        "candidate_pool_complete_question_count": complete_pool_count,
+        "candidate_pool_incomplete_question_count": len(diagnostics) - complete_pool_count,
+        "grounded_candidate_pool_hits": grounded_in_pool,
+        "grounded_candidate_pool_total": len(grounded_diagnostics),
+        "grounded_public_coverage_hits": grounded_public_coverage,
+        "grounded_matching_semantics_disagreement_count": matching_semantics_disagreement,
+        "grounded_returned_count": int(unfiltered_score["grounded_passed"]),
+        "no_evidence_rejected_count": int(unfiltered_score["no_evidence_passed"]),
+        "isolation_passed_count": int(unfiltered_score["isolation_passed"]),
+        "quality_gate_at_current_unfiltered_results": bool(unfiltered_score["passed"]),
+        "latency_p95_ms": round(float(latency_p95_ms), 2),
+        "question_count": len(outcomes),
+        **index_context_summary,
+    }
+    return result
+
+
+def write_c4a_diagnostic(
+    path: Path,
+    *,
+    retrieval_diagnostics: list[dict[str, object]],
+    index_context_summary: dict[str, int],
+    latency_p95_ms: float,
+    stage: str = "c4_a_candidate_pool",
+    reranker_query_mode: str | None = None,
+) -> None:
+    """保存 C4-A/C4-B 观测，内容仅包含安全聚合与数值投影。"""
+    if stage not in {"c4_a_candidate_pool", "c4_b_query_expression"}:
+        raise ValueError("C4 观测阶段标识无效。")
+    diagnostic: dict[str, object] = {
+        "outcome": "observed",
+        "stage": stage,
+        "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+        "retrieval_diagnostics": retrieval_diagnostics,
+        "index_context_summary": index_context_summary,
+        "latency_p95_ms": round(float(latency_p95_ms), 2),
+    }
+    if reranker_query_mode is not None:
+        if reranker_query_mode not in {"c4_a", "c4_b"}:
+            raise ValueError("Reranker 查询模式标识无效。")
+        diagnostic["reranker_query_mode"] = reranker_query_mode
+    path.write_text(
+        json.dumps(diagnostic, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _uniform_query_mode(outcomes: list[dict[str, object]]) -> str | None:
+    """读取固定集诊断返回的统一 Reranker 查询模式。"""
+    modes = {
+        outcome.get("reranker_query_mode")
+        for outcome in outcomes
+        if outcome.get("reranker_query_mode") is not None
+    }
+    if len(modes) == 1:
+        mode = next(iter(modes))
+        if isinstance(mode, str):
+            return mode
+    return None
 
 
 def _filtered_items(outcome: dict[str, object], threshold: float) -> list[dict[str, object]]:
