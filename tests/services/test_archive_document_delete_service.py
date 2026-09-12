@@ -80,6 +80,7 @@ def test_delete_removes_archive_file_vector_and_link_but_keeps_redacted_audit(
             select(ArchiveAuditLog).where(
                 ArchiveAuditLog.project_id == project_id,
                 ArchiveAuditLog.resource_id == document_id,
+                ArchiveAuditLog.operation_type == "DOCUMENT_DELETED",
             )
         ).all()
         project = session.get(Project, project_id)

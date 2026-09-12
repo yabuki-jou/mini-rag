@@ -90,14 +90,34 @@ def _p02_assessment(evaluable: Evaluable) -> dict[str, object]:
     citations = response.get("citations") if isinstance(response, Mapping) else None
     citations_valid = isinstance(citations, list)
     expected_answer = metadata.get("expected_answer")
+    expected_answer_fragments = metadata.get("expected_answer_fragments")
     expected_evidence = metadata.get("expected_evidence")
-    answer_match = (
-        category == "GROUNDED"
-        and isinstance(expected_answer, str)
-        and bool(expected_answer.strip())
-        and isinstance(answer, str)
-        and _normalize_text(expected_answer) in _normalize_text(answer)
-    )
+    if expected_answer_fragments is not None:
+        fragments_valid = (
+            isinstance(expected_answer_fragments, list)
+            and bool(expected_answer_fragments)
+            and all(
+                isinstance(fragment, str) and bool(fragment.strip())
+                for fragment in expected_answer_fragments
+            )
+        )
+        answer_match = (
+            category == "GROUNDED"
+            and fragments_valid
+            and isinstance(answer, str)
+            and all(
+                _normalize_text(fragment) in _normalize_text(answer)
+                for fragment in expected_answer_fragments
+            )
+        )
+    else:
+        answer_match = (
+            category == "GROUNDED"
+            and isinstance(expected_answer, str)
+            and bool(expected_answer.strip())
+            and isinstance(answer, str)
+            and _normalize_text(expected_answer) in _normalize_text(answer)
+        )
     citation_match = (
         category == "GROUNDED"
         and citations_valid
@@ -130,7 +150,10 @@ def _p02_assessment(evaluable: Evaluable) -> dict[str, object]:
         if answer_status != "ANSWERED":
             reasons.append(f"answer_status={answer_status!r}，期望 ANSWERED")
         if not answer_match:
-            reasons.append("answer 未包含 expected_answer 的保守归一化文本")
+            if expected_answer_fragments is not None:
+                reasons.append("answer 未包含 expected_answer_fragments 的全部保守归一化片段")
+            else:
+                reasons.append("answer 未包含 expected_answer 的保守归一化文本")
         if not citation_match:
             reasons.append("没有 citation 匹配 expected_evidence")
     elif category in {"NO_EVIDENCE", "ISOLATION"} and not refusal_shape:

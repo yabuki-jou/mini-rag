@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.core.errors import AppError
 from app.models import (
+    ArchiveAuditLog,
     ArchiveDocument,
     ArchiveDocumentStatus,
     Document,
@@ -36,6 +37,8 @@ from app.services.parser_service import ParsedPage, parse_document
 from app.services.vector_service import delete_document_chunks, insert_chunks
 
 logger = logging.getLogger(__name__)
+
+PARSE_RETRIED = "PARSE_RETRIED"
 
 
 def _cleanup_saved_file(path: Path) -> None:
@@ -225,6 +228,7 @@ def _parse_project_document(
     session: Session,
     expected_status: ArchiveDocumentStatus,
     action_name: str,
+    actor_id: UUID | None = None,
 ) -> ProcessDocumentRead:
     """按允许的来源状态解析项目原文件并持久化快照。"""
     archive_document = session.get(ArchiveDocument, document.id)
@@ -300,6 +304,20 @@ def _parse_project_document(
         archive_document.last_error_summary = None
         archive_document.updated_at = utc_now()
         session.add(archive_document)
+        if expected_status == ArchiveDocumentStatus.PARSE_FAILED:
+            if actor_id is None or document.project_id is None:
+                session.rollback()
+                raise AppError(500, "PROJECT_NOT_FOUND", "项目文档缺少项目归属。")
+            session.add(
+                ArchiveAuditLog(
+                    project_id=document.project_id,
+                    actor_id=actor_id,
+                    operation_type=PARSE_RETRIED,
+                    resource_type="ARCHIVE_DOCUMENT",
+                    resource_id=document.id,
+                    redacted_summary={"status": ArchiveDocumentStatus.PARSED.value},
+                )
+            )
         session.commit()
     except Exception as exc:
         session.rollback()
@@ -331,6 +349,7 @@ def parse_project_document(
 def retry_parse_project_document(
     *,
     document: Document,
+    actor_id: UUID,
     session: Session,
 ) -> ProcessDocumentRead:
     """从 ``PARSE_FAILED`` 重新解析原文件并进入 ``PARSED``。"""
@@ -339,6 +358,7 @@ def retry_parse_project_document(
         session=session,
         expected_status=ArchiveDocumentStatus.PARSE_FAILED,
         action_name="解析重试",
+        actor_id=actor_id,
     )
 
 

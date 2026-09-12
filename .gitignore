@@ -24,6 +24,7 @@ data/
 logs/
 embedding_models/
 tests/pytest_docs/
+tests/enterprise_rag_eval/
 
 # 完整对话记录可能包含本地路径、上下文和其他不应公开的信息。
 docs/review/完整对话记录.txt

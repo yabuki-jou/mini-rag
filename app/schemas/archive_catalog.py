@@ -124,6 +124,7 @@ class AuditLogRead(BaseModel):
     """返回一条不含正文的脱敏业务审计。"""
 
     id: UUID
+    actor_id: UUID
     operation_type: str
     resource_type: str
     resource_id: UUID

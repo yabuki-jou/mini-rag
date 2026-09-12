@@ -6,8 +6,10 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
+from sqlmodel import Session
 
 from app.core.errors import AppError
+from app.models import ArchiveDocument, Document, ParsedSnapshot
 from tests.routers.test_project_archive_catalog import _confirmed_document
 from tests.routers.test_project_documents import create_user, project_document_api
 from tests.support.auth import auth_headers
@@ -58,3 +60,50 @@ def test_delete_document_route_preserves_stable_incomplete_error(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "DOCUMENT_DELETE_INCOMPLETE"
     assert "VECTOR_UNAVAILABLE" not in response.text
+
+
+def test_delete_document_route_rejects_other_user_without_mutation(
+    project_document_api: tuple[TestClient, Engine, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """其他用户不能删除项目文档，且删除服务和持久化事实均保持不变。"""
+    client, engine, _ = project_document_api
+    owner_id = create_user(engine)
+    other_user_id = create_user(engine, "delete-other")
+    project_id, document_id, _ = _confirmed_document(client, engine, owner_id)
+
+    with Session(engine) as session:
+        document = session.get(Document, document_id)
+        archive_document = session.get(ArchiveDocument, document_id)
+        assert document is not None
+        assert archive_document is not None
+        assert archive_document.current_snapshot_id is not None
+        snapshot = session.get(ParsedSnapshot, archive_document.current_snapshot_id)
+        assert snapshot is not None
+        original_path = Path(document.storage_path)
+        snapshot_path = Path(snapshot.snapshot_storage_path)
+        assert original_path.is_file()
+        assert snapshot_path.is_file()
+
+    delete_called = False
+
+    def fail_if_called(**_: object) -> None:
+        nonlocal delete_called
+        delete_called = True
+
+    monkeypatch.setattr("app.routers.projects.delete_archive_document", fail_if_called)
+    response = client.delete(
+        f"/projects/{project_id}/documents/{document_id}",
+        headers=auth_headers(engine, other_user_id),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PROJECT_FORBIDDEN"
+    assert delete_called is False
+
+    with Session(engine) as session:
+        assert session.get(Document, document_id) is not None
+        assert session.get(ArchiveDocument, document_id) is not None
+        assert session.get(ParsedSnapshot, archive_document.current_snapshot_id) is not None
+    assert original_path.is_file()
+    assert snapshot_path.is_file()

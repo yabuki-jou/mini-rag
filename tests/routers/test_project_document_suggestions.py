@@ -19,6 +19,13 @@ from tests.support.auth import auth_headers
 import app.services.archive_suggestion_service as suggestion_service_module
 
 
+class _BindableFakeModel:
+    """让路由测试 Fake 与生产建议链路使用同一 bind/invoke 形状。"""
+
+    def bind(self, **_: object):
+        return self
+
+
 def _valid_model_content(title: str = "施工方案") -> str:
     """返回固定的最小有效建议，避免测试依赖真实模型语义。"""
     return json.dumps(
@@ -41,6 +48,66 @@ def _valid_model_content(title: str = "施工方案") -> str:
     )
 
 
+def test_suggestion_prompt_declares_the_complete_machine_readable_contract() -> None:
+    """提示必须显式声明真实解析器接受的英文键、枚举和值列规则。"""
+    prompt = suggestion_service_module._build_prompt({"fragments": []})
+
+    for field_name in (
+        "TITLE", "DOCUMENT_TYPE", "DOCUMENT_DATE", "AUTHORING_ORGANIZATION",
+        "VERSION_NUMBER", "PROJECT_STAGE", "KEYWORDS",
+    ):
+        assert f'"{field_name}"' in prompt
+    for enum_value in (
+        "CONTRACT", "DESIGN", "CONSTRUCTION", "MEETING_MINUTES", "ACCEPTANCE", "OTHER",
+        "PREPARATION", "CROSS_STAGE", "OTHER_STAGE",
+    ):
+        assert enum_value in prompt
+    for value_column in ("text_value", "date_value", "json_value"):
+        assert f'"{value_column}"' in prompt
+    assert "null" in prompt
+    for evidence_key in (
+        "excerpt", "location_type", "location_start", "location_end", "normalized_anchor",
+        "PDF_PAGE", "DOCX_PARAGRAPH", "TEXT_LINE_RANGE",
+    ):
+        assert evidence_key in prompt
+    assert "当前解析快照" in prompt
+    assert "只输出裸 JSON" in prompt
+    assert "Markdown" in prompt
+
+
+def test_suggestion_model_is_bound_to_json_object_response_format(
+    project_document_api: tuple[TestClient, Engine, Path],
+    monkeypatch,
+) -> None:
+    """建议模型必须在调用前绑定 JSON Object 响应格式。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id = _parsed_document(client, engine, user_id)
+    bind_calls: list[dict[str, object]] = []
+
+    class BindableSuggestionModel:
+        def bind(self, **kwargs):
+            bind_calls.append(kwargs)
+            return self
+
+        def invoke(self, _: str) -> SimpleNamespace:
+            return SimpleNamespace(content=_valid_model_content())
+
+    monkeypatch.setattr(
+        suggestion_service_module,
+        "get_chat_model",
+        lambda: BindableSuggestionModel(),
+    )
+
+    response = client.post(
+        f"/projects/{project_id}/documents/{document_id}/suggestions",
+        headers=auth_headers(engine, user_id),
+    )
+
+    assert response.status_code == 200
+    assert bind_calls == [{"response_format": {"type": "json_object"}}]
+
+
 def test_first_suggestion_creates_ai_draft_with_current_snapshot_evidence(
     project_document_api: tuple[TestClient, Engine, Path],
     monkeypatch,
@@ -50,7 +117,7 @@ def test_first_suggestion_creates_ai_draft_with_current_snapshot_evidence(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class FakeSuggestionModel:
+    class FakeSuggestionModel(_BindableFakeModel):
         """返回固定结构的假模型，只验证服务的确定性解析和持久化。"""
 
         def invoke(self, _: str) -> SimpleNamespace:
@@ -76,6 +143,13 @@ def test_first_suggestion_creates_ai_draft_with_current_snapshot_evidence(
     assert title["review_status"] == "PENDING_CHECK"
     assert title["evidences"]
     assert title["evidences"][0]["snapshot_id"] == payload["snapshot"]["id"]
+    with Session(engine) as session:
+        assert session.exec(
+            select(ArchiveAuditLog).where(
+                ArchiveAuditLog.project_id == project_id,
+                ArchiveAuditLog.operation_type == "SUGGESTION_RETRIED",
+            )
+        ).all() == []
 
 
 def test_connection_timeout_retries_once_before_success(
@@ -88,7 +162,7 @@ def test_connection_timeout_retries_once_before_success(
     project_id, document_id = _parsed_document(client, engine, user_id)
     calls = 0
 
-    class RetryingModel:
+    class RetryingModel(_BindableFakeModel):
         """第一次模拟超时，第二次返回固定有效结构。"""
 
         def invoke(self, _: str) -> SimpleNamespace:
@@ -124,7 +198,7 @@ def test_invalid_output_records_failed_and_retry_recovers(
     project_id, document_id = _parsed_document(client, engine, user_id)
     invalid_calls = 0
 
-    class InvalidModel:
+    class InvalidModel(_BindableFakeModel):
         """返回不可解析内容，用于验证格式错误不触发自动重试。"""
 
         def invoke(self, _: str) -> SimpleNamespace:
@@ -151,7 +225,7 @@ def test_invalid_output_records_failed_and_retry_recovers(
         assert archive_document.status == ArchiveDocumentStatus.SUGGESTION_FAILED
         assert archive_document.last_error_code == "SUGGESTION_INVALID_OUTPUT"
 
-    class ValidModel:
+    class ValidModel(_BindableFakeModel):
         """重试时返回固定有效结构。"""
 
         def invoke(self, _: str) -> SimpleNamespace:
@@ -173,6 +247,21 @@ def test_invalid_output_records_failed_and_retry_recovers(
         field for field in retry_response.json()["fields"] if field["field_name"] == "TITLE"
     )
     assert title["source"] == "AI"
+    with Session(engine) as session:
+        audit_logs = list(
+            session.exec(
+                select(ArchiveAuditLog).where(
+                    ArchiveAuditLog.project_id == project_id,
+                    ArchiveAuditLog.operation_type == "SUGGESTION_RETRIED",
+                )
+            ).all()
+        )
+    assert len(audit_logs) == 1
+    assert audit_logs[0].actor_id == user_id
+    assert audit_logs[0].redacted_summary == {
+        "status": "PENDING_CONFIRMATION",
+        "version": retry_response.json()["document"]["version"],
+    }
 
 
 def test_suggestion_retry_is_rejected_before_failure(
@@ -201,7 +290,7 @@ def test_regenerate_replaces_unedited_ai_draft_and_records_audit(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class InitialModel:
+    class InitialModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content())
 
@@ -213,7 +302,7 @@ def test_regenerate_replaces_unedited_ai_draft_and_records_audit(
     assert initial.status_code == 200
     expected_version = initial.json()["document"]["version"]
 
-    class RegenerateModel:
+    class RegenerateModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content("更新后的施工方案"))
 
@@ -250,7 +339,7 @@ def test_regenerate_rejects_stale_version_without_calling_model(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class InitialModel:
+    class InitialModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content())
 
@@ -263,7 +352,7 @@ def test_regenerate_rejects_stale_version_without_calling_model(
     before = initial.json()
     calls = 0
 
-    class ShouldNotRunModel:
+    class ShouldNotRunModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             nonlocal calls
             calls += 1
@@ -296,7 +385,7 @@ def test_regenerate_rechecks_version_after_model_call(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class InitialModel:
+    class InitialModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content())
 
@@ -308,7 +397,7 @@ def test_regenerate_rechecks_version_after_model_call(
     assert initial.status_code == 200
     before = initial.json()
 
-    class ConcurrentUpdateModel:
+    class ConcurrentUpdateModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             with Session(engine) as concurrent_session:
                 archive_document = concurrent_session.get(ArchiveDocument, document_id)
@@ -350,7 +439,7 @@ def test_regenerate_rejects_manual_edit_without_calling_model(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class InitialModel:
+    class InitialModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content())
 
@@ -376,7 +465,7 @@ def test_regenerate_rejects_manual_edit_without_calling_model(
     manual_version = manual.json()["document"]["version"]
     calls = 0
 
-    class ShouldNotRunModel:
+    class ShouldNotRunModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             nonlocal calls
             calls += 1
@@ -411,7 +500,7 @@ def test_regenerate_failure_preserves_existing_ai_draft(
     user_id = create_user(engine)
     project_id, document_id = _parsed_document(client, engine, user_id)
 
-    class InitialModel:
+    class InitialModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content=_valid_model_content())
 
@@ -423,7 +512,7 @@ def test_regenerate_failure_preserves_existing_ai_draft(
     assert initial.status_code == 200
     before = initial.json()
 
-    class InvalidModel:
+    class InvalidModel(_BindableFakeModel):
         def invoke(self, _: str) -> SimpleNamespace:
             return SimpleNamespace(content="not-json")
 

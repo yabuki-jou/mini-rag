@@ -328,10 +328,15 @@ def parse_project_document_endpoint(
 )
 def retry_parse_project_document_endpoint(
     document: ProjectDocumentDep,
+    current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
     """仅对 PARSE_FAILED 文档重试解析，不重新上传原文件。"""
-    return retry_parse_project_document(document=document, session=session)
+    return retry_parse_project_document(
+        document=document,
+        actor_id=current_user.id,
+        session=session,
+    )
 
 
 @router.post(

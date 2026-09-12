@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import (
+    ArchiveAuditLog,
     ArchiveDocument,
     ArchiveDocumentStatus,
     Document,
@@ -300,6 +301,13 @@ def test_parse_retry_keeps_parse_failed_for_repeated_failure(
     assert archive_document.last_error_code == "PARSE_TEXT_UNAVAILABLE"
     assert archive_document.last_error_summary == "文档未提取到足够的有效文本。"
     assert snapshots == []
+    with Session(engine) as session:
+        assert session.exec(
+            select(ArchiveAuditLog).where(
+                ArchiveAuditLog.project_id == project_id,
+                ArchiveAuditLog.operation_type == "PARSE_RETRIED",
+            )
+        ).all() == []
 
 
 def test_parse_retry_recovers_failed_document_without_reupload(
@@ -360,6 +368,18 @@ def test_parse_retry_recovers_failed_document_without_reupload(
     assert archive_document.status == ArchiveDocumentStatus.PARSED
     assert archive_document.current_snapshot_id == snapshot.id
     assert snapshot.snapshot_hash == "a" * 64
+    with Session(engine) as session:
+        audit_logs = list(
+            session.exec(
+                select(ArchiveAuditLog).where(
+                    ArchiveAuditLog.project_id == project_id,
+                    ArchiveAuditLog.operation_type == "PARSE_RETRIED",
+                )
+            ).all()
+        )
+    assert len(audit_logs) == 1
+    assert audit_logs[0].actor_id == user_id
+    assert audit_logs[0].redacted_summary == {"status": "PARSED"}
 
 
 @pytest.mark.parametrize(

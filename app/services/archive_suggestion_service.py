@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 SUGGESTION_REGENERATED = "SUGGESTION_REGENERATED"
+SUGGESTION_RETRIED = "SUGGESTION_RETRIED"
 ARCHIVE_DOCUMENT_RESOURCE_TYPE = "ARCHIVE_DOCUMENT"
 
 
@@ -92,9 +93,47 @@ def _snapshot_payload(snapshot: ParsedSnapshot) -> dict[str, Any]:
 
 def _build_prompt(snapshot_payload: dict[str, Any]) -> str:
     """构造固定、可审计的建议提示，不把模型调用上下文扩展到其他文档。"""
+    schema = {
+        "fields": {
+            field_name: {
+                "text_value": None,
+                "date_value": None,
+                "json_value": None,
+                "evidences": [
+                    {
+                        "excerpt": "当前解析快照中的原文摘录",
+                        "location_type": "TEXT_LINE_RANGE",
+                        "location_start": 1,
+                        "location_end": 1,
+                        "normalized_anchor": None,
+                    }
+                ],
+            }
+            for field_name in (
+                "TITLE",
+                "DOCUMENT_TYPE",
+                "DOCUMENT_DATE",
+                "AUTHORING_ORGANIZATION",
+                "VERSION_NUMBER",
+                "PROJECT_STAGE",
+                "KEYWORDS",
+            )
+        }
+    }
     return (
-        "你是工程资料字段建议器。只能依据给定快照输出 JSON，不得补造原文没有的事实。"
-        "JSON 顶层必须是 fields，对应七个固定字段；有值字段必须提供 evidences。\n"
+        "你是工程资料字段建议器。只能依据给定的当前解析快照输出 JSON，不得补造原文没有的事实。"
+        "只输出裸 JSON 对象；禁止 Markdown 围栏、解释文字或 JSON 前后缀。"
+        "顶层只能有 fields 对象，fields 的键只能使用以下七个英文固定字段键；无法从快照确认的字段值必须使用 null。"
+        "每个字段对象必须同时包含且只能使用 text_value、date_value、json_value、evidences 四个值列；"
+        "不适用的值列必须为 null，空字段的三个值列都必须为 null。非空值必须至少有一条 evidences。\n"
+        "机器可执行的字段与证据 Schema 示例：\n"
+        + json.dumps(schema, ensure_ascii=False, indent=2)
+        + "\n资料类型 DOCUMENT_TYPE 的允许值只能是 CONTRACT、DESIGN、CONSTRUCTION、MEETING_MINUTES、ACCEPTANCE、OTHER；"
+        "项目阶段 PROJECT_STAGE 的允许值只能是 PREPARATION、DESIGN、CONSTRUCTION、ACCEPTANCE、CROSS_STAGE、OTHER_STAGE。"
+        "DOCUMENT_DATE 使用 YYYY-MM-DD 字符串放入 date_value；KEYWORDS 使用非空字符串数组放入 json_value。"
+        "evidences 中每个对象必须包含 excerpt、location_type、location_start、location_end、normalized_anchor；"
+        "location_type 只能是 PDF_PAGE、DOCX_PARAGRAPH、TEXT_LINE_RANGE，前两者必须点定位且 start 等于 end，"
+        "定位必须来自当前解析快照中的同一片段，不能凭空编写行号或页码。\n"
         + json.dumps(snapshot_payload, ensure_ascii=False, sort_keys=True)
     )
 
@@ -257,7 +296,8 @@ def _invoke_model(*, prompt: str, document_id: UUID) -> Any:
     """调用建议模型；只对连接和超时故障自动重试一次。"""
     for attempt in range(2):
         try:
-            return get_chat_model().invoke(prompt)
+            model = get_chat_model().bind(response_format={"type": "json_object"})
+            return model.invoke(prompt)
         except (TimeoutError, ConnectionError) as exc:
             if attempt == 0:
                 logger.warning(
@@ -426,6 +466,23 @@ def _generate_suggestions(
         )
         raise
 
+    audit_log = None
+    if expected_status == ArchiveDocumentStatus.SUGGESTION_FAILED:
+        document = session.get(Document, document_id)
+        if document is None or document.project_id is None:
+            raise AppError(500, "PROJECT_NOT_FOUND", "项目文档缺少项目归属。")
+        audit_log = ArchiveAuditLog(
+            project_id=document.project_id,
+            actor_id=actor_id,
+            operation_type=SUGGESTION_RETRIED,
+            resource_type=ARCHIVE_DOCUMENT_RESOURCE_TYPE,
+            resource_id=document_id,
+            redacted_summary={
+                "status": ArchiveDocumentStatus.PENDING_CONFIRMATION.value,
+                "version": archive_document.version + 1,
+            },
+        )
+
     return _persist_suggestion_draft(
         document_id=document_id,
         actor_id=actor_id,
@@ -433,6 +490,7 @@ def _generate_suggestions(
         existing_values=existing_values,
         suggestions=suggestions,
         session=session,
+        audit_log=audit_log,
     )
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from app.models import (
+    ArchiveAuditLog,
     ArchiveDocument,
     ArchiveDocumentStatus,
     ArchiveFieldName,
@@ -137,6 +138,21 @@ def test_manual_draft_can_read_and_save_manual_field_without_evidence(
     assert field["no_source_evidence"] is True
     assert field["evidences"] == []
     assert response.json()["document"]["version"] == version + 1
+    with Session(engine) as session:
+        audit_logs = list(
+            session.exec(
+                select(ArchiveAuditLog).where(
+                    ArchiveAuditLog.project_id == project_id,
+                    ArchiveAuditLog.operation_type == "ARCHIVE_FIELD_UPDATED",
+                )
+            ).all()
+        )
+    assert len(audit_logs) == 1
+    assert audit_logs[0].actor_id == user_id
+    assert audit_logs[0].redacted_summary == {
+        "field_name": "TITLE",
+        "review_status": "VALUE_CONFIRMED",
+    }
 
 
 def test_field_update_rejects_forged_ai_source_and_stale_version(

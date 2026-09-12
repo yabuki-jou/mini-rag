@@ -296,7 +296,28 @@ def test_audit_log_list_is_project_scoped_and_redacted(
 
     assert response.status_code == 200
     assert response.json()["total"] >= 1
+    assert all(item["actor_id"] == str(user_id) for item in response.json()["items"])
+    assert all(item["created_at"] for item in response.json()["items"])
+    assert all(item["resource_type"] and item["resource_id"] for item in response.json()["items"])
     assert all("施工方案" not in str(item["redacted_summary"]) for item in response.json()["items"])
+
+
+def test_audit_log_list_rejects_other_users_without_leaking_records(
+    project_document_api: tuple[TestClient, Engine, Path],
+) -> None:
+    """项目审计必须沿用项目归属校验，拒绝其他用户并不返回摘要。"""
+    client, engine, _ = project_document_api
+    owner_id = create_user(engine, "audit-owner")
+    other_user_id = create_user(engine, "audit-other")
+    project_id, _, _ = _confirmed_document(client, engine, owner_id)
+
+    response = client.get(
+        f"/projects/{project_id}/audit-logs",
+        headers=auth_headers(engine, other_user_id),
+    )
+
+    assert response.status_code == 403
+    assert "redacted_summary" not in response.text
 
 
 def test_audit_log_filter_rejects_unknown_operation_type(

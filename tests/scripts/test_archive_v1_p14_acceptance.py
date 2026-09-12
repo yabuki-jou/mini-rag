@@ -723,6 +723,7 @@ def test_c4_phases_are_explicit_and_threshold_calibration_is_separate() -> None:
         "threshold-calibration",
         "d5-capture",
         "d6b-capture",
+        "enterprise-capture",
     }
 
     calibration_call = next(

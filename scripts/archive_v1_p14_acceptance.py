@@ -243,11 +243,14 @@ def _seed_confirmed_documents(
     run_tag: str,
     project_ids: dict[str, str],
     seeded: list[tuple[str, str]],
+    evaluation_root: Path | None = None,
 ) -> tuple[dict[str, list[str]], list[int]]:
     """经 P05/P06/P07/P09 路由准备两项目的真实正式档案。"""
+    root = evaluation_root or EVALUATION_ROOT
     projects = _as_object_list(document_label.get("projects"), name="projects")
     normal_documents = _as_object_list(
-        document_label.get("normal_documents"), name="normal_documents"
+        document_label.get("normal_documents", document_label.get("documents")),
+        name="normal_documents",
     )
     for project in projects:
         try:
@@ -280,12 +283,12 @@ def _seed_confirmed_documents(
             project_key = str(document["project_id"])
             project_id = project_ids[project_key]
             relative_path = str(document["relative_path"])
-            expected_fields = document["expected_fields"]
+            expected_fields = document.get("expected_fields", {})
         except (KeyError, TypeError) as exc:
             raise AcceptanceError("P14 文档标注缺少项目、路径或字段。") from exc
         if not isinstance(expected_fields, dict):
             raise AcceptanceError("P14 文档字段标注格式无效。")
-        path = EVALUATION_ROOT / relative_path
+        path = root / relative_path
         if not path.is_file():
             raise AcceptanceError("P14 虚构资料文件缺失。")
 
@@ -715,6 +718,137 @@ def build_d6b_capture_dataset(
     return dataset
 
 
+def build_enterprise_capture_dataset(
+    question_label: dict[str, Any],
+    outcomes: list[dict[str, object]],
+    *,
+    top_k: int = 8,
+) -> dict[str, object]:
+    """将企业规模真实 Top-K 候选组合为动态问题数量的 Pixie 捕获数据集。"""
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("企业捕获 Top-K 必须是正整数。")
+    questions = _as_object_list(question_label.get("questions"), name="questions")
+    if not questions or len(outcomes) != len(questions):
+        raise AcceptanceError("企业捕获问题和检索结果数量必须一致且非空。")
+    questions_by_id: dict[str, dict[str, Any]] = {}
+    for question in questions:
+        case_id = question.get("id")
+        if not isinstance(case_id, str) or not case_id.strip() or case_id in questions_by_id:
+            raise AcceptanceError("企业捕获问题标注包含重复或无效问题标识。")
+        questions_by_id[case_id] = question
+
+    entries: list[dict[str, object]] = []
+    seen_case_ids: set[str] = set()
+    for outcome in outcomes:
+        case_id = outcome.get("case_id")
+        if (
+            not isinstance(case_id, str)
+            or case_id in seen_case_ids
+            or case_id not in questions_by_id
+        ):
+            raise AcceptanceError("企业捕获检索结果与问题标注无法一一对应。")
+        seen_case_ids.add(case_id)
+        items = outcome.get("items")
+        if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+            raise AcceptanceError("企业捕获缺少有效正式候选。")
+        requested_top_k = outcome.get("retrieval_requested_top_k", top_k)
+        returned_count = outcome.get("retrieval_returned_count", len(items))
+        if (
+            isinstance(requested_top_k, bool)
+            or not isinstance(requested_top_k, int)
+            or requested_top_k != top_k
+            or isinstance(returned_count, bool)
+            or not isinstance(returned_count, int)
+            or returned_count != len(items)
+        ):
+            raise AcceptanceError("企业捕获响应的 Top-K 或候选计数不一致。")
+        question = questions_by_id[case_id]
+        category = str(outcome.get("category", question.get("category", "")))
+        expected_evidence = question.get("expected_evidence")
+        expected_answer_fragments = question.get("expected_answer_fragments")
+        candidate_count = outcome.get("diagnostic_candidate_count")
+        chroma_candidate_count = outcome.get("diagnostic_chroma_candidate_count")
+        retrieval_latency_ms = outcome.get("retrieval_latency_ms", 0.0)
+        if (
+            isinstance(candidate_count, bool)
+            or not isinstance(candidate_count, int)
+            or candidate_count < 0
+            or isinstance(chroma_candidate_count, bool)
+            or not isinstance(chroma_candidate_count, int)
+            or chroma_candidate_count < 0
+            or isinstance(retrieval_latency_ms, bool)
+            or not isinstance(retrieval_latency_ms, (int, float))
+            or not math.isfinite(float(retrieval_latency_ms))
+            or retrieval_latency_ms < 0
+        ):
+            raise AcceptanceError("企业捕获缺少安全的候选池计数或检索耗时。")
+        public_coverage_match = category == "GROUNDED" and any(
+            item_contains_expected_evidence(item, expected_evidence)
+            for item in items
+        )
+        entries.append(
+            {
+                "description": "企业规模 RAG 真实检索捕获",
+                "input_data": {"question": question["question"]},
+                "eval_input": [
+                    {
+                        "name": "archive_question_retrieval",
+                        "value": {
+                            "items": items,
+                            "requested_top_k": requested_top_k,
+                            "returned_count": returned_count,
+                        },
+                    }
+                ],
+                "eval_metadata": {
+                    "case_id": case_id,
+                    "case_kind": category,
+                    "category": category,
+                    "expected_answer_status": (
+                        "ANSWERED" if category == "GROUNDED" else "REFUSED_NO_EVIDENCE"
+                    ),
+                    "direct_evidence_required": category == "GROUNDED",
+                    "public_coverage_match": public_coverage_match,
+                    # Ground Truth 仅用于离线评测，不能进入 input_data 或生产请求。
+                    "expected_answer": question.get("expected_answer"),
+                    **(
+                        {"expected_answer_fragments": expected_answer_fragments}
+                        if expected_answer_fragments is not None
+                        else {}
+                    ),
+                    "expected_evidence": expected_evidence,
+                    "hidden_evidence_in_other_project": question.get(
+                        "hidden_evidence_in_other_project"
+                    ),
+                    "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+                    "candidate_count": candidate_count,
+                    "chroma_candidate_count": chroma_candidate_count,
+                    "candidate_pool_complete": (
+                        candidate_count == C4A_CANDIDATE_POOL_SIZE
+                        and chroma_candidate_count == C4A_CANDIDATE_POOL_SIZE
+                    ),
+                    "retrieval_latency_ms": round(
+                        float(retrieval_latency_ms), 2
+                    ),
+                },
+            }
+        )
+    if seen_case_ids != set(questions_by_id):
+        raise AcceptanceError("企业捕获检索结果缺少问题。")
+    return {
+        "name": "archive-question-enterprise-captured",
+        "description": "企业规模 RAG 真实 Top-K 检索捕获",
+        "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+        "evaluators": [
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
+            "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+        ],
+        "entries": entries,
+    }
+
+
 def write_safe_diagnostic(
     path: Path,
     *,
@@ -831,17 +965,20 @@ def _cleanup_seeded_scope(
 def run_retrieval_calibration(
     *,
     base_url: str,
+    evaluation_root: Path | None = None,
     result_file: Path | None = None,
     diagnostic_file: Path | None = None,
     snapshot_file: Path | None = None,
     d5_dataset_file: Path | None = None,
     d6b_dataset_file: Path | None = None,
-    calibrate_threshold: bool = True,
+    enterprise_dataset_file: Path | None = None,
+    enterprise_top_k: int = 8,
+    calibrate_threshold: bool | None = None,
     phase: str | None = None,
 ) -> dict[str, int | float | bool]:
     """执行完整真实检索链路，并按阶段返回安全聚合指标。"""
     selected_phase = phase or (
-        "threshold-calibration" if calibrate_threshold else "c4-a"
+        "threshold-calibration" if calibrate_threshold is not False else "c4-a"
     )
     if selected_phase not in {
         "c4-a",
@@ -850,12 +987,21 @@ def run_retrieval_calibration(
         "threshold-calibration",
         "d5-capture",
         "d6b-capture",
+        "enterprise-capture",
     }:
         raise ValueError(
-            "P14 阶段必须是 c4-a、c4-b、d4-a-snapshot、threshold-calibration、d5-capture 或 d6b-capture。"
+            "P14 阶段必须是 c4-a、c4-b、d4-a-snapshot、threshold-calibration、d5-capture、d6b-capture 或 enterprise-capture。"
         )
-    if (selected_phase == "threshold-calibration") != calibrate_threshold:
+    if calibrate_threshold is not None and (
+        selected_phase == "threshold-calibration"
+    ) != calibrate_threshold:
         raise ValueError("P14 阶段与阈值标定开关不一致。")
+    if (
+        isinstance(enterprise_top_k, bool)
+        or not isinstance(enterprise_top_k, int)
+        or enterprise_top_k <= 0
+    ):
+        raise ValueError("企业捕获 Top-K 必须是正整数。")
     if selected_phase == "d4-a-snapshot" and snapshot_file is None:
         raise ValueError("D4-A 快照文件不能为空。")
     if selected_phase != "d4-a-snapshot" and snapshot_file is not None:
@@ -868,15 +1014,43 @@ def run_retrieval_calibration(
         raise ValueError("D6-B 捕获数据集文件不能为空。")
     if selected_phase != "d6b-capture" and d6b_dataset_file is not None:
         raise ValueError("D6-B 捕获数据集文件仅允许 d6b-capture 阶段使用。")
+    if selected_phase == "enterprise-capture" and enterprise_dataset_file is None:
+        raise ValueError("企业捕获数据集文件不能为空。")
+    if selected_phase != "enterprise-capture" and enterprise_dataset_file is not None:
+        raise ValueError("企业捕获数据集文件仅允许 enterprise-capture 阶段使用。")
+    selected_evaluation_root = Path(evaluation_root or EVALUATION_ROOT)
+    labels_root = selected_evaluation_root / "labels"
+    question_label_path = labels_root / "question-ground-truth.json"
+    document_label_path = labels_root / "document-ground-truth.json"
+    materials_root = selected_evaluation_root
+    if not question_label_path.is_file() and not document_label_path.is_file():
+        # 允许调用方把 labels 目录本身作为评测根目录传入，便于临时隔离测试。
+        question_label_path = selected_evaluation_root / "question-ground-truth.json"
+        document_label_path = selected_evaluation_root / "document-ground-truth.json"
+        materials_root = selected_evaluation_root.parent
     protected_paths = {
-        QUESTION_LABEL_PATH.resolve(),
-        DOCUMENT_LABEL_PATH.resolve(),
+        question_label_path.resolve(),
+        document_label_path.resolve(),
     }
     protected_paths.update(
         path.resolve()
         for path in (result_file, diagnostic_file)
         if path is not None
     )
+    output_paths = [
+        path.resolve()
+        for path in (
+            result_file,
+            diagnostic_file,
+            snapshot_file,
+            d5_dataset_file,
+            d6b_dataset_file,
+            enterprise_dataset_file,
+        )
+        if path is not None
+    ]
+    if len(output_paths) != len(set(output_paths)):
+        raise ValueError("P14 输出文件不得互相覆盖。")
     if snapshot_file is not None and snapshot_file.resolve() in protected_paths:
         raise ValueError("D4-A 快照文件不得覆盖输入或其他输出文件。")
     if d5_dataset_file is not None:
@@ -895,14 +1069,21 @@ def run_retrieval_calibration(
             d6b_dataset_file.unlink(missing_ok=True)
         except OSError as exc:
             raise AcceptanceError("D6-B 旧捕获数据集无法安全清理。") from exc
-    elif snapshot_file is not None:
+    if enterprise_dataset_file is not None:
+        if enterprise_dataset_file.resolve() in protected_paths:
+            raise ValueError("企业捕获数据集文件不得覆盖输入或其他输出文件。")
+        try:
+            enterprise_dataset_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise AcceptanceError("企业旧捕获数据集无法安全清理。") from exc
+    if snapshot_file is not None:
         try:
             # 在任何外部工作前移除旧快照，防止失败后误读上一轮结果。
             snapshot_file.unlink(missing_ok=True)
         except OSError as exc:
             raise AcceptanceError("D4-A 旧快照无法安全清理。") from exc
-    question_label = _read_label(QUESTION_LABEL_PATH)
-    document_label = _read_label(DOCUMENT_LABEL_PATH)
+    question_label = _read_label(question_label_path)
+    document_label = _read_label(document_label_path)
     if question_label.get("dataset_id") != document_label.get("dataset_id"):
         raise AcceptanceError("P14 问题与文档标注不属于同一评测集。")
 
@@ -925,6 +1106,7 @@ def run_retrieval_calibration(
             run_tag=run_tag,
             project_ids=project_ids,
             seeded=seeded,
+            evaluation_root=materials_root,
         )
         index_context_summary = {
             "document_count": len(index_context_counts),
@@ -942,10 +1124,12 @@ def run_retrieval_calibration(
                 if selected_phase == "d5-capture"
                 else 8
                 if selected_phase == "d6b-capture"
+                else enterprise_top_k
+                if selected_phase == "enterprise-capture"
                 else 10
             ),
             include_ground_truth_in_diagnostic=selected_phase
-            not in {"d5-capture", "d6b-capture"},
+            not in {"d5-capture", "d6b-capture", "enterprise-capture"},
         )
         if selected_phase in {"d5-capture", "d6b-capture"}:
             is_d6b = selected_phase == "d6b-capture"
@@ -989,6 +1173,50 @@ def run_retrieval_calibration(
                 "latency_p95_ms": round(_p95_ms(latencies_ms), 2),
                 "question_count": len(outcomes),
                 ("d6b_dataset_written" if is_d6b else "d5_dataset_written"): True,
+                **index_context_summary,
+            }
+            if result_file is not None:
+                write_aggregate_result(result_file, result)
+            return result
+        if selected_phase == "enterprise-capture":
+            stage = "enterprise_capture"
+            dataset = build_enterprise_capture_dataset(
+                question_label, outcomes, top_k=enterprise_top_k
+            )
+            write_d5_capture_dataset(enterprise_dataset_file, dataset)
+            category_counts = {
+                category: sum(outcome.get("category") == category for outcome in outcomes)
+                for category in ("GROUNDED", "NO_EVIDENCE", "ISOLATION")
+            }
+            complete_count = sum(
+                outcome.get("diagnostic_candidate_count") == C4A_CANDIDATE_POOL_SIZE
+                and outcome.get("diagnostic_chroma_candidate_count")
+                == C4A_CANDIDATE_POOL_SIZE
+                for outcome in outcomes
+            )
+            public_coverage_grounded_count = sum(
+                outcome.get("category") == "GROUNDED"
+                and any(
+                    item_contains_expected_evidence(
+                        item, outcome.get("expected_evidence")
+                    )
+                    for item in outcome.get("items", [])
+                    if isinstance(item, dict)
+                )
+                for outcome in outcomes
+            )
+            result = {
+                "candidate_pool_expected_count": C4A_CANDIDATE_POOL_SIZE,
+                "candidate_pool_complete_question_count": complete_count,
+                "candidate_pool_incomplete_question_count": len(outcomes) - complete_count,
+                "grounded_question_count": category_counts["GROUNDED"],
+                "public_coverage_grounded_count": public_coverage_grounded_count,
+                "no_evidence_question_count": category_counts["NO_EVIDENCE"],
+                "isolation_question_count": category_counts["ISOLATION"],
+                "latency_p95_ms": round(_p95_ms(latencies_ms), 2),
+                "question_count": len(outcomes),
+                "enterprise_top_k": enterprise_top_k,
+                "enterprise_dataset_written": True,
                 **index_context_summary,
             }
             if result_file is not None:
@@ -1070,6 +1298,11 @@ def run_retrieval_calibration(
                 d6b_dataset_file.unlink(missing_ok=True)
             except OSError:
                 pass
+        if enterprise_dataset_file is not None:
+            try:
+                enterprise_dataset_file.unlink(missing_ok=True)
+            except OSError:
+                pass
         if diagnostic_file is not None:
             write_safe_diagnostic(
                 path=diagnostic_file,
@@ -1104,6 +1337,11 @@ def run_retrieval_calibration(
                     d6b_dataset_file.unlink(missing_ok=True)
                 except OSError:
                     pass
+            if enterprise_dataset_file is not None:
+                try:
+                    enterprise_dataset_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
             # 清理失败意味着虚构验收资料可能残留，必须优先暴露稳定错误，不能被主流程异常掩盖。
             raise AcceptanceError("P14 虚构验收数据清理未全部完成。") from cleanup_error
 
@@ -1112,11 +1350,14 @@ def main() -> int:
     """运行命令行验收并仅输出无敏感信息的聚合结论。"""
     parser = argparse.ArgumentParser(description="运行 AV1-P14 真实检索验收。")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--evaluation-root", type=Path)
     parser.add_argument("--result-file", type=Path)
     parser.add_argument("--diagnostic-file", type=Path)
     parser.add_argument("--snapshot-file", type=Path)
     parser.add_argument("--d5-dataset-file", type=Path)
     parser.add_argument("--d6b-dataset-file", type=Path)
+    parser.add_argument("--enterprise-dataset-file", type=Path)
+    parser.add_argument("--enterprise-top-k", type=int, default=8)
     parser.add_argument(
         "--phase",
         choices=(
@@ -1126,6 +1367,7 @@ def main() -> int:
             "threshold-calibration",
             "d5-capture",
             "d6b-capture",
+            "enterprise-capture",
         ),
         default="c4-a",
         help="默认只执行 C4-A；其他阶段必须显式选择。",
@@ -1134,11 +1376,14 @@ def main() -> int:
     try:
         result = run_retrieval_calibration(
             base_url=str(args.base_url),
+            evaluation_root=args.evaluation_root,
             result_file=args.result_file,
             diagnostic_file=args.diagnostic_file,
             snapshot_file=args.snapshot_file,
             d5_dataset_file=args.d5_dataset_file,
             d6b_dataset_file=args.d6b_dataset_file,
+            enterprise_dataset_file=args.enterprise_dataset_file,
+            enterprise_top_k=args.enterprise_top_k,
             calibrate_threshold=args.phase == "threshold-calibration",
             phase=args.phase,
         )

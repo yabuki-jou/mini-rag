@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.core.errors import AppError
 from app.models import (
+    ArchiveAuditLog,
     ArchiveDocument,
     ArchiveDocumentType,
     ArchiveDocumentStatus,
@@ -41,6 +42,8 @@ _EDITABLE_STATUSES = {
     ArchiveDocumentStatus.PENDING_CONFIRMATION,
     ArchiveDocumentStatus.PENDING_RECONFIRMATION,
 }
+
+ARCHIVE_FIELD_UPDATED = "ARCHIVE_FIELD_UPDATED"
 
 
 def _build_process_document_read(
@@ -388,6 +391,22 @@ def update_field(
     if result.rowcount != 1:
         session.rollback()
         raise AppError(409, "VERSION_CONFLICT", "文档版本已变化，请重新读取草稿。")
+    if document.project_id is None:
+        session.rollback()
+        raise AppError(500, "PROJECT_NOT_FOUND", "项目文档缺少项目归属。")
+    session.add(
+        ArchiveAuditLog(
+            project_id=document.project_id,
+            actor_id=actor_id,
+            operation_type=ARCHIVE_FIELD_UPDATED,
+            resource_type="ARCHIVE_DOCUMENT",
+            resource_id=document.id,
+            redacted_summary={
+                "field_name": field_name.value,
+                "review_status": payload.review_status.value,
+            },
+        )
+    )
     try:
         session.commit()
     except Exception as exc:

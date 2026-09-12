@@ -19,6 +19,7 @@ from app.models import (
     DocumentStatus,
     KnowledgeBase,
     ParsedSnapshot,
+    Project,
     User,
 )
 from app.schemas import ArchiveFieldUpdate
@@ -52,8 +53,12 @@ def _create_parsed_document(session: Session) -> tuple[Document, UUID, UUID]:
     knowledge_base = KnowledgeBase(owner_id=user.id, name="archive-kb")
     session.add(knowledge_base)
     session.commit()
+    project = Project(owner_id=user.id, kb_id=knowledge_base.id, name="archive-project")
+    session.add(project)
+    session.commit()
     document = Document(
         kb_id=knowledge_base.id,
+        project_id=project.id,
         filename="资料.txt",
         storage_path="C:/tmp/资料.txt",
         file_hash="b" * 64,

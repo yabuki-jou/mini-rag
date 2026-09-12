@@ -29,6 +29,7 @@ def _evaluable(
     citations: list[Mapping[str, object]],
     candidate_pool_complete: bool = True,
     expected_answer: str | None = "北辰设计院",
+    expected_answer_fragments: list[str] | None = None,
     expected_evidence: dict[str, object] | None = None,
     retrieval_latency_ms: float = 120.0,
     question_end_to_end_latency_ms: float | None = None,
@@ -59,6 +60,7 @@ def _evaluable(
             "case_id": case_id,
             "category": category,
             "expected_answer": expected_answer,
+            "expected_answer_fragments": expected_answer_fragments,
             "expected_evidence": expected_evidence,
             "candidate_pool_complete": candidate_pool_complete,
             "retrieval_latency_ms": retrieval_latency_ms,
@@ -109,6 +111,128 @@ def test_no_evidence_and_isolation_require_refusal_without_citations() -> None:
             )
         )
         assert result.score == 1.0
+
+
+def test_enterprise_grounded_answer_fragments_accept_actual_paraphrases() -> None:
+    """企业四道已知表达应按全部必要事实片段通过，而不是要求整句连续相同。"""
+    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+
+    cases = (
+        (
+            "GROUNDED-04",
+            "档案问答保留 Top-8 条候选证据。",
+            "档案问答内部保留 Top-8 候选。",
+            ["Top-8", "候选"],
+        ),
+        (
+            "GROUNDED-06",
+            "Chroma 检索的范围条件是 user_id 和 kb_id。",
+            "Chroma 检索必须包含服务端确定的 user_id 和 kb_id。",
+            ["Chroma", "user_id", "kb_id"],
+        ),
+        (
+            "GROUNDED-11",
+            "公开接口最多返回 10条候选。",
+            "公开检索接口最多返回 10 条候选。",
+            ["10条"],
+        ),
+        (
+            "GROUNDED-12",
+            "删除 Chroma 时必须包含 document_id。",
+            "删除文档时 Chroma 条件必须额外包含 document_id。",
+            ["document_id"],
+        ),
+    )
+    for case_id, answer, expected_answer, fragments in cases:
+        result = archive_v1_p02_quality_gate(
+            _evaluable(
+                category="GROUNDED",
+                answer_status="ANSWERED",
+                answer=answer,
+                citations=[_citation()],
+                expected_answer=expected_answer,
+                expected_answer_fragments=fragments,
+                case_id=case_id,
+                expected_evidence={
+                    "relative_path": "documents/A-02-design.txt",
+                    "items": [
+                        {
+                            "location_type": "TEXT_LINE_RANGE",
+                            "location_start": 2,
+                            "location_end": 2,
+                            "excerpt": "北辰设计院",
+                        }
+                    ],
+                },
+            )
+        )
+        assert result.score == 1.0, result.reasoning
+
+
+def test_grounded_answer_fragments_require_every_declared_fact() -> None:
+    """片段标注不能只命中一个事实就放行。"""
+    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+
+    result = archive_v1_p02_quality_gate(
+        _evaluable(
+            category="GROUNDED",
+            answer_status="ANSWERED",
+            answer="档案问答保留 Top-8。",
+            citations=[_citation()],
+            expected_answer="档案问答内部保留 Top-8 候选。",
+            expected_answer_fragments=["Top-8", "候选"],
+            expected_evidence={
+                "relative_path": "documents/A-02-design.txt",
+                "items": [
+                    {
+                        "location_type": "TEXT_LINE_RANGE",
+                        "location_start": 2,
+                        "location_end": 2,
+                        "excerpt": "北辰设计院",
+                    }
+                ],
+            },
+        )
+    )
+
+    assert result.score < 0.5
+
+
+def test_grounded_10_fragments_accept_all_three_observed_answers() -> None:
+    """GROUNDED-10 的三种真实表达都必须保留五个必要事实片段。"""
+    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+
+    expected_answer = "原文件、PostgreSQL 文档和 Chroma Chunk 使用同一个 document_id 关联。"
+    fragments = ["原文件", "PostgreSQL", "Chroma Chunk", "document_id", "关联"]
+    answers = (
+        "根据证据，原文件、PostgreSQL 文档和 Chroma Chunk 使用同一个 document_id 关联（S4），因此云港项目通过 document_id 将原文件、业务文档（PostgreSQL 文档）和向量片段（Chroma Chunk）关联起来。",
+        "根据证据，原文件、PostgreSQL 文档和 Chroma Chunk（即业务文档和向量片段）使用同一个 document_id 关联（S4）。",
+        "根据证据，原文件、PostgreSQL 文档和 Chroma Chunk 使用同一个 document_id 关联（S4）。",
+    )
+    for answer in answers:
+        result = archive_v1_p02_quality_gate(
+            _evaluable(
+                category="GROUNDED",
+                answer_status="ANSWERED",
+                answer=answer,
+                citations=[_citation()],
+                expected_answer=expected_answer,
+                expected_answer_fragments=fragments,
+                case_id="GROUNDED-10",
+                expected_evidence={
+                    "relative_path": "documents/A-02-design.txt",
+                    "items": [
+                        {
+                            "location_type": "TEXT_LINE_RANGE",
+                            "location_start": 2,
+                            "location_end": 2,
+                            "excerpt": "北辰设计院",
+                        }
+                    ],
+                },
+            )
+        )
+        assert result.score == 1.0, result.reasoning
 
 
 def test_all_categories_fail_when_candidate_pool_is_incomplete() -> None:
