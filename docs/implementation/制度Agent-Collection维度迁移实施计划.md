@@ -20,7 +20,8 @@
 | `/health` Embedding | dimension=768 |
 | 真实制度文档链路 | ✅ 上传→READY(chunk_count=1)→Agent COMPLETED→引用正确 |
 | 临时数据清理 | PG 6 表归零、Chroma 该用户 0 条、Checkpoint 共享未删 |
-| 全量回归 | 453 passed, 2 skipped |
+| 迁移脚本测试 | 27 passed |
+| 全量回归 | 465 passed, 2 skipped, 127 warnings |
 | `compileall` / `git diff --check` | 通过 |
 
 ## 一、问题与只读证据
@@ -57,25 +58,20 @@ Embedding 实例，但旧制度 Collection 是历史 512 维 Collection。制度
 - 不处理智慧档案 `archive_final_chunks` Collection。
 - 不把一次 canary 或单题问答表述为完整制度检索质量验收。
 
-## 三、代码与目录改动
+## 三、实际代码与目录改动
 
 ```text
 scripts/
 └── policy_collection_embedding_rebuild.py
 
 tests/
-├── scripts/
-│   └── test_policy_collection_embedding_rebuild.py
-└── evals/
-    └── policy_agent/
-        └── test_live_retrieval_canary.py
-
-evals/
-└── policy_agent/
-    ├── live_retrieval_canary.py
-    └── docs/
-        └── live-retrieval-canary.md
+└── scripts/
+    └── test_policy_collection_embedding_rebuild.py
 ```
+
+真实制度文档验证使用既有 HTTP 接口一次性执行，没有新增或保留独立
+`live_retrieval_canary.py`。如果后续需要把该检查作为可重复质量门，应单独实现隔离的临时
+Checkpoint 和跨存储精确清理，不能直接复用本次共享运行环境。
 
 同步更新：
 

@@ -140,3 +140,13 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 约束：注入检索结果的模型评测只证明回答层，不得表述为真实 Chroma 检索通过；真实检索、跨轮状态和故障恢复必须使用独立评测并分别报告。评测不得读取真实业务数据或把 Ground Truth 注入生产请求。
 - 替代/复查条件：智慧档案 P14 材料迁入 `evals/archive/`，或评测工具的根目录规则发生变化时复查。
 - 依据文件：[`evals/policy_agent/docs/project-analysis.md`](../evals/policy_agent/docs/project-analysis.md)、[`evals/policy_agent/docs/eval-criteria.md`](../evals/policy_agent/docs/eval-criteria.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-012：旧制度 Collection 与当前 768 维 Embedding 对齐
+
+- 状态：已确认
+- 首次纳入台账：2026-09-13
+- 背景：智慧档案切换到 bge-base/768 后，旧制度 Agent 仍访问冻结为 512 维的 `mini_rag_knowledge_chunks_v1`，真实查询被 Chroma 拒绝并映射为 HTTP 503。
+- 决策：仅在制度 Collection 条目数和 PostgreSQL 待重建文档聚合计数均为 0 时，保留原名与 cosine 度量执行空库重建，以 768 维三字段 canary 锁定并验证新维度，随后精确清理 canary。任何非空状态都必须停止，不能自动删除或覆盖。
+- 影响：制度 Collection 现与共享的 bge-base/768 配置一致；一次虚构制度文档真实链路已通过。该单题只证明链路恢复，不替代 `evals/policy_agent/` 的回答质量评测，也不证明多轮或故障恢复质量。
+- 替代/复查条件：Embedding 再次更换、制度 Collection 出现待迁移数据，或制度与智慧档案改为独立 Embedding 配置时复查。
+- 依据文件：[`docs/implementation/制度Agent-Collection维度迁移实施计划.md`](implementation/制度Agent-Collection维度迁移实施计划.md)、[`scripts/policy_collection_embedding_rebuild.py`](../scripts/policy_collection_embedding_rebuild.py)、[`docs/stage/handoff.md`](stage/handoff.md)

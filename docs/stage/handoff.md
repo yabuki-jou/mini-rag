@@ -16,8 +16,8 @@
 6. `docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md`
 7. `docs/review/P14-rag检索质量改进/检索质量问题分析与改进策略.md`
 
-当前分支为 `main`，services 分层重构已形成独立提交 `3f3df2e`。
-当前工作区包含尚未提交的制度 Agent 评测迁移；它与 services 提交隔离，没有与 P14 实现混合。
+当前分支为 `main`。services 分层重构提交为 `3f3df2e`，制度 Agent 评测迁移提交为
+`2d90ef6`，制度 Collection 维度迁移提交为 `08afe49`；三批改动彼此隔离，没有与 P14 实现混合。
 实际文件范围以提交差异为准；相邻 `mini-rag-milvus-vue` 不在本轮范围。
 当前提交尚未推送。
 后续只显式选择获准文件；
@@ -408,11 +408,25 @@
   `compileall app tests scripts evals pixie_qa/archive_v1_p14` 与 `git diff --check` 通过。
 - 通过范围仅为“真实 DeepSeek + 注入的虚构制度检索结果”的单轮回答、拒答、澄清、闲聊和
   授权注入防护。它不证明真实 Chroma 检索、跨轮状态或连接失败恢复。
-- 准备阶段的一次真实制度检索暴露当前 BGE 输出 768 维、既有制度 Collection 接受 512 维的
-  不兼容，Chroma 返回维度错误并由 HTTP 映射为 503；该问题未在本任务中修改或重建。
-- 后续只读预检确认 `mini_rag_knowledge_chunks_v1` 为 cosine、条目数 0；512 维查询接受，
-  768 维查询明确拒绝。安全迁移方案已写入
-  `docs/implementation/制度Agent-Collection维度迁移实施计划.md`，尚未获得真实删除、重建或
-  临时跨存储写入授权。
+- 准备阶段的一次真实制度检索曾暴露 BGE 输出 768 维、既有制度 Collection 接受 512 维的
+  不兼容，Chroma 返回维度错误并由 HTTP 映射为 503；该问题已由第 22 节的后续迁移解除。
+- 当时只读预检确认 `mini_rag_knowledge_chunks_v1` 为 cosine、条目数 0；512 维查询接受，
+  768 维查询明确拒绝。后续迁移仍保持原 Collection 名与 cosine 度量。
 - 已删除根级 `pixie_qa/` 中属于已删除请假领域和旧制度入口的运行器、评审器、数据集及追踪；
   智慧档案 P14 材料继续保留在 `pixie_qa/archive_v1_p14/`，本地结果仍位于忽略目录。
+
+## 22. 制度 Agent Collection 维度迁移（2026-09-13）
+
+- `mini_rag_knowledge_chunks_v1` 已在空库前提下由 512 维原名重建为 768 维，Collection 名与
+  cosine 度量未变；当前只读复核为条目数 0、768 维查询接受、512 维查询拒绝。
+- 迁移脚本位于 `scripts/policy_collection_embedding_rebuild.py`，包含只读预检、显式
+  `--apply`、768 维三字段 canary 和 512 维失败恢复；迁移实现提交为 `08afe49`。
+- 真实虚构制度文档链路已验证上传、READY、Agent `COMPLETED` 和引用正确；临时 PostgreSQL
+  六表与对应 Chroma 用户范围复核为 0。运行时使用共享 Checkpoint，本轮没有删除整个共享文件，
+  因此该次单题结果不能表述为隔离 Checkpoint 验收。
+- 迁移提交记录的自动化结果为脚本测试 `15 passed`、全量 `453 passed, 2 skipped`。提交后主审
+  修正只读预检隐式创建、聚合查询加载完整行、维度探针吞异常、canary ID 未核对和底层连接错误
+  直出问题。收口后脚本测试 `27 passed`，全量回归 `465 passed, 2 skipped, 127 warnings`，
+  `compileall` 与 `git diff --check` 通过。
+- 修正后的真实默认预检没有执行写入；当前环境无法建立 PostgreSQL 连接时返回稳定
+  `POSTGRES_PREFLIGHT_FAILED` 并停止。Collection 仍为迁移后的 cosine/768 维空库。

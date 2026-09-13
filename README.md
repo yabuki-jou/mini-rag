@@ -40,7 +40,9 @@ flowchart LR
 - Chroma：存储可重建的 Chunk、向量和 `user_id + kb_id` 隔离字段。Compose 中的 API 使用内部
   `chroma:8000`；本机直接运行 Python 时可经回环地址 `127.0.0.1:8001` 访问，局域网和公网不可访问。
   当前命名空间为 `mini_rag_tenant / mini_rag_chroma`，既有制度检索 Collection 为
-  `mini_rag_knowledge_chunks_v1`。
+  `mini_rag_knowledge_chunks_v1`。该 Collection 已在确认空库后从历史 512 维原名重建为 768 维，
+  与当前 BGE 配置一致；一次虚构制度文档的真实上传、处理、Agent 问答与引用链路已通过并完成
+  PostgreSQL/Chroma 临时范围清理，该单题不替代完整制度质量评测。
 - 文件系统：上传原文件。
 - SQLite：仅保存 LangGraph Checkpoint，不再作为业务数据库。
 
