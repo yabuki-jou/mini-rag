@@ -463,3 +463,15 @@
   上下文编号、历史角色和当前问题位置，并将新模块纳入 services 包边界检查。
 - TDD RED 为新模块导入失败；GREEN 定向回归 `42 passed`，后端全量回归
   `470 passed, 2 skipped, 127 warnings`。本批不改变 Prompt 文本、HTTP 契约或业务行为。
+
+## 26. Agent 与身份服务级测试补齐（2026-09-13）
+
+- 新增 `tests/services/agent/test_sessions.py`，覆盖会话创建及知识库范围、Checkpoint 三类安全错误
+  映射、用户可见历史与来源绑定、工具审计排序和损坏摘要拒绝。
+- 新增 `tests/services/identity/test_authentication.py`，覆盖密码哈希、用户名冲突、统一登录失败、
+  Access/Refresh 校验、Refresh 不轮换、注销幂等与撤销，以及历史用户密码初始化。
+- TDD RED 为 services 测试镜像边界发现两个文件缺失，实际结果 `1 failed, 6 passed`；GREEN 后
+  新服务测试与边界测试 `19 passed`，连同认证/Agent 路由的定向回归 `36 passed`，全部
+  `tests/services` 为 `134 passed, 1 skipped`，后端全量回归 `483 passed, 2 skipped,
+  127 warnings`。本批只新增确定性 SQLite/Fake Runtime 测试，不修改生产代码，也不证明
+  真实 PostgreSQL、Checkpoint 并发或 LLM 质量。

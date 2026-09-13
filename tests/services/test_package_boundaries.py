@@ -14,6 +14,13 @@ def test_services_root_contains_only_package_initializer() -> None:
     assert [path.name for path in SERVICES_ROOT.glob("*.py")] == ["__init__.py"]
 
 
+def test_agent_and_identity_service_tests_are_mirrored() -> None:
+    """Agent 与身份服务的行为测试应同步位于对应业务域目录。"""
+    tests_root = SERVICES_ROOT.parents[1] / "tests" / "services"
+    assert (tests_root / "agent" / "test_sessions.py").is_file()
+    assert (tests_root / "identity" / "test_authentication.py").is_file()
+
+
 def test_services_domain_modules_exist() -> None:
     """目标业务域模块应可以由固定路径发现。"""
 
