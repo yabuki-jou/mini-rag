@@ -118,7 +118,7 @@ def build_admin_runtime(
         # 只有生产运行时未显式传入模型时才加载模型模块，避免普通导入
         # Agent 类型或测试构图时提前初始化重量级 AI 依赖。
         if model is None:
-            from app.services.model_service import get_chat_model
+            from app.services.infrastructure.ai_models import get_chat_model
 
             model = get_chat_model()
         graph = build_admin_graph(

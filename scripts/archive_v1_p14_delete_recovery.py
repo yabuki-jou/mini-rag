@@ -22,7 +22,7 @@ from app.models import (
     DocumentStatus,
     Project,
 )
-from app.services.archive_final_chunk_service import get_final_collection
+from app.services.archive.final_chunks import get_final_collection
 from scripts.archive_v1_p14_acceptance import (
     DOCUMENT_LABEL_PATH,
     AcceptanceError,

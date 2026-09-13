@@ -26,8 +26,8 @@ from app.models import (
     Project,
     User,
 )
-import app.services.document_service as document_service_module
-from app.services.archive_parser_service import (
+import app.services.archive.documents as document_service_module
+from app.services.archive.parser import (
     ArchiveLocationType,
     ParsedArchiveDocument,
     ParsedFragment,

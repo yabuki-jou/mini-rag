@@ -11,7 +11,7 @@ from app.schemas import (
     AuthTokenPairRead,
     UserRead,
 )
-from app.services.auth_service import login, logout, refresh_access_token, register_user
+from app.services.identity.authentication import login, logout, refresh_access_token, register_user
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])

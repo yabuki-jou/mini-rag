@@ -45,20 +45,20 @@ from app.schemas import (
     ProjectRead,
     ProjectUpdate,
 )
-from app.services.checklist_service import (
+from app.services.project.checklists import (
     create_checklist_item,
     delete_checklist_item,
     list_checklist_items,
     update_checklist_item,
 )
-from app.services.project_service import (
+from app.services.project.management import (
     create_project,
     delete_empty_project,
     list_projects,
     read_project,
     update_project,
 )
-from app.services.document_service import (
+from app.services.archive.documents import (
     create_project_uploaded_document,
     parse_project_document,
     retry_parse_project_document,
@@ -69,36 +69,36 @@ from app.models import (
     ArchiveFieldName,
     ProjectStage,
 )
-from app.services.archive_draft_service import (
+from app.services.archive.drafts import (
     create_manual_draft,
     read_document_draft,
     update_field,
 )
-from app.services.archive_suggestion_service import (
+from app.services.archive.suggestions import (
     create_suggestions,
     regenerate_suggestions,
     retry_suggestions,
 )
-from app.services.archive_confirmation_service import confirm_document
-from app.services.archive_cancel_confirmation_service import cancel_confirmation
-from app.services.archive_catalog_service import (
-    list_audit_logs,
+from app.services.archive.confirmation import confirm_document
+from app.services.archive.cancellation import cancel_confirmation
+from app.services.archive.catalog import (
     list_formal_archives,
     list_process_documents,
     read_formal_archive,
 )
-from app.services.archive_checklist_service import (
+from app.services.archive.audit import list_audit_logs
+from app.services.archive.checklist_links import (
     create_document_link,
     delete_document_link,
     list_document_links,
     list_link_suggestions,
 )
-from app.services.archive_retrieval_service import (
+from app.services.archive.retrieval import (
     retrieve_archive_chunks,
     retrieve_archive_diagnostics,
 )
-from app.services.archive_question_service import answer_archive_question
-from app.services.archive_document_delete_service import delete_archive_document
+from app.services.archive.questions import answer_archive_question
+from app.services.archive.deletion import delete_archive_document
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])

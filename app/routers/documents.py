@@ -13,7 +13,7 @@ from app.dependencies import (
 )
 from app.models import Document
 from app.schemas import DocumentRead
-from app.services.document_service import (
+from app.services.rag.documents import (
     create_uploaded_document,
     delete_document,
     process_document,

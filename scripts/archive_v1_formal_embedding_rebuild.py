@@ -14,7 +14,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.db import engine
-from app.services.vector_service import get_chroma_client
+from app.services.infrastructure.chroma import get_chroma_client
 from scripts.archive_v1_d1_embedding_rebuild import (
     rebuild_confirmed_documents,
 )

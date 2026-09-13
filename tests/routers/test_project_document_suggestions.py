@@ -16,7 +16,7 @@ from tests.routers.test_project_document_draft import (
     project_document_api,
 )
 from tests.support.auth import auth_headers
-import app.services.archive_suggestion_service as suggestion_service_module
+import app.services.archive.suggestions as suggestion_service_module
 
 
 class _BindableFakeModel:

@@ -1,6 +1,6 @@
 # Mini RAG 下一次 Codex 对话交接
 
-> 更新时间：2026-09-12
+> 更新时间：2026-09-13
 > 工作区：`mini-rag-handwrite`
 > 本文只记录下一次对话需要遵守的当前事实和边界，不是聊天摘要。
 
@@ -16,10 +16,10 @@
 6. `docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md`
 7. `docs/review/P14-rag检索质量改进/检索质量问题分析与改进策略.md`
 
-当前分支为 `main`，HEAD 为 `1e723d6 feat: 完成 P14 质量改进与正式向量切换`，相对
-`origin/main` 为 `behind 0/ahead 13`。当前 `git status` 共 49 条：33 个已跟踪修改、
-16 个未跟踪；工作区包含此前项目文档有据问答集，以及本轮企业规模材料生成器、真实链路
-捕获扩展、测试和 FR-034～FR-041 实施/评测说明。HEAD 已包含此前 P14 与正式切换；这些新增材料尚未提交；相邻 `mini-rag-milvus-vue` 不是 Git 仓库，其 FR-034～FR-041 前端改动也尚未形成 Git 提交。
+当前分支为 `main`，本轮 services 分层重构基于 HEAD `abceeca` 完成，并已形成独立提交。
+提交后工作区已核对为 clean；本轮改动没有与其他 P14 工作混合。
+实际文件范围以提交差异为准；相邻 `mini-rag-milvus-vue` 不在本轮范围。
+当前提交尚未推送。
 后续只显式选择获准文件；
 不得读取、输出或提交 `.env`、凭据、Token、数据库数据和运行日志。
 
@@ -31,7 +31,7 @@
 - 智慧档案 V1 的 P01-P13 实现切片已完成。
 - D5 结构化问答已实现：候选为空时短路拒答；非空时对正式范围候选执行一次应用层
   DeepSeek `invoke`，同时生成 `decision`、`answer` 和引用编号；引用由服务端按 1-based
-  编号映射。D6-B 后 `app/services/archive_question_service.py` 固定 `top_k=8`。
+  编号映射。D6-B 后 `app/services/archive/questions.py` 固定 `top_k=8`。
 - D6-A 的确定性代码阶段已完成：`_build_archive_prompt` 现在接收正式候选，按候选首次出现顺序
   为相同 `document_id` 生成相同请求内 `D1/D2` 临时引用，并加入服务端文件名、定位和摘录；
   Prompt 不包含原始文档、Chunk、用户、项目或知识库 ID。TDD RED 为新增 `2 failed`，GREEN 后
@@ -79,7 +79,7 @@
   详见 `docs/design/需求说明.md`、`docs/design/技术架构.md`。
 - 正式问答只能使用服务端校验的 `CONFIRMED` 且可见 Final Chunk；身份和范围由服务端注入
   `user_id + project_id + kb_id + document_id`，Ground Truth 绝不能进入运行时，详见
-  `app/services/archive_retrieval_service.py`、`app/services/archive_question_service.py`，对应 [`DEC-002`](../decisions.md) 与 [`DEC-003`](../decisions.md)。
+  `app/services/archive/retrieval.py`、`app/services/archive/questions.py`，对应 [`DEC-002`](../decisions.md) 与 [`DEC-003`](../decisions.md)。
 - 质量门固定为有据正确回答并引用 `>=7/8`、无据 `2/2`、隔离 `2/2`；未通过时不得降低门槛或
   修改评测集来掩盖失败，对应 [`DEC-004`](../decisions.md)。
 - 用户已确认合同资料的 `DOCUMENT_DATE` 表示合同签订日期，其他资料表示文档自身日期，对应 [`DEC-006`](../decisions.md)。
@@ -121,7 +121,7 @@
 - 本地同步模型调用存在延迟风险；当前工作区规模较大且未提交。
 - 浏览器删除旧验收账号后在同一路由登录新账号时，Store 已选择新账号的首个项目且实际 API 范围正确，
   但地址栏仍可能保留旧项目 ID；当前没有越权证据，后续前端路由一致性修复应单独处理。
-- `app/services/archive_retrieval_service.py` 的 `_formal_document_ids()` 接收但未使用
+- `app/services/archive/retrieval.py` 的 `_formal_document_ids()` 接收但未使用
   `user_id`；当前 HTTP 路由依靠 `app/dependencies/project_context.py` 的 `ProjectContextDep`
   先验证 owner，因此没有当前路由越权证据，但未来任何新调用方必须保留该授权依赖或补充服务层所有权校验。
 
@@ -378,5 +378,19 @@
   通过，构建转换 68 个模块。首次主审 typecheck 因沙箱不能写相邻目录的 `tsbuildinfo` 返回
   `EPERM`，按已授权范围重新执行后通过；这不是 TypeScript 失败。
 - browser provider 仍返回 `nodeRepl.fetch request failed`，没有新增 DOM 点击证据。
-- 下一学习步骤为审查 49 项后端工作区改动的提交范围并准备显式 Git 提交；相邻前端不是 Git 仓库，
-  其两处修改不能随当前后端仓库提交。
+- 该阶段原定的提交范围审查已由第 20 节 services 分层重构完成；相邻前端不在本次提交范围。
+
+## 20. services 分层重构（2026-09-13）
+
+- `app/services/` 已按 `archive/`、`project/`、`rag/`、`agent/`、`identity/`、
+  `infrastructure/` 分包；旧根级 service 文件不再作为源码入口。
+- 档案与旧知识库文档生命周期已拆分；Chroma 客户端与旧知识库 Collection 操作已拆分；
+  档案共享读取能力集中在 `app/services/archive/reads.py`。
+- `tests/services/` 已镜像业务域；包边界测试覆盖目标模块集合、模块导入、旧导入与字符串
+  MonkeyPatch 路径，以及跨 services 私有导入。
+- TDD RED 证据：首次运行包边界测试得到 `3 failed`，原因是旧平铺模块仍存在、目标子包不存在、
+  `app.services.archive` 无法导入；随后 GREEN 通过包边界和相关服务测试。
+- services 测试 `118 passed, 1 skipped`，后端全量回归 `426 passed, 2 skipped, 121 warnings`；
+  `compileall` 与 `git diff --check` 通过。旧 services Python 导入全文搜索无命中。
+- 本轮重构已形成独立本地提交；提交后工作区为 clean，尚未推送。
+- 本轮不执行真实 PostgreSQL/Chroma/DeepSeek 写入或 Vue E2E，不重新声明真实链路验收结果。

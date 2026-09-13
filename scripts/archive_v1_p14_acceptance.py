@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from app.services.archive_evidence_match_service import (
+from app.services.archive.evidence_matching import (
     item_contains_expected_evidence as _shared_item_contains_expected_evidence,
 )
 

@@ -13,7 +13,7 @@ from app.schemas import (
     ChatSessionCreate,
     ChatSessionRead,
 )
-from app.services.chat_service import (
+from app.services.rag.chat import (
     ask_question,
     create_chat_session,
     deserialize_sources,

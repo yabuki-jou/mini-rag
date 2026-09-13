@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.services.chroma_namespace_service import ensure_chroma_namespace
+from app.services.infrastructure.chroma_namespace import ensure_chroma_namespace
 
 
 def main() -> int:

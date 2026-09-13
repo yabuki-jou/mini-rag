@@ -10,7 +10,7 @@ from app.schemas import (
     RetrievalTestRequest,
     RetrievalTestResponse,
 )
-from app.services.retrieval_service import retrieve_chunks
+from app.services.rag.retrieval import retrieve_chunks
 
 
 router = APIRouter(prefix="/knowledge-bases/{kb_id}", tags=["retrieval"])

@@ -19,7 +19,7 @@ from app.schemas import (
     AgentSessionRead,
     AgentToolCallLogRead,
 )
-from app.services.agent_service import (
+from app.services.agent.sessions import (
     create_agent_session,
     read_agent_messages,
     read_agent_tool_calls,

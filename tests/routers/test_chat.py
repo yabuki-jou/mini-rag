@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.routers import chat as chat_router
 from app.schemas import ChatAnswerResponse, SourceRead
-from app.services.chat_service import serialize_sources
+from app.services.rag.chat import serialize_sources
 from tests.support.auth import auth_headers
 
 

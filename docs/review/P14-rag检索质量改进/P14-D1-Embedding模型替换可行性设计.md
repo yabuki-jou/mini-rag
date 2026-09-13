@@ -83,7 +83,7 @@
 当前代码用 `langchain_huggingface.HuggingFaceEmbeddings` 加载：
 
 ```python
-# model_service.py:39-43
+# app/services/infrastructure/ai_models.py
 return HuggingFaceEmbeddings(
     model_name=str(embedding_path),
     model_kwargs={"device": settings.embedding_device},
@@ -124,7 +124,7 @@ return HuggingFaceEmbeddings(
 | 模型服务缓存 | **需验证** | 换模型后 `get_embeddings()` / `HuggingFaceEmbeddings` 实例是否需要重启或清缓存？**待实测** |
 | 重建脚本 | **需新建** | 读取既有快照重建向量，不产生新的 ArchiveOperation 业务记录 |
 | 写入安全 | **需验证** | 如何防止新模型误写入旧 Collection？Collection 名硬编码检查？写入前维度校验？**待实测** |
-| 健康检查 / 维度校验 | 自动跟随 | `health.py` / `embedding_service.py` / `archive_final_chunk_service.py` 用 `settings.embedding_dimension`，配置变了自动跟随 |
+| 健康检查 / 维度校验 | 自动跟随 | `health.py` / `app/services/rag/embeddings.py` / `app/services/archive/final_chunks.py` 用 `settings.embedding_dimension`，配置变了自动跟随 |
 
 > **注意**："0 行代码改动"不成立。即使选 base-zh-v1.5，除了配置值变更，还需要确认 Collection 切换路径、模型缓存行为、重建脚本的业务隔离设计。这些都需要先做 TDD 测试再实现。
 
@@ -257,14 +257,14 @@ return HuggingFaceEmbeddings(
 | Collection 切换配置路径 | 读 `get_final_collection()` 代码，确认当前 Collection 名是硬编码还是 config 驱动 |
 | 模型服务缓存行为 | 重启服务前后各跑一次 `/health`，确认换模型后是否需要重启实例 |
 | Chroma 维度校验 | 写一个小脚本验证：512 维 Collection 能否写入 768 维向量（预期应抛 InvalidDimensionException） |
-| 重建脚本与业务操作隔离 | 确认重建只走 `embedding_service` + `vector_service`，不产生 `ArchiveOperation` 记录 |
+| 重建脚本与业务操作隔离 | 确认重建只走 `app/services/rag/embeddings.py` + `app/services/archive/final_chunks.py`，不产生 `ArchiveOperation` 记录 |
 
 ### 5.2 需要修改的文件
 
 | 文件 | 改动 | 类型 |
 |---|---|---|
 | `app/core/config.py` | 改 `embedding_model_path` + `embedding_dimension`；新增或切换 Collection 名配置项（**待前置验证确认路径**） | 配置值 + 可能新增配置项 |
-| `app/services/vector_service.py` 或 `archive_final_chunk_service.py` | 重建脚本或测试脚本（**需新建**），读取快照重建向量，写入 `_v2` Collection | 新建脚本 |
+| `app/services/infrastructure/chroma.py`（仅客户端）或 `app/services/archive/final_chunks.py`（正式归档 Collection/重建适配器） | 重建脚本或测试脚本（**需新建**），读取快照重建向量，写入 `_v2` Collection | 新建脚本 |
 | `.env.example` | 对齐默认维度和 Collection 名 | 文档同步 |
 | `requirements.txt`（如果选 m3 且需 FlagEmbedding） | 新增依赖 | 依赖变更 |
 
@@ -273,8 +273,8 @@ return HuggingFaceEmbeddings(
 | 文件 | 原因 |
 |---|---|
 | `app/routers/health.py:61` | 用的是 `settings.embedding_dimension` |
-| `app/services/embedding_service.py:91` | 用的是 `settings.embedding_dimension` |
-| `app/services/archive_final_chunk_service.py:159` | 用的是 `settings.embedding_dimension` |
+| `app/services/rag/embeddings.py` | 用的是 `settings.embedding_dimension` |
+| `app/services/archive/final_chunks.py` | 用的是 `settings.embedding_dimension` |
 
 ### 5.4 总改动量估算
 

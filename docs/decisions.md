@@ -47,7 +47,7 @@
 - 决策：Project 是业务隔离边界，KnowledgeBase 是内部检索范围；身份、资源归属和检索范围由服务端控制并注入。
 - 影响：受保护接口必须验证用户和资源归属，Chroma 查询使用服务端确定的范围。
 - 替代/复查条件：架构或授权模型经用户重新确认。
-- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`app/services/archive_retrieval_service.py`](../app/services/archive_retrieval_service.py)
+- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)
 
 ## DEC-003：AI 草稿与人工确认门
 
@@ -57,7 +57,7 @@
 - 决策：AI 只能生成草稿；人工确认后状态为 `CONFIRMED`，且仅确认的 Final Chunk 进入正式检索。
 - 影响：问答和检索不得绕过确认状态或使用草稿数据。
 - 替代/复查条件：确认流程或正式索引边界重新设计并获用户确认。
-- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`app/services/archive_final_chunk_service.py`](../app/services/archive_final_chunk_service.py)
+- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`app/services/archive/final_chunks.py`](../app/services/archive/final_chunks.py)
 
 ## DEC-004：P14 质量门与 Ground Truth 边界
 
@@ -122,3 +122,11 @@
 ## 非决策/当前待授权事项
 
 D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否继续优化 Q-01，以及何时开始完整 Vue E2E，仍按 [`docs/stage/handoff.md`](stage/handoff.md) 分别处理；本台账不自动授权这些后续动作。
+
+## DEC-010：services 按业务域分包且拆分文档生命周期
+
+- 状态：已确认
+- 首次纳入台账：2026-09-12
+- 决策：将 `app/services/` 按 archive、project、rag、agent、identity、infrastructure 组织；档案文档与旧知识库文档使用独立服务模块；Chroma 客户端与旧知识库 Collection 操作分离。仓库内导入、测试 MonkeyPatch 和当前源码链接同步迁移，不保留旧根级兼容模块。
+- 约束：不改变 HTTP API、数据库 Schema、迁移、配置键、Collection 名称、事务边界、权限规则和业务行为；档案服务之间只通过 `archive.reads` 的公开读取函数共享投影。
+- 依据文件：[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/codebase/目录结构.md`](codebase/目录结构.md)、[`docs/stage/handoff.md`](stage/handoff.md)

@@ -8,7 +8,7 @@ from pydantic import Field
 
 from app.agents.tools.context import AgentContextError, require_state_uuid
 from app.core.evaluation import eval_wrap
-from app.services.retrieval_service import retrieve_chunks
+from app.services.rag.retrieval import retrieve_chunks
 
 
 def _retrieve_policy_data(user_id: Any, kb_id: Any, query: str) -> list[dict[str, Any]]:

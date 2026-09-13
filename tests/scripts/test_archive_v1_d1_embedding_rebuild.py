@@ -56,7 +56,7 @@ def test_rebuild_writes_only_explicit_target_and_does_not_commit_business_state(
     embedded_chunk = SimpleNamespace(embedding=[0.1], chunk_id="c" * 64)
 
     monkeypatch.setattr(settings, "archive_embedding_context_mode", "none")
-    monkeypatch.setattr(rebuild, "_blocked_document_ids", lambda *_: set())
+    monkeypatch.setattr(rebuild, "list_visibility_blocked_document_ids", lambda *_: set())
     monkeypatch.setattr(rebuild, "build_final_chunks", lambda **_: ("chunk",))
     monkeypatch.setattr(rebuild, "embed_final_chunks", lambda **_: [embedded_chunk])
     insert = Mock(return_value=1)

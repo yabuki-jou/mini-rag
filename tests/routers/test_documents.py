@@ -17,8 +17,8 @@ from app.db import get_session
 from app.main import app
 from app.models import Document, DocumentStatus, KnowledgeBase, User
 from app.routers import documents as documents_router
-from app.services import document_service
-from app.services import vector_service
+from app.services.rag import documents as document_service
+from app.services.rag import vector_store as vector_service
 from tests.support.auth import auth_headers
 
 

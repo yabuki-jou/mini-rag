@@ -7,7 +7,7 @@ import pytest
 
 from app.routers import retrieval as retrieval_router
 from app.schemas import RetrievalTestRequest
-from app.services.retrieval_service import RetrievedChunk
+from app.services.rag.retrieval import RetrievedChunk
 
 
 def test_retrieval_endpoint_converts_internal_results(

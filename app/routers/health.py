@@ -7,8 +7,8 @@ from fastapi import APIRouter, Response
 from app.core.config import settings
 from app.db import engine
 from app.schemas import HealthComponent, HealthResponse
-from app.services.model_service import get_embeddings
-from app.services.vector_service import check_chroma_connection
+from app.services.infrastructure.ai_models import get_embeddings
+from app.services.infrastructure.chroma import check_chroma_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])

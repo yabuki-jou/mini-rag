@@ -17,8 +17,8 @@ from app.models import (
     ArchiveFieldValue,
     FieldSource,
 )
-from app.services import archive_confirmation_service
-from app.services import archive_cancel_confirmation_service
+from app.services.archive import confirmation as archive_confirmation_service
+from app.services.archive import cancellation as archive_cancel_confirmation_service
 from tests.routers.test_project_document_draft import _parsed_document, create_user
 from tests.routers.test_project_documents import project_document_api
 from tests.support.auth import auth_headers

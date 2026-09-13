@@ -17,7 +17,7 @@ from app.core.security import create_token
 from app.db import get_session
 from app.main import app
 from app.models import AuthSession, User
-from app.services.auth_service import set_existing_user_password
+from app.services.identity.authentication import set_existing_user_password
 
 
 TEST_JWT_SECRET = "auth-router-test-secret-that-is-long-enough"

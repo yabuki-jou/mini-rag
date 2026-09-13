@@ -9,7 +9,7 @@ from langchain_core.messages import (
 
 from app.models import ChatMessage, MessageRole
 from app.schemas import SourceRead
-from app.services.retrieval_service import RetrievedChunk
+from app.services.rag.retrieval import RetrievedChunk
 
 
 def build_sources(retrieved_chunks: list[RetrievedChunk]) -> list[SourceRead]:

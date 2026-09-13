@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.core.errors import AppError
 from app.db import engine
 from app.schemas.account import USERNAME_PATTERN
-from app.services.auth_service import set_existing_user_password
+from app.services.identity.authentication import set_existing_user_password
 
 
 def parse_args() -> argparse.Namespace:

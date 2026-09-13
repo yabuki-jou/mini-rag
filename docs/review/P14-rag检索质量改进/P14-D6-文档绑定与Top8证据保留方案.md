@@ -32,7 +32,7 @@ D5 Top-5 中对应候选分数与 D4 快照一致。当前 D5 捕获文件没有
 
 ### 1.3 文档与代码差异
 
-D5 方案第 3.1 节要求“提示中的文件名、定位和摘录由服务端组装”，但实际 `app/services/archive_question_service.py` 的 `_build_archive_prompt()` 只接收 `list[str]`，调用处只传 `[item.excerpt ...]`。
+D5 方案第 3.1 节要求“提示中的文件名、定位和摘录由服务端组装”，但实际 `app/services/archive/questions.py` 的 `_build_archive_prompt()` 只接收 `list[str]`，调用处只传 `[item.excerpt ...]`。
 
 结果是模型只能看到 `[S1] 摘录`：
 
@@ -87,7 +87,7 @@ GREEN：只把 `_build_archive_prompt()` 的输入从纯摘录扩展为已校验
 
 ### 3.2 唯一变量
 
-- `archive_question_service.py` 调用正式检索的 `top_k` 从 `5` 改为 `8`。
+- `app/services/archive/questions.py` 调用正式检索的 `top_k` 从 `5` 改为 `8`。
 - 文档绑定使用 D6-A 已验证表示；除此之外不改 Prompt 指令、模型、Embedding、Reranker、Top-30、Chunk、查询表达、固定集或门槛。
 - 公开检索接口仍保持 `top_k≤10`；问答接口响应仍只返回模型选中的引用，不自动返回 8 条候选。
 

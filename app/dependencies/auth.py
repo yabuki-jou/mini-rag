@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.errors import AppError
 from app.dependencies.database import SessionDep
 from app.models import User
-from app.services.auth_service import AuthenticatedPrincipal, authenticate_access_token
+from app.services.identity.authentication import AuthenticatedPrincipal, authenticate_access_token
 
 
 # auto_error=False 使缺失、格式错误与过期 Token 都走统一 AppError 契约。

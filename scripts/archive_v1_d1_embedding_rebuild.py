@@ -21,17 +21,17 @@ from app.models import (
     ParsedSnapshot,
     Project,
 )
-from app.services.archive_catalog_service import _blocked_document_ids
-from app.services.archive_final_chunk_service import (
+from app.services.archive.reads import list_visibility_blocked_document_ids
+from app.services.archive.final_chunks import (
     build_final_chunks,
     embed_final_chunks,
     insert_final_chunks,
 )
-from app.services.archive_index_service import (
-    _build_embedding_context,
-    _build_evidence_value_contexts,
+from app.services.archive.indexing import (
+    build_embedding_context,
+    build_evidence_value_contexts,
 )
-from app.services.vector_service import get_chroma_client
+from app.services.infrastructure.chroma import get_chroma_client
 
 
 _EXPERIMENT_PREFIX = "archive_final_chunks_exp_"
@@ -103,7 +103,7 @@ def _embedding_context(
             if fields
             else []
         )
-        contexts = _build_evidence_value_contexts(
+        contexts = build_evidence_value_contexts(
             chunks=chunks,
             fields=fields,
             evidences=evidences,
@@ -111,7 +111,7 @@ def _embedding_context(
         )
         return "", contexts, len(contexts)
 
-    return _build_embedding_context(document=document, fields=fields, mode=mode), None, 0
+    return build_embedding_context(document=document, fields=fields, mode=mode), None, 0
 
 
 def rebuild_confirmed_documents(
@@ -159,7 +159,7 @@ def rebuild_confirmed_documents(
             or snapshot.document_id != document.id
         ):
             raise ValueError("确认档案的项目或解析快照无效。")
-        if document.id in _blocked_document_ids(project.id, session):
+        if document.id in list_visibility_blocked_document_ids(project.id, session):
             continue
 
         chunks = build_final_chunks(document_id=document.id, snapshot=snapshot)

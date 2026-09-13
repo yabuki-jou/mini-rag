@@ -7,8 +7,8 @@ import hashlib
 import re
 from pathlib import Path
 
-from app.services.archive_evidence_match_service import item_contains_expected_evidence
-from app.services.archive_parser_service import parse_archive_document
+from app.services.archive.evidence_matching import item_contains_expected_evidence
+from app.services.archive.parser import parse_archive_document
 from scripts.archive_v1_p14_acceptance import build_manual_field_payload
 from scripts.generate_enterprise_rag_eval_data import generate_enterprise_eval_data
 
