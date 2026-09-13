@@ -16,8 +16,8 @@
 6. `docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md`
 7. `docs/review/P14-rag检索质量改进/检索质量问题分析与改进策略.md`
 
-当前分支为 `main`，本轮 services 分层重构基于 HEAD `abceeca` 完成，并已形成独立提交。
-提交后工作区已核对为 clean；本轮改动没有与其他 P14 工作混合。
+当前分支为 `main`，services 分层重构已形成独立提交 `3f3df2e`。
+当前工作区包含尚未提交的制度 Agent 评测迁移；它与 services 提交隔离，没有与 P14 实现混合。
 实际文件范围以提交差异为准；相邻 `mini-rag-milvus-vue` 不在本轮范围。
 当前提交尚未推送。
 后续只显式选择获准文件；
@@ -108,7 +108,7 @@
 - FR-039 的一般有据、无据、待确认排除、项目隔离和真实合同签订日期页面场景均已通过。
   第一份对照素材把业务隔离说明机械标为 `CONTRACT`，原文仍写通用“文档日期”，模型拒答；换成明确包含
   “资料类型：CONTRACT”和“合同签订日期”的合同式原文后正确回答并引用，故前一结果属于素材语义失真。
-- Pixie `7118` 未启动；FastAPI `8000` 与 Vue `5173` 仍在运行，`/health` 为 `200`，API、database、
+- Pixie `7118` 已为本轮制度 Agent 评测启动；FastAPI `8000` 与 Vue `5173` 仍在运行，`/health` 为 `200`，API、database、
   Chroma 和 768 维 Embedding 全部正常。项目 `.env` 未读取或修改；PostgreSQL 迁移 `0010_account_auth` 本轮已复验。
 - FR-040 与 FR-041 的真实 `5173/api` 代理链路已通过，但本轮 Codex browser provider 持续返回连接错误，
   因此没有新增真实 DOM 点击证据；页面接线、筛选、分页和交互由 Vue 自动化测试覆盖，不能写成浏览器点击已验收。
@@ -394,3 +394,25 @@
   `compileall` 与 `git diff --check` 通过。旧 services Python 导入全文搜索无命中。
 - 本轮重构已形成独立本地提交；提交后工作区为 clean，尚未推送。
 - 本轮不执行真实 PostgreSQL/Chroma/DeepSeek 写入或 Vue E2E，不重新声明真实链路验收结果。
+
+## 21. 制度 Agent 评测替换（2026-09-13）
+
+- 当前评测入口已迁入 `evals/policy_agent/`，包含 HTTP 级 Runnable、6 条固定虚构数据、
+  确定性契约评审器、两个语义评审器和项目/入口/准则/映射说明。
+- TDD RED 为新模块缺失和数据集规则不完整；GREEN 后制度评测相关单测通过。Runnable 使用临时
+  SQLite 业务库与 Checkpoint，经真实 FastAPI 路由注册、登录、创建知识库和 Agent 会话；不连接
+  真实 PostgreSQL，也不读取业务数据。
+- 真实 DeepSeek 运行 `20260913-015833` 的 6/6 样例通过，确定性与人工语义评分共 12/12 为
+  `1.0`；pending 已全部评分，dataset analysis、action plan 和 Step 6 verifier 均已完成。
+- 制度评测相关测试 `12 passed`；后端全量回归 `438 passed, 2 skipped, 127 warnings`；
+  `compileall app tests scripts evals pixie_qa/archive_v1_p14` 与 `git diff --check` 通过。
+- 通过范围仅为“真实 DeepSeek + 注入的虚构制度检索结果”的单轮回答、拒答、澄清、闲聊和
+  授权注入防护。它不证明真实 Chroma 检索、跨轮状态或连接失败恢复。
+- 准备阶段的一次真实制度检索暴露当前 BGE 输出 768 维、既有制度 Collection 接受 512 维的
+  不兼容，Chroma 返回维度错误并由 HTTP 映射为 503；该问题未在本任务中修改或重建。
+- 后续只读预检确认 `mini_rag_knowledge_chunks_v1` 为 cosine、条目数 0；512 维查询接受，
+  768 维查询明确拒绝。安全迁移方案已写入
+  `docs/implementation/制度Agent-Collection维度迁移实施计划.md`，尚未获得真实删除、重建或
+  临时跨存储写入授权。
+- 已删除根级 `pixie_qa/` 中属于已删除请假领域和旧制度入口的运行器、评审器、数据集及追踪；
+  智慧档案 P14 材料继续保留在 `pixie_qa/archive_v1_p14/`，本地结果仍位于忽略目录。

@@ -130,3 +130,13 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 决策：将 `app/services/` 按 archive、project、rag、agent、identity、infrastructure 组织；档案文档与旧知识库文档使用独立服务模块；Chroma 客户端与旧知识库 Collection 操作分离。仓库内导入、测试 MonkeyPatch 和当前源码链接同步迁移，不保留旧根级兼容模块。
 - 约束：不改变 HTTP API、数据库 Schema、迁移、配置键、Collection 名称、事务边界、权限规则和业务行为；档案服务之间只通过 `archive.reads` 的公开读取函数共享投影。
 - 依据文件：[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/codebase/目录结构.md`](codebase/目录结构.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-011：当前评测按业务域组织并保留制度 Agent 质量入口
+
+- 状态：已确认
+- 首次纳入台账：2026-09-13
+- 背景：`pixie_qa/` 根目录混合已删除请假领域、仍在使用的制度 Agent 和智慧档案 P14 评测，且若直接清理旧目录，活跃的制度 Agent 会失去质量入口。
+- 决策：当前评测统一在 `evals/` 下按业务域组织；先以 `evals/policy_agent/` 的可运行数据集替换制度 Agent 旧入口并完成真实模型评测，再删除已覆盖的旧请假/制度运行器、数据集和追踪。智慧档案 P14 历史材料暂留 `pixie_qa/archive_v1_p14/`，后续独立迁移。
+- 约束：注入检索结果的模型评测只证明回答层，不得表述为真实 Chroma 检索通过；真实检索、跨轮状态和故障恢复必须使用独立评测并分别报告。评测不得读取真实业务数据或把 Ground Truth 注入生产请求。
+- 替代/复查条件：智慧档案 P14 材料迁入 `evals/archive/`，或评测工具的根目录规则发生变化时复查。
+- 依据文件：[`evals/policy_agent/docs/project-analysis.md`](../evals/policy_agent/docs/project-analysis.md)、[`evals/policy_agent/docs/eval-criteria.md`](../evals/policy_agent/docs/eval-criteria.md)、[`docs/stage/handoff.md`](stage/handoff.md)
