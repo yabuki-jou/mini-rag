@@ -217,7 +217,7 @@
 
 ## 11. FR-036 前端接入与真实本地 E2E（2026-09-10）
 
-- 已按 `docs/review/FR036-Vue确认与取消确认实施计划.md` 和 Multi-Agent/TDD 完成前端确认、
+- 已按 `docs/implementation/FR036-Vue确认与取消确认实施计划.md` 和 Multi-Agent/TDD 完成前端确认、
   取消确认与重新确认。Luna 的首轮 RED 为 7 个断言失败，主审补充的版本透传与已保存检查状态 RED
   为 4 个失败；眉题遗漏和范围说明过时分别另以 1 个失败断言锁定后修复。最终前端为 7 个测试文件、65 个测试通过，
   `npm run typecheck` 与 `npm run build` 通过。后端全量回归为 `414 passed, 2 skipped, 121 warnings`，
@@ -254,7 +254,7 @@
 
 ## 13. FR-037 前端接入与真实本地 E2E（2026-09-10）
 
-- 已按 `docs/review/FR037-Vue清单关联实施计划.md` 和 Multi-Agent/TDD 完成前端类型、四个 API
+- 已按 `docs/implementation/FR037-Vue清单关联实施计划.md` 和 Multi-Agent/TDD 完成前端类型、四个 API
   方法、Pinia 状态、独立关联面板和页面接线。Luna 首轮 RED 为 API `1 failed`、Store
   `3 failed`、View `1 failed`，面板因组件不存在而收集失败；主审指出文档级 loading key 后又以
   `1 failed` 锁定并修正。最终前端 8 个测试文件、74 个测试通过，`typecheck` 与 `build` 通过。
@@ -271,7 +271,7 @@
 
 ## 14. FR-038 前端接入与本地目录链路验收（2026-09-11）
 
-- 已按 `docs/review/FR038-Vue处理列表与正式档案目录实施计划.md` 和 Multi-Agent/TDD 完成前端类型、
+- 已按 `docs/implementation/FR038-Vue处理列表与正式档案目录实施计划.md` 和 Multi-Agent/TDD 完成前端类型、
   API、Pinia 状态、处理列表分页/状态筛选、正式档案目录/筛选/分页/详情证据及页面接线。Luna 首轮
   RED 覆盖缺失的 API、Store 和组件行为；主审又以失败测试锁定快速筛选请求被去重、旧请求错误污染、
   日期为空与区间互斥、合同详情日期标签、本页数量冒充总数和无参刷新丢失页码。最终前端 9 个测试文件、
@@ -290,7 +290,7 @@
 
 ## 15. FR-039 前端接入与真实 RAG 页面验收（2026-09-11）
 
-- 已按 `docs/review/FR039-Vue带证据问答实施计划.md` 和 Multi-Agent/TDD 完成前端 DTO、两个 POST API、
+- 已按 `docs/implementation/FR039-Vue带证据问答实施计划.md` 和 Multi-Agent/TDD 完成前端 DTO、两个 POST API、
   Pinia 结果与并发隔离、独立带证据问答/原文检索面板及 `questions` 页面接线。Luna 首轮 RED 为 3 个失败；
   主审又以失败测试锁定回答引用卡缺少诊断分数，以及旧请求错误覆盖当前错误。最终前端 10 个测试文件、
   `99 passed`，标准 `typecheck` 和 `build` 通过。
@@ -310,7 +310,7 @@
 
 ## 16. FR-040 前端接入与真实物理删除链路验收（2026-09-11）
 
-- 已按 `docs/review/FR040-Vue文档物理删除实施计划.md` 和 Multi-Agent/TDD 完成项目级删除 API、
+- 已按 `docs/implementation/FR040-Vue文档物理删除实施计划.md` 和 Multi-Agent/TDD 完成项目级删除 API、
   Pinia 删除状态与派生数据刷新、处理列表逐行删除入口及带文件名的确认流程。Luna 首轮 RED 为
   新增 9 个测试失败；主审继续以 RED 锁定删除刷新期间切换项目、`503` 必须清空已阻断证据、
   `409` 不应清空仍有效证据。最终前端 10 个测试文件、`110 passed`，标准 `typecheck` 和 `build` 通过。
@@ -329,7 +329,7 @@
 
 ## 17. FR-041 前端接入与真实脱敏审计链路验收（2026-09-11）
 
-- 已按 `docs/review/FR041-Vue脱敏审计查询实施计划.md` 和 Multi-Agent/TDD 完成前端审计 DTO、
+- 已按 `docs/implementation/FR041-Vue脱敏审计查询实施计划.md` 和 Multi-Agent/TDD 完成前端审计 DTO、
   12 类受控筛选、服务端分页、Pinia 项目/竞态隔离、独立审计面板与页面接线。Luna 首轮先以
   `actor_id` 缺失建立后端 RED，再完成前端各层 RED/GREEN；主审发现三个枚举没有实际写入点后，
   修订计划并由 Luna 补齐字段更新、解析重试成功和建议重试成功审计。
@@ -370,7 +370,7 @@
 
 - 问题触发方式已确认：用户停留在旧账号的项目路由，退出后在同一 View 登录或注册另一账号；
   Store 会加载新账号项目并选择首项，但旧路由参数不会再次触发 watcher，因此地址栏仍显示旧项目 ID。
-- Luna 按 `docs/review/前端项目路由与Store一致性修复实施计划.md` 执行。RED 为新增
+- Luna 按 `docs/implementation/前端项目路由与Store一致性修复实施计划.md` 执行。RED 为新增
   `4 failed`、既有 `10 passed`；四项分别覆盖登录、注册、有效深链接和退出登录。
 - GREEN 仅修改相邻前端 `ArchiveWorkspaceView.vue` 与对应测试：认证成功后复用
   `syncRouteProject()`；退出完成后使用 `router.replace('/')`。Store、路由表、API 与后端未改。
@@ -444,3 +444,13 @@
   `467 passed, 2 skipped, 127 warnings`，`compileall app tests scripts evals` 与
   `git diff --check` 通过。本批只移动模块与导入，不重跑 DeepSeek、PostgreSQL、Chroma
   或历史 Pixie 数据集。
+
+## 24. 文档职责目录收口（2026-09-13）
+
+- `docs/review/` 根目录原有的 11 份 `*实施计划.md` 已迁入 `docs/implementation/`，包括
+  企业规模 RAG、前端路由、项目素材评测和 FR-034～FR-041 相关计划。
+- `docs/review/P14-rag检索质量改进/` 保持原专题边界；设计评审、设计补丁、验证冻结清单和
+  历史对话记录未移动。
+- 交接文档中的 7 处旧计划路径已同步更新；全文搜索确认仓库内不再引用这些旧路径，
+  后端全量回归 `467 passed, 2 skipped, 127 warnings`，`compileall app tests scripts evals`
+  与 `git diff --check` 通过。本批仅调整文档归类，不改变运行时代码或验收结论。
