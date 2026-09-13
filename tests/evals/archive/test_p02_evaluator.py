@@ -70,7 +70,7 @@ def _evaluable(
 
 def test_grounded_entry_requires_fact_and_matching_citation() -> None:
     """GROUNDED 必须回答、包含标注事实并引用匹配证据。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     result = archive_v1_p02_quality_gate(
         _evaluable(
@@ -97,7 +97,7 @@ def test_grounded_entry_requires_fact_and_matching_citation() -> None:
 
 def test_no_evidence_and_isolation_require_refusal_without_citations() -> None:
     """NO_EVIDENCE/ISOLATION 只能返回拒答和空引用。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     for category in ("NO_EVIDENCE", "ISOLATION"):
         result = archive_v1_p02_quality_gate(
@@ -115,7 +115,7 @@ def test_no_evidence_and_isolation_require_refusal_without_citations() -> None:
 
 def test_enterprise_grounded_answer_fragments_accept_actual_paraphrases() -> None:
     """企业四道已知表达应按全部必要事实片段通过，而不是要求整句连续相同。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     cases = (
         (
@@ -171,7 +171,7 @@ def test_enterprise_grounded_answer_fragments_accept_actual_paraphrases() -> Non
 
 def test_grounded_answer_fragments_require_every_declared_fact() -> None:
     """片段标注不能只命中一个事实就放行。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     result = archive_v1_p02_quality_gate(
         _evaluable(
@@ -200,7 +200,7 @@ def test_grounded_answer_fragments_require_every_declared_fact() -> None:
 
 def test_grounded_10_fragments_accept_all_three_observed_answers() -> None:
     """GROUNDED-10 的三种真实表达都必须保留五个必要事实片段。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     expected_answer = "原文件、PostgreSQL 文档和 Chroma Chunk 使用同一个 document_id 关联。"
     fragments = ["原文件", "PostgreSQL", "Chroma Chunk", "document_id", "关联"]
@@ -237,7 +237,7 @@ def test_grounded_10_fragments_accept_all_three_observed_answers() -> None:
 
 def test_all_categories_fail_when_candidate_pool_is_incomplete() -> None:
     """候选池不完整时，无论单题回答如何都不能通过。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     result = archive_v1_p02_quality_gate(
         _evaluable(
@@ -265,7 +265,7 @@ def test_all_categories_fail_when_candidate_pool_is_incomplete() -> None:
 
 def test_aggregate_helper_computes_the_twelve_question_gate() -> None:
     """聚合辅助应分别统计 8/2/2 类别并计算正式门槛。"""
-    from pixie_qa.archive_v1_p14.evaluators import aggregate_archive_v1_p02_results
+    from evals.archive.evaluators import aggregate_archive_v1_p02_results
 
     entries: list[Evaluable] = []
     for index in range(8):
@@ -319,7 +319,7 @@ def test_aggregate_helper_computes_the_twelve_question_gate() -> None:
 
 def test_grounded_evaluator_preserves_case_id_and_rejects_missing_fact() -> None:
     """单题详情应保留脱敏 case_id，答案缺少标注事实时失败。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     result = archive_v1_p02_quality_gate(
         _evaluable(
@@ -348,7 +348,7 @@ def test_grounded_evaluator_preserves_case_id_and_rejects_missing_fact() -> None
 
 def test_no_evidence_requires_the_fixed_refusal_text() -> None:
     """无据题即使状态和引用正确，也不能使用任意回答文案。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_v1_p02_quality_gate
+    from evals.archive.evaluators import archive_v1_p02_quality_gate
 
     result = archive_v1_p02_quality_gate(
         _evaluable(
@@ -366,7 +366,7 @@ def test_no_evidence_requires_the_fixed_refusal_text() -> None:
 
 def test_aggregate_rejects_duplicate_case_ids() -> None:
     """正式 12 题聚合必须要求 case_id 唯一且完整。"""
-    from pixie_qa.archive_v1_p14.evaluators import aggregate_archive_v1_p02_results
+    from evals.archive.evaluators import aggregate_archive_v1_p02_results
 
     entries = [
         _evaluable(
@@ -397,7 +397,7 @@ def test_aggregate_rejects_duplicate_case_ids() -> None:
 
 def test_aggregate_uses_question_end_to_end_latency_p95() -> None:
     """问答端到端 P95 应来自 Runnable 的 latency wrap，而非检索延迟。"""
-    from pixie_qa.archive_v1_p14.evaluators import aggregate_archive_v1_p02_results
+    from evals.archive.evaluators import aggregate_archive_v1_p02_results
 
     entries: list[Evaluable] = []
     for index in range(8):
@@ -449,7 +449,7 @@ def test_aggregate_uses_question_end_to_end_latency_p95() -> None:
 
 def test_runnable_records_end_to_end_latency(monkeypatch) -> None:
     """Runnable 应记录完整 answer_archive_question 调用耗时。"""
-    from pixie_qa.archive_v1_p14 import run_app
+    from evals.archive import runnable as run_app
 
     observed: list[tuple[object, dict[str, object]]] = []
 

@@ -1022,10 +1022,10 @@ def test_d5_capture_phase_writes_twelve_pixie_entries_and_safe_aggregate(
         ],
     }
     assert dataset["evaluators"] == [
-        "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
-        "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
-        "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
-        "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+        "evals/archive/evaluators.py:archive_answer_contract",
+        "evals/archive/evaluators.py:archive_evidence_faithfulness",
+        "evals/archive/evaluators.py:archive_refusal_quality",
+        "evals/archive/evaluators.py:archive_v1_p02_quality_gate",
     ]
     assert [
         entry["eval_metadata"]["category"] for entry in dataset["entries"]

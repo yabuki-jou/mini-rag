@@ -1,10 +1,10 @@
 {
   "name": "archive-question-d5-smoke",
-  "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+  "runnable": "evals/archive/runnable.py:ArchiveQuestionRunnable",
   "evaluators": [
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality"
+    "evals/archive/evaluators.py:archive_answer_contract",
+    "evals/archive/evaluators.py:archive_evidence_faithfulness",
+    "evals/archive/evaluators.py:archive_refusal_quality"
   ],
   "entries": [
     {

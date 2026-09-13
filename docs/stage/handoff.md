@@ -49,7 +49,7 @@
   `pixie_qa/results/20260908-015502`、`pixie_qa/results/d5-formal-20260908/formal-summary.json`、
   `pixie_qa/results/p14-d4-base-snapshot.json`。
 - D6-A 本轮已重新运行完整回归：`377 passed, 2 skipped, 100 warnings in 30.37s`；
-  `compileall app tests scripts pixie_qa/archive_v1_p14` 通过；`git diff --check` 通过，
+  `compileall app tests scripts evals/archive` 通过；`git diff --check` 通过，
   仅有 LF/CRLF 提示。
 - D6-B 已按独立授权由 GPT-5.6 Luna 子 Agent 实际实现：RED 证明旧问答仍请求 Top-5，GREEN
   后生产代码唯一变量为 `top_k=8`；独立 `d6b-capture` 支持真实 Top-8 捕获，历史 D5 捕获保持
@@ -405,7 +405,7 @@
 - 真实 DeepSeek 运行 `20260913-015833` 的 6/6 样例通过，确定性与人工语义评分共 12/12 为
   `1.0`；pending 已全部评分，dataset analysis、action plan 和 Step 6 verifier 均已完成。
 - 制度评测相关测试 `12 passed`；后端全量回归 `438 passed, 2 skipped, 127 warnings`；
-  `compileall app tests scripts evals pixie_qa/archive_v1_p14` 与 `git diff --check` 通过。
+  `compileall app tests scripts evals` 与 `git diff --check` 通过。
 - 通过范围仅为“真实 DeepSeek + 注入的虚构制度检索结果”的单轮回答、拒答、澄清、闲聊和
   授权注入防护。它不证明真实 Chroma 检索、跨轮状态或连接失败恢复。
 - 准备阶段的一次真实制度检索曾暴露 BGE 输出 768 维、既有制度 Collection 接受 512 维的
@@ -413,7 +413,7 @@
 - 当时只读预检确认 `mini_rag_knowledge_chunks_v1` 为 cosine、条目数 0；512 维查询接受，
   768 维查询明确拒绝。后续迁移仍保持原 Collection 名与 cosine 度量。
 - 已删除根级 `pixie_qa/` 中属于已删除请假领域和旧制度入口的运行器、评审器、数据集及追踪；
-  智慧档案 P14 材料继续保留在 `pixie_qa/archive_v1_p14/`，本地结果仍位于忽略目录。
+  智慧档案评测源码已在后续迁入 `evals/archive/`，本地结果仍位于忽略目录。
 
 ## 22. 制度 Agent Collection 维度迁移（2026-09-13）
 
@@ -430,3 +430,17 @@
   `compileall` 与 `git diff --check` 通过。
 - 修正后的真实默认预检没有执行写入；当前环境无法建立 PostgreSQL 连接时返回稳定
   `POSTGRES_PREFLIGHT_FAILED` 并停止。Collection 仍为迁移后的 cosine/768 维空库。
+
+## 23. 智慧档案评测目录迁移（2026-09-13）
+
+- 智慧档案 Runnable、评审器、数据集和说明已从 `pixie_qa/archive_v1_p14/` 迁入
+  `evals/archive/`；`run_app.py` 同步更名为 `runnable.py`。
+- 对应测试已从 `tests/pixie_qa/archive_v1_p14/` 迁入 `tests/evals/archive/`；验收数据集生成器、
+  Pixie 结果汇总脚本和测试中的导入/字符串入口已同步更新。
+- `pixie_qa/` 不再是 Python 包，只保留 `.gitignore`、本地 Pixie 状态和忽略的历史结果；
+  没有删除或改写 `pixie_qa/results/`。
+- TDD RED 为新包不存在及旧路径仍被引用；GREEN 后包边界 `2 passed`、智慧档案评测测试
+  `26 passed`、P14 验收脚本测试 `42 passed`；合并定向回归 `111 passed`，后端全量回归
+  `467 passed, 2 skipped, 127 warnings`，`compileall app tests scripts evals` 与
+  `git diff --check` 通过。本批只移动模块与导入，不重跑 DeepSeek、PostgreSQL、Chroma
+  或历史 Pixie 数据集。

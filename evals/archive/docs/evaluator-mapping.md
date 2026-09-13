@@ -1,14 +1,14 @@
 # Archive Question Evaluator Mapping
 
-本文件描述 P14 D5 最小工程集与项目文档有据问答集的评测映射。两者均不复用根目录已删除
-请假领域的 `pixie_qa/evaluators.py`，也不把回答层评测当作真实检索质量结论。
+本文件描述 P14 D5 最小工程集与项目文档有据问答集的评测映射。两者均不复用已删除的
+请假领域评测器，也不把回答层评测当作真实检索质量结论。
 
 | 评测维度 | Pixie evaluator | 类型 | 适用样本 | 选择理由 |
 | --- | --- | --- | --- | --- |
-| 回答状态、引用和证据决策结构 | `pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract` | 确定性 custom evaluator | 全部 4 条 | 检查 `answer_status`、非空回答、引用字段/数量，以及 `has_evidence` 与服务分支一致。 |
-| 回答证据忠实性与引用可追溯性 | `pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness` | Agent evaluator | 直接有据、多个候选、两条缺事实样本 | 需要将回答业务断言逐项对照候选摘录，不能用字段存在性代替语义判断。 |
-| 缺证据时的拒答质量 | `pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality` | Agent evaluator | 相近但缺事实、高分无直接证据；同时检查有据样本不误拒答 | 专门覆盖“高分候选不等于事实充分”的失败模式，要求证据不足时不编造。 |
-| 每题确定答案与引用定位 | `pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate` | 确定性 custom evaluator | 项目文档有据问答集 4 条 | 用 `expected_answer` 检查答案包含关系，并核对 citation 的文件名、行范围和原文摘录。 |
+| 回答状态、引用和证据决策结构 | `evals/archive/evaluators.py:archive_answer_contract` | 确定性 custom evaluator | 全部 4 条 | 检查 `answer_status`、非空回答、引用字段/数量，以及 `has_evidence` 与服务分支一致。 |
+| 回答证据忠实性与引用可追溯性 | `evals/archive/evaluators.py:archive_evidence_faithfulness` | Agent evaluator | 直接有据、多个候选、两条缺事实样本 | 需要将回答业务断言逐项对照候选摘录，不能用字段存在性代替语义判断。 |
+| 缺证据时的拒答质量 | `evals/archive/evaluators.py:archive_refusal_quality` | Agent evaluator | 相近但缺事实、高分无直接证据；同时检查有据样本不误拒答 | 专门覆盖“高分候选不等于事实充分”的失败模式，要求证据不足时不编造。 |
+| 每题确定答案与引用定位 | `evals/archive/evaluators.py:archive_v1_p02_quality_gate` | 确定性 custom evaluator | 项目文档有据问答集 4 条 | 用 `expected_answer` 检查答案包含关系，并核对 citation 的文件名、行范围和原文摘录。 |
 
 企业规模扩展集的 GROUNDED 标注可以额外提供 `expected_answer_fragments`。当前 GROUNDED-04、
 06、10、11、12 使用该标注；提供时评测器要求

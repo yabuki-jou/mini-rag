@@ -66,9 +66,9 @@ flowchart LR
 
 以 `LEARNING_PLAN.md` 和对应实施计划为实时进度来源；P14 检索质量的当前任务以
 `docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md` 为唯一执行台账，证据与决策分别追溯到同目录的分析台账和 ADR。
-其余 `docs/review/`、`docs/stage/` 与 `pixie_qa/archive_v1_p14/` 材料保留其产生时的评审、学习或评测上下文，
-不作为当前实现状态的来源。当前制度 Agent 评测入口位于 `evals/policy_agent/`；已删除请假领域的旧
-Pixie 运行器、数据集和追踪不再保留。
+其余 `docs/review/` 与 `docs/stage/` 材料保留其产生时的评审、学习或验收上下文，不作为当前
+实现状态的来源。当前制度 Agent 与智慧档案评测分别位于 `evals/policy_agent/` 和
+`evals/archive/`；`pixie_qa/` 只保留本地 Pixie 状态及忽略的运行结果。
 
 ## 主要能力
 

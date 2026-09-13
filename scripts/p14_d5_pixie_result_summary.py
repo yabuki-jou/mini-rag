@@ -8,7 +8,7 @@ from typing import Any
 
 from pixie import Evaluable
 
-from pixie_qa.archive_v1_p14.evaluators import aggregate_archive_v1_p02_results
+from evals.archive.evaluators import aggregate_archive_v1_p02_results
 
 
 _P02_NAME = "archive_v1_p02_quality_gate"

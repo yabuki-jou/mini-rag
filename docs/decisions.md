@@ -136,10 +136,10 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 状态：已确认
 - 首次纳入台账：2026-09-13
 - 背景：`pixie_qa/` 根目录混合已删除请假领域、仍在使用的制度 Agent 和智慧档案 P14 评测，且若直接清理旧目录，活跃的制度 Agent 会失去质量入口。
-- 决策：当前评测统一在 `evals/` 下按业务域组织；先以 `evals/policy_agent/` 的可运行数据集替换制度 Agent 旧入口并完成真实模型评测，再删除已覆盖的旧请假/制度运行器、数据集和追踪。智慧档案 P14 历史材料暂留 `pixie_qa/archive_v1_p14/`，后续独立迁移。
+- 决策：当前评测统一在 `evals/` 下按业务域组织；制度 Agent 使用 `evals/policy_agent/`，智慧档案使用 `evals/archive/`。`pixie_qa/` 只保留本地工具状态与忽略的结果，不再保存评测源码；已删除请假领域的旧运行器、数据集和追踪不保留。
 - 约束：注入检索结果的模型评测只证明回答层，不得表述为真实 Chroma 检索通过；真实检索、跨轮状态和故障恢复必须使用独立评测并分别报告。评测不得读取真实业务数据或把 Ground Truth 注入生产请求。
-- 替代/复查条件：智慧档案 P14 材料迁入 `evals/archive/`，或评测工具的根目录规则发生变化时复查。
-- 依据文件：[`evals/policy_agent/docs/project-analysis.md`](../evals/policy_agent/docs/project-analysis.md)、[`evals/policy_agent/docs/eval-criteria.md`](../evals/policy_agent/docs/eval-criteria.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+- 替代/复查条件：评测工具的根目录规则发生变化，或新增独立业务域评测时复查。
+- 依据文件：[`evals/policy_agent/docs/project-analysis.md`](../evals/policy_agent/docs/project-analysis.md)、[`evals/archive/README.md`](../evals/archive/README.md)、[`docs/stage/handoff.md`](stage/handoff.md)
 
 ## DEC-012：旧制度 Collection 与当前 768 维 Embedding 对齐
 

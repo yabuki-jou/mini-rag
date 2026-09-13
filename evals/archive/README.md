@@ -1,16 +1,16 @@
-# Archive V1 P14 Evaluation Materials
+# 智慧档案 V1 P14 评测材料
 
 本目录保存智慧档案 V1 的 P14 后端质量评测材料。`pixie_qa/` 根目录只保留 Pixie
-运行状态、忽略的本地结果和本档案评测目录；已删除请假领域的旧运行器、数据集与追踪
-不再保留。当前制度 Agent 评测位于 `evals/policy_agent/`，两者不得互相覆盖。
+运行状态和忽略的本地结果；已删除请假领域的旧运行器、数据集与追踪不再保留。当前
+制度 Agent 评测位于 `evals/policy_agent/`，两者不得互相覆盖。
 
 本目录独立保存 Archive V1 的 Runnable、固定虚构/脱敏验收集、评审器和结果。主 Agent
 将负责执行真实 DeepSeek smoke，并按既定范围记录结果和清理测试数据。
 
 ## D5 最小工程验证
 
-本目录已提供 `run_app.py:ArchiveQuestionRunnable`、`evaluators.py`、
-`datasets/archive-question-d5-smoke.json` 和 `03-evaluator-mapping.md`。Runnable 只
+本目录已提供 `runnable.py:ArchiveQuestionRunnable`、`evaluators.py`、
+`datasets/archive-question-d5-smoke.json` 和 `docs/evaluator-mapping.md`。Runnable 只
 接收 `question`，直接调用生产 `answer_archive_question`；数据集通过
 `archive_question_retrieval` 注入完整的 `ArchiveRetrievalResponse`，并以
 `asyncio.Semaphore(1)` 串行执行，因此离线解析无需 PostgreSQL/Chroma。

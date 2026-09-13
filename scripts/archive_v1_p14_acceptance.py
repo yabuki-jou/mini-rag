@@ -676,12 +676,12 @@ def build_d5_capture_dataset(
         raise AcceptanceError("D5 检索结果缺少固定问题。")
     return {
         "name": "archive-question-d5-captured",
-        "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+        "runnable": "evals/archive/runnable.py:ArchiveQuestionRunnable",
         "evaluators": [
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+            "evals/archive/evaluators.py:archive_answer_contract",
+            "evals/archive/evaluators.py:archive_evidence_faithfulness",
+            "evals/archive/evaluators.py:archive_refusal_quality",
+            "evals/archive/evaluators.py:archive_v1_p02_quality_gate",
         ],
         "entries": entries,
     }
@@ -838,12 +838,12 @@ def build_enterprise_capture_dataset(
     return {
         "name": "archive-question-enterprise-captured",
         "description": "企业规模 RAG 真实 Top-K 检索捕获",
-        "runnable": "pixie_qa/archive_v1_p14/run_app.py:ArchiveQuestionRunnable",
+        "runnable": "evals/archive/runnable.py:ArchiveQuestionRunnable",
         "evaluators": [
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
-            "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+            "evals/archive/evaluators.py:archive_answer_contract",
+            "evals/archive/evaluators.py:archive_evidence_faithfulness",
+            "evals/archive/evaluators.py:archive_refusal_quality",
+            "evals/archive/evaluators.py:archive_v1_p02_quality_gate",
         ],
         "entries": entries,
     }

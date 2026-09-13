@@ -48,7 +48,7 @@ Uvicorn 导入 `app.main:app`，绑定回环地址 `127.0.0.1:8000`；运行时�
 
 ## D5 Runnable 入口
 
-- **File**: `pixie_qa/archive_v1_p14/run_app.py`
+- **File**: `evals/archive/runnable.py`
 - **Class**: `ArchiveQuestionRunnable`
 - **Typed input**: `ArchiveQuestionArgs`，仅包含 `question` 字段。
 - **Production call**: `answer_archive_question(user_id, project_id, kb_id, question, session)`。

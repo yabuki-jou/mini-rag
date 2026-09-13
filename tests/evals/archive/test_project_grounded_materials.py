@@ -13,16 +13,16 @@ from app.schemas.archive_retrieval import ArchiveRetrievalResponse
 ROOT = Path(__file__).resolve().parents[3]
 DATASET_PATH = (
     ROOT
-    / "pixie_qa"
-    / "archive_v1_p14"
+    / "evals"
+    / "archive"
     / "datasets"
     / "archive-question-project-grounded.json"
 )
 EXPECTED_EVALUATORS = {
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_answer_contract",
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_evidence_faithfulness",
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_refusal_quality",
-    "pixie_qa/archive_v1_p14/evaluators.py:archive_v1_p02_quality_gate",
+    "evals/archive/evaluators.py:archive_answer_contract",
+    "evals/archive/evaluators.py:archive_evidence_faithfulness",
+    "evals/archive/evaluators.py:archive_refusal_quality",
+    "evals/archive/evaluators.py:archive_v1_p02_quality_gate",
 }
 SENSITIVE_PATTERN = re.compile(
     r"(?i)(password|passwd|secret|access[_-]?token|refresh[_-]?token|api[_-]?key)"

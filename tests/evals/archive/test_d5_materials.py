@@ -9,7 +9,7 @@ from app.schemas.archive_retrieval import ArchiveRetrievalResponse
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DATASET_PATH = ROOT / "pixie_qa" / "archive_v1_p14" / "datasets" / "archive-question-d5-smoke.json"
+DATASET_PATH = ROOT / "evals" / "archive" / "datasets" / "archive-question-d5-smoke.json"
 
 
 def test_d5_dataset_contains_four_question_only_entries() -> None:
@@ -31,7 +31,7 @@ def test_d5_dataset_contains_four_question_only_entries() -> None:
 
 def test_d5_runnable_exposes_serial_semaphore() -> None:
     """Runnable 应串行调用同步生产问答服务，避免共享评测状态并发。"""
-    from pixie_qa.archive_v1_p14.run_app import ArchiveQuestionRunnable
+    from evals.archive.runnable import ArchiveQuestionRunnable
 
     runnable = ArchiveQuestionRunnable.create()
 
@@ -41,7 +41,7 @@ def test_d5_runnable_exposes_serial_semaphore() -> None:
 def test_d5_contract_evaluator_checks_answer_and_decision_shape() -> None:
     """确定性评测器应同时检查回答、引用和证据充分性决策结构。"""
     from pixie import Evaluable
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = Evaluable(
         eval_input=[{"name": "question", "value": "归档状态是什么？"}],
@@ -103,7 +103,7 @@ def _citation(chunk_id: str) -> dict[str, object]:
 def test_d5_contract_allows_two_candidates_with_one_selected_citation() -> None:
     """候选数是检索结果数，不应强制等于最终回答引用数。"""
     from pixie import Evaluable
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = Evaluable(
         eval_input=[{"name": "question", "value": "责任单位是什么？"}],
@@ -138,7 +138,7 @@ def test_d5_contract_allows_two_candidates_with_one_selected_citation() -> None:
 def test_d5_contract_allows_nonempty_candidates_but_insufficient_refusal() -> None:
     """候选非空但模型判定证据不足时，拒答和空引用是合法结果。"""
     from pixie import Evaluable
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = Evaluable(
         eval_input=[{"name": "question", "value": "预算总额是多少？"}],
@@ -194,7 +194,7 @@ def _contract_evaluable(
 
 def test_d5_contract_rejects_selected_numbers_count_mismatch() -> None:
     """ANSWERED 的最终引用数不匹配 selected 数量时必须失败。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = _contract_evaluable(
         decision={"has_evidence": True, "retrieved_item_count": 2},
@@ -215,7 +215,7 @@ def test_d5_contract_rejects_selected_numbers_count_mismatch() -> None:
 
 def test_d5_contract_rejects_refusal_with_citations_or_selected_numbers() -> None:
     """REFUSED_NO_EVIDENCE 带引用或 selected 编号时必须失败。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = _contract_evaluable(
         decision={"has_evidence": True, "retrieved_item_count": 1},
@@ -236,7 +236,7 @@ def test_d5_contract_rejects_refusal_with_citations_or_selected_numbers() -> Non
 
 def test_d5_contract_rejects_answered_when_sufficiency_is_false() -> None:
     """sufficient=false 时不得返回 ANSWERED。"""
-    from pixie_qa.archive_v1_p14.evaluators import archive_answer_contract
+    from evals.archive.evaluators import archive_answer_contract
 
     evaluable = _contract_evaluable(
         decision={"has_evidence": True, "retrieved_item_count": 1},
