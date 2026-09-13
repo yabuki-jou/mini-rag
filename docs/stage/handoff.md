@@ -454,3 +454,12 @@
 - 交接文档中的 7 处旧计划路径已同步更新；全文搜索确认仓库内不再引用这些旧路径，
   后端全量回归 `467 passed, 2 skipped, 127 warnings`，`compileall app tests scripts evals`
   与 `git diff --check` 通过。本批仅调整文档归类，不改变运行时代码或验收结论。
+
+## 25. 旧 RAG Prompt 辅助模块归位（2026-09-13）
+
+- 原 `app/agents/rag_agent.py` 不包含 LangGraph 状态、工具或编排，只负责旧知识库聊天的引用、
+  上下文和 Prompt 消息组装，现已迁入 `app/services/rag/prompting.py`。
+- `app/services/rag/chat.py` 已改用新模块；旧入口不保留。新增 `test_prompting.py` 固定引用顺序、
+  上下文编号、历史角色和当前问题位置，并将新模块纳入 services 包边界检查。
+- TDD RED 为新模块导入失败；GREEN 定向回归 `42 passed`，后端全量回归
+  `470 passed, 2 skipped, 127 warnings`。本批不改变 Prompt 文本、HTTP 契约或业务行为。

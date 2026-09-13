@@ -42,6 +42,7 @@ def test_services_domain_modules_exist() -> None:
         "rag/vector_store.py",
         "rag/retrieval.py",
         "rag/chat.py",
+        "rag/prompting.py",
         "project/management.py",
         "project/checklists.py",
         "agent/sessions.py",

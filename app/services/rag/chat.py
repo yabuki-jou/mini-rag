@@ -10,7 +10,6 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
-from app.agents.rag_agent import build_prompt_messages, build_sources
 from app.core.errors import AppError
 from app.models import (
     ChatMessage,
@@ -22,6 +21,7 @@ from app.models import (
 )
 from app.schemas import ChatAnswerResponse, SourceRead
 from app.services.infrastructure.ai_models import get_chat_model
+from app.services.rag.prompting import build_prompt_messages, build_sources
 from app.services.rag.retrieval import retrieve_chunks
 
 
