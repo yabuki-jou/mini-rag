@@ -150,3 +150,13 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 影响：制度 Collection 现与共享的 bge-base/768 配置一致；一次虚构制度文档真实链路已通过。该单题只证明链路恢复，不替代 `evals/policy_agent/` 的回答质量评测，也不证明多轮或故障恢复质量。
 - 替代/复查条件：Embedding 再次更换、制度 Collection 出现待迁移数据，或制度与智慧档案改为独立 Embedding 配置时复查。
 - 依据文件：[`docs/implementation/制度Agent-Collection维度迁移实施计划.md`](implementation/制度Agent-Collection维度迁移实施计划.md)、[`scripts/policy_collection_embedding_rebuild.py`](../scripts/policy_collection_embedding_rebuild.py)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-013：制度 Agent 应用服务按会话、消息、审计和执行分层
+
+- 状态：已确认
+- 首次纳入台账：2026-09-13
+- 背景：原 `app/services/agent/sessions.py` 同时承担会话创建、Checkpoint 转换、工具审计和 Graph 执行，任一职责变化都会扩大同一模块的回归范围。
+- 决策：`sessions.py` 只负责会话创建和知识库范围校验；`messages.py` 负责 Checkpoint 与用户可见消息转换；`audit.py` 负责工具调用脱敏和审计持久化；`execution.py` 负责 Graph 调用、错误映射、提交边界和响应构造。Router 直接依赖各职责模块，不保留聚合转发入口。
+- 约束：执行成功与失败路径的审计、提交和错误转换顺序保持不变；不改变 HTTP API、Prompt、Graph、数据库 Schema、Checkpoint、工具参数或日志脱敏规则。跨模块只导入公开函数。
+- 替代/复查条件：Agent 新增写工具、人工中断恢复或不同事务边界，并经用户确认新的应用服务划分时复查。
+- 依据文件：[`app/services/agent/`](../app/services/agent/)、[`docs/implementation/智能体逻辑导览.md`](implementation/智能体逻辑导览.md)、[`docs/stage/handoff.md`](stage/handoff.md)

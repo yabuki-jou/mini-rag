@@ -18,7 +18,7 @@ from app.db import get_session
 from app.dependencies import get_admin_agent_runtime
 from app.main import app
 from app.models import AgentSession, KnowledgeBase, User
-from app.services.agent import sessions as agent_service
+from app.services.agent import execution as agent_service
 from tests.support.auth import auth_headers
 
 

@@ -475,3 +475,14 @@
   `tests/services` 为 `134 passed, 1 skipped`，后端全量回归 `483 passed, 2 skipped,
   127 warnings`。本批只新增确定性 SQLite/Fake Runtime 测试，不修改生产代码，也不证明
   真实 PostgreSQL、Checkpoint 并发或 LLM 质量。
+
+## 27. 制度 Agent 应用服务职责拆分（2026-09-13）
+
+- 原 `app/services/agent/sessions.py` 已按职责拆为会话创建 `sessions.py`、Checkpoint 与消息转换
+  `messages.py`、脱敏工具审计 `audit.py`、Graph 执行与响应构造 `execution.py`。
+- `app/routers/agent.py` 直接从四个职责模块导入；旧聚合入口不保留。执行成功和失败路径中的
+  审计记录、数据库提交、错误映射顺序，以及 Prompt、Graph、HTTP 和数据库契约均未改变。
+- 对应服务测试拆为四个镜像文件，并新增执行层可信范围、失败审计顺序和稳定错误映射测试。
+  TDD RED 为目标模块缺失；GREEN 后 Agent 服务、包边界和 Router 定向回归 `27 passed`，
+  全部 `tests/services` 为 `138 passed, 1 skipped`，后端全量回归
+  `487 passed, 2 skipped, 130 warnings`。

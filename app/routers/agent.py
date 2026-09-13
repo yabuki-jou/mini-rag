@@ -19,12 +19,10 @@ from app.schemas import (
     AgentSessionRead,
     AgentToolCallLogRead,
 )
-from app.services.agent.sessions import (
-    create_agent_session,
-    read_agent_messages,
-    read_agent_tool_calls,
-    send_agent_message,
-)
+from app.services.agent.audit import read_agent_tool_calls
+from app.services.agent.execution import send_agent_message
+from app.services.agent.messages import read_agent_messages
+from app.services.agent.sessions import create_agent_session
 
 
 router = APIRouter(prefix="/agent-sessions", tags=["agent"])
