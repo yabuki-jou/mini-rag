@@ -1,8 +1,27 @@
 # 制度 Agent Collection 维度迁移实施计划
 
-> 状态：待执行授权  
+> 状态：已完成  
 > 日期：2026-09-13  
 > 范围：既有制度知识库 `mini_rag_knowledge_chunks_v1`
+
+## 执行结果摘要
+
+旧制度 Collection 已从 512 维安全重建为 768 维空库，与当前配置的
+`bge-base-zh-v1.5` 输出维度一致。制度 Agent 真实链路验证通过，临时数据
+已逐层清理为零。
+
+| 检查项 | 结果 |
+|---|---|
+| Collection 名 | `mini_rag_knowledge_chunks_v1`（不变） |
+| 距离度量 | cosine（不变） |
+| 重建后维度 | **768**（512 查询拒绝，768 查询接受） |
+| 条目数 | 0 |
+| PostgreSQL 待重建文档 | READY=0, chunk_count>0=0 |
+| `/health` Embedding | dimension=768 |
+| 真实制度文档链路 | ✅ 上传→READY(chunk_count=1)→Agent COMPLETED→引用正确 |
+| 临时数据清理 | PG 6 表归零、Chroma 该用户 0 条、Checkpoint 共享未删 |
+| 全量回归 | 453 passed, 2 skipped |
+| `compileall` / `git diff --check` | 通过 |
 
 ## 一、问题与只读证据
 
