@@ -46,8 +46,8 @@ PROJECT_SPECS: tuple[dict[str, Any], ...] = (
             "docs/design/需求说明.md",
             "docs/design/技术架构.md",
             "docs/decisions.md",
-            "app/services/archive_retrieval_service.py",
-            "app/services/archive_question_service.py",
+            "app/services/archive/retrieval.py",
+            "app/services/archive/questions.py",
         ),
     },
     {
@@ -59,8 +59,8 @@ PROJECT_SPECS: tuple[dict[str, Any], ...] = (
             "docs/design/接口设计.md",
             "docs/implementation/智慧档案V1实施计划.md",
             "docs/stage/handoff.md",
-            "app/services/archive_parser_service.py",
-            "app/services/archive_index_service.py",
+            "app/services/archive/parser.py",
+            "app/services/archive/indexing.py",
         ),
     },
 )

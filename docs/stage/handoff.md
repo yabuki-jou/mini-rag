@@ -16,12 +16,12 @@
 6. `docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md`
 7. `docs/review/P14-rag检索质量改进/检索质量问题分析与改进策略.md`
 
-当前分支为 `main`，功能代码基线为 `af5271e`；从 `333419a` 至 `af5271e` 的 6 个本地提交
-尚未进入 `origin/main`，本轮发布文档收口将形成第 7 个独立本地提交。功能代码提交已收口，
-工作区在本轮文档收口开始前为 clean。services、评测目录和 Agent 服务拆分均已纳入该基线；
-相邻 `mini-rag-milvus-vue` 不在本轮范围。当前没有 tag，push/tag 仍待用户决定。
-后续只显式选择获准文件；
-不得读取、输出或提交 `.env`、凭据、Token、数据库数据和运行日志。
+当前分支为 `main`，本地 HEAD 为 `1f2d092`，本地标签 `v1.0.0` 指向该提交。
+`origin/main` 仍落后本地 7 个提交；本轮未核对远程标签是否存在。
+services、评测目录和 Agent 服务拆分均已纳入该基线；相邻 Vue 项目不在本轮范围。
+发布基线主审发现企业评测清单仍声明四个已删除 service 路径，修复和测试尚未提交。
+因此 `v1.0.0` 当前不包含该评测元数据修复；在决定标签处理前不执行 push。
+后续只显式选择获准文件；不得读取、输出或提交 `.env`、凭据、Token、数据库数据和运行日志。
 
 提交前必须重新检查工作区；`pixie_qa/results/` 仍是忽略的本地评测证据，不能误当源码提交。
 需按批准范围显式选择，禁止 `git add -A` 或逐项之外的批量暂存。
@@ -489,3 +489,16 @@
   TDD RED 为目标模块缺失；GREEN 后 Agent 服务、包边界和 Router 定向回归 `27 passed`，
   全部 `tests/services` 为 `138 passed, 1 skipped`，后端全量回归
   `487 passed, 2 skipped, 130 warnings`。
+
+## 28. V1 候选基线主审与评测来源修复（2026-09-14）
+
+- 主 Agent 复核 `abceeca..1f2d092` 的 services、评测目录、Agent 职责拆分和发布文档提交；
+  services 包边界、模块导入、旧 Python 导入和跨模块私有符号检查未发现行为偏离。
+- 主审发现 `scripts/generate_enterprise_rag_eval_data.py` 的项目级 `source_files`
+  仍指向四个已删除的根级 archive service，而原测试只校验文档级来源。
+- 已按 `docs/implementation/services重构后企业评测来源路径修复实施计划.md`
+  执行 TDD：RED 为 `1 failed, 9 passed`，GREEN 仅更新四个路径后为 `10 passed`。
+- 主 Agent 完整回归为 `487 passed, 2 skipped, 130 warnings`；
+  `compileall app tests scripts evals`、`git diff --check` 和旧 service Python 导入扫描通过。
+- 当前待提交范围为修复计划、生成器、回归测试与本交接/学习记录。
+  `v1.0.0` 指向修复前的 `1f2d092`；本轮不自行移动标签或 push。

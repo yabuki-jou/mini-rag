@@ -68,16 +68,23 @@ def test_enterprise_materials_record_existing_sources_and_no_sensitive_patterns(
     manifest = generate_enterprise_eval_data(output_root)
     project_root = Path(__file__).parents[2]
 
-    source_files = {
+    project_source_files = {
+        source
+        for project in manifest["projects"]
+        for source in project["source_files"]
+    }
+    document_source_files = {
         source
         for document in manifest["documents"]
         for source in document["source_files"]
     }
-    assert source_files
-    assert all((project_root / source).is_file() for source in source_files)
+    assert project_source_files
+    assert document_source_files
+    assert all((project_root / source).is_file() for source in project_source_files)
+    assert all((project_root / source).is_file() for source in document_source_files)
     assert all(
         not any(part.lower() in {".env", "data", "logs"} for part in Path(source).parts)
-        for source in source_files
+        for source in project_source_files | document_source_files
     )
 
     for path in output_root.rglob("*"):
