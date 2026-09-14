@@ -28,6 +28,7 @@ router = APIRouter(
 
 @router.post("", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def create_document(
+    kb_id: UUID,
     upload: Annotated[
         UploadFile,
         File(description="TXT、Markdown、PDF 或 DOCX 原文件"),
@@ -38,6 +39,7 @@ async def create_document(
     """保存原文件并创建 UPLOADED 状态的文档记录。
 
     Args:
+        kb_id: 路径中的知识库 UUID；实际校验由 OwnedKnowledgeBaseDep 完成。
         upload: 客户端上传的原文件。
         knowledge_base: 已通过当前用户所有权校验的知识库。
         session: 当前请求使用的数据库 Session。
@@ -45,6 +47,7 @@ async def create_document(
     Returns:
         已保存但尚未解析和向量化的文档记录。
     """
+    _ = kb_id
     # 上传接口只委托保存服务，不在请求入口中编排文件和数据库操作。
     return await create_uploaded_document(
         upload=upload,
@@ -55,18 +58,21 @@ async def create_document(
 
 @router.get("", response_model=list[DocumentRead])
 def read_documents(
+    kb_id: UUID,
     knowledge_base: OwnedKnowledgeBaseDep,
     session: SessionDep,
 ) -> list[Document]:
     """列出目标知识库中的文档。
 
     Args:
+        kb_id: 路径中的知识库 UUID；实际校验由 OwnedKnowledgeBaseDep 完成。
         knowledge_base: 已通过当前用户所有权校验的知识库。
         session: 当前请求使用的数据库 Session。
 
     Returns:
         按创建时间倒序排列的文档记录。
     """
+    _ = kb_id
     # 只查询已经通过所有权校验的知识库，避免返回其他知识库文档。
     statement = (
         select(Document)
@@ -78,6 +84,7 @@ def read_documents(
 
 @router.post("/{document_id}/parse", response_model=DocumentRead)
 def parse_document_endpoint(
+    kb_id: UUID,
     document: OwnedDocumentDep,
     knowledge_base: OwnedKnowledgeBaseDep,
     session: SessionDep,
@@ -86,6 +93,7 @@ def parse_document_endpoint(
     """解析文档并将生成的 Chunk 写入 Chroma。
 
     Args:
+        kb_id: 路径中的知识库 UUID；实际校验由 OwnedKnowledgeBaseDep 完成。
         document: 已通过知识库归属校验的文档。
         knowledge_base: 已通过当前用户所有权校验的知识库。
         session: 当前请求使用的数据库 Session。
@@ -97,8 +105,8 @@ def parse_document_endpoint(
     Raises:
         AppError: 由文档处理服务返回的解析、向量化或入库错误。
     """
+    _ = (kb_id, document_id)
     # document_id 显式保留给路由和 Swagger，OwnedDocumentDep 已使用它完成查询。
-    del document_id
 
     # 路由只负责接收已校验的依赖，处理流程交给业务服务。
     return process_document(
@@ -113,6 +121,7 @@ def parse_document_endpoint(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_document_endpoint(
+    kb_id: UUID,
     document_id: UUID,
     knowledge_base: OwnedKnowledgeBaseDep,
     session: SessionDep,
@@ -120,13 +129,15 @@ def delete_document_endpoint(
     """删除当前用户知识库中的文档及其全部关联资源。
 
     Args:
+        kb_id: 路径中的知识库 UUID；实际校验由 OwnedKnowledgeBaseDep 完成。
         document_id: 请求路径中的文档 UUID。
         knowledge_base: 已通过当前用户所有权校验的知识库。
-        session: 当前请求使用的 SQLite Session。
+        session: 当前请求使用的数据库 Session。
 
     Raises:
         AppError: 文档正在处理，或 Chroma、文件和数据库清理失败。
     """
+    _ = kb_id
     # 不使用 OwnedDocumentDep：文档不存在时仍返回 204，支持安全重试。
     delete_document(
         document_id=document_id,

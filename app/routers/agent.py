@@ -67,7 +67,7 @@ def send_agent_message_endpoint(
     Returns:
         已完成的制度问答响应。
     """
-    del session_id
+    _ = session_id
     return send_agent_message(agent_session, payload.message, runtime, session)
 
 
@@ -87,7 +87,7 @@ def read_agent_messages_endpoint(
     Returns:
         不包含 ToolMessage 和内部状态的用户、助手消息。
     """
-    del session_id
+    _ = session_id
     return read_agent_messages(agent_session, runtime)
 
 
@@ -107,5 +107,5 @@ def read_agent_tool_calls_endpoint(
     Returns:
         按创建时间正序排列的安全工具日志。
     """
-    del session_id
+    _ = session_id
     return read_agent_tool_calls(agent_session, session)

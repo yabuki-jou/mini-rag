@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Response, status
 
 from app.dependencies import CurrentAuthenticationDep, SessionDep
+from app.models import User
 from app.schemas import (
     AuthAccessTokenRead,
     AuthLoginRequest,
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register_endpoint(payload: AuthRegisterRequest, session: SessionDep) -> UserRead:
+def register_endpoint(payload: AuthRegisterRequest, session: SessionDep) -> User:
     """公开注册一个账号密码用户，不返回密码或密码哈希。"""
     return register_user(payload=payload, session=session)
 

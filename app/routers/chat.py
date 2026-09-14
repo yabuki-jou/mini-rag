@@ -81,6 +81,7 @@ def ask_question_endpoint(
     Raises:
         AppError: 会话无权访问，或检索、模型调用和历史保存失败。
     """
+    _ = session_id
     # session_id 已由 FastAPI 解析，并由 OwnedChatSessionDep 完成查询和权限校验。
 
     # 路由不参与检索和模型编排，只传递经过校验的会话与问题。
@@ -113,6 +114,7 @@ def read_chat_messages_endpoint(
     Raises:
         AppError: 会话无权访问，或数据库中的引用 JSON 无效。
     """
+    _ = session_id
     # 先取得最近 20 条数据库消息；服务层已经将顺序恢复为从旧到新。
     chat_messages = read_recent_messages(
         chat_session=chat_session,

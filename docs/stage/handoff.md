@@ -21,8 +21,8 @@
 services、评测目录和 Agent 服务拆分均已纳入该基线；相邻 Vue 项目不在本轮范围。
 发布基线主审发现的四个陈旧 service 来源路径已以 TDD 修复并提交为 `de868aa`。
 `main`、`v1.0.0` 和 `v1.0.1` 均已以非强制方式发布到 `origin`；本轮不移动已发布标签。
-NFR-021 日志按日期分层已纳入当前本地 `HEAD`；当前 `main` 比 `origin/main` 领先 1 个提交，
-尚未推送。
+NFR-021 日志按日期分层提交 `52ff0c8` 和后续评测来源行号修复 `1416e46` 已推送；当前
+Router 契约修复已完成，验证记录见第 30 节；提交和远端同步状态每次以实际 Git 为准。
 后续只显式选择获准文件；不得读取、输出或提交 `.env`、凭据、Token、数据库数据和运行日志。
 
 提交前必须重新检查工作区；`pixie_qa/results/` 仍是忽略的本地评测证据，不能误当源码提交。
@@ -516,4 +516,20 @@ NFR-021 日志按日期分层已纳入当前本地 `HEAD`；当前 `main` 比 `o
 - TDD RED 为新日期路径处理器尚不存在，测试收集失败；GREEN 后日志专项 `5 passed`。
   主 Agent 相关回归为 `11 passed`，完整后端回归为 `492 passed, 2 skipped, 130 warnings`；
   `compileall app tests scripts evals` 与 `git diff --check` 通过。
-- 功能、测试、配置与文档已纳入当前本地 `HEAD`，工作区干净；该提交尚未推送。
+- 功能、测试、配置与文档已提交为 `52ff0c8` 并推送。
+
+## 30. Router 函数签名与 HTTP 契约一致性（2026-09-14）
+
+- 全 Router 审计确认四个返回注解与实际 Service 对象不一致：注册端点实际返回 `User`，项目创建、
+  详情和更新实际返回 `Project`。函数注解已修正；FastAPI `response_model` 仍为 `UserRead` 或
+  `ProjectRead`，外部字段过滤和 OpenAPI 契约不变。
+- 第一轮路径审计发现项目 Router 的 27 个端点缺少 43 个显式路径参数；扩展到全部 Router 后又
+  发现旧知识库文档 Router 的 4 个 `kb_id`，合计 31 个端点、47 个缺失声明，均已补齐。
+- 补齐签名后，第二类审计确认 36 个端点共有 53 个路径参数只被依赖间接使用；现统一用 `_` 明确
+  弃值，权限和业务范围仍只使用原有依赖产生的已验证对象。
+- 项目文档列表的内部参数从 `status` 改为 `document_status`，通过 `Query(alias="status")` 保持
+  外部查询名称不变，消除对 FastAPI `status` 导入的遮蔽。
+- TDD RED 分别证明 4 个返回注解错误、31 个端点/47 个路径参数声明缺失、36 个端点/53 个路径参数
+  未读取，以及 `status` 遮蔽；Router 全量回归为 `127 passed`，完整后端回归为
+  `499 passed, 2 skipped, 130 warnings`；`compileall app tests scripts evals` 和
+  `git diff --check` 通过。
