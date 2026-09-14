@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     Attributes:
         app_name: Swagger 标题和应用名称。
         app_env: 当前运行环境，例如 ``development`` 或 ``production``。
-        log_file: 应用运行日志文件路径。
+        log_file: 应用日志基准路径；其父目录和后缀用于生成日期路径。
         log_max_bytes: 单个日志文件允许的最大字节数。
-        log_backup_count: 日志轮转后保留的备份文件数量。
+        log_backup_count: 每个日期日志按大小轮转后保留的备份文件数量。
         database_url: SQLModel 数据库连接地址。
         agent_checkpoint_file: LangGraph 执行状态使用的独立 SQLite 文件。
         file_storage_dir: 上传原文件的本地存储目录。
@@ -180,7 +180,7 @@ class Settings(BaseSettings):
 
     @property
     def log_path(self) -> Path:
-        """应用运行日志文件的绝对路径。"""
+        """返回应用日志基准路径，其父目录和后缀用于生成日期路径。"""
         return self.resolve_path(self.log_file)
 
     @property

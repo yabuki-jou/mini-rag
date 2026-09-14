@@ -160,3 +160,13 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 约束：执行成功与失败路径的审计、提交和错误转换顺序保持不变；不改变 HTTP API、Prompt、Graph、数据库 Schema、Checkpoint、工具参数或日志脱敏规则。跨模块只导入公开函数。
 - 替代/复查条件：Agent 新增写工具、人工中断恢复或不同事务边界，并经用户确认新的应用服务划分时复查。
 - 依据文件：[`app/services/agent/`](../app/services/agent/)、[`docs/implementation/智能体逻辑导览.md`](implementation/智能体逻辑导览.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-014：文件日志按本地日期分层
+
+- 状态：已确认
+- 首次纳入台账：2026-09-14
+- 背景：固定写入单个 `logs/app.log` 不便于按自然日期定位和管理运行日志。
+- 决策：`LOG_FILE` 继续作为日志基准路径；应用按每条日志记录的本地时间写入其父目录下的 `YYYY/MM/YYYY-MM-DD<扩展名>`。运行中的服务跨过日、月或年边界时自动切换，不要求重启；无扩展名的基准路径默认使用 `.log`。
+- 影响：控制台日志、request ID、格式和按大小轮转保持不变；`LOG_MAX_BYTES` 与 `LOG_BACKUP_COUNT` 分别作用于每个日期文件。不同日期的文件不由 `LOG_BACKUP_COUNT` 自动清理，原有 `logs/app.log*` 不迁移、不重命名、不删除。
+- 替代/复查条件：需要按保留天数或总空间自动清理、集中采集，或日志时区不再使用主机本地时区时复查。
+- 依据文件：[`docs/implementation/NFR-021日志按日期分层实施计划.md`](implementation/NFR-021日志按日期分层实施计划.md)、[`app/core/logging.py`](../app/core/logging.py)、[`docs/stage/handoff.md`](stage/handoff.md)

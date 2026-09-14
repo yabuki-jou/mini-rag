@@ -1,6 +1,6 @@
 # Mini RAG 下一次 Codex 对话交接
 
-> 更新时间：2026-09-13
+> 更新时间：2026-09-14
 > 工作区：`mini-rag-handwrite`
 > 本文只记录下一次对话需要遵守的当前事实和边界，不是聊天摘要。
 
@@ -21,6 +21,8 @@
 services、评测目录和 Agent 服务拆分均已纳入该基线；相邻 Vue 项目不在本轮范围。
 发布基线主审发现的四个陈旧 service 来源路径已以 TDD 修复并提交为 `de868aa`。
 `main`、`v1.0.0` 和 `v1.0.1` 均已以非强制方式发布到 `origin`；本轮不移动已发布标签。
+NFR-021 日志按日期分层已纳入当前本地 `HEAD`；当前 `main` 比 `origin/main` 领先 1 个提交，
+尚未推送。
 后续只显式选择获准文件；不得读取、输出或提交 `.env`、凭据、Token、数据库数据和运行日志。
 
 提交前必须重新检查工作区；`pixie_qa/results/` 仍是忽略的本地评测证据，不能误当源码提交。
@@ -502,3 +504,16 @@ services、评测目录和 Agent 服务拆分均已纳入该基线；相邻 Vue 
   `compileall app tests scripts evals`、`git diff --check` 和旧 service Python 导入扫描通过。
 - 修复计划、生成器、回归测试与交接/学习记录已提交为 `de868aa`。
   `v1.0.0` 保持指向 `1f2d092`，`v1.0.1` 指向 `de868aa`；两个标签均已推送。
+
+## 29. NFR-021 文件日志按日期分层（2026-09-14）
+
+- `LOG_FILE` 现在是日志基准路径；实际文件按日志记录的本地时间写入
+  `<父目录>/YYYY/MM/YYYY-MM-DD<扩展名>`，无扩展名时使用 `.log`。
+- `DatedRotatingFileHandler` 在下一条记录跨过日、月或年边界时切换文件，无需重启；控制台、
+  request ID、格式、重复配置防护和当日按大小轮转保持不变。
+- `LOG_BACKUP_COUNT` 只限制每个日期文件的大小轮转备份；不会自动清理其他日期目录。
+  原有 `logs/app.log*` 未读取、迁移、重命名或删除。
+- TDD RED 为新日期路径处理器尚不存在，测试收集失败；GREEN 后日志专项 `5 passed`。
+  主 Agent 相关回归为 `11 passed`，完整后端回归为 `492 passed, 2 skipped, 130 warnings`；
+  `compileall app tests scripts evals` 与 `git diff --check` 通过。
+- 功能、测试、配置与文档已纳入当前本地 `HEAD`，工作区干净；该提交尚未推送。

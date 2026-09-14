@@ -2,6 +2,7 @@
 
 import logging
 from contextvars import ContextVar
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from re import fullmatch
@@ -16,6 +17,83 @@ _REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 _REQUEST_ID_PATTERN = r"[A-Za-z0-9._-]{1,128}"
 
 logger = logging.getLogger(__name__)
+
+
+def build_dated_log_path(
+    log_file_path: Path,
+    timestamp: float | datetime,
+) -> Path:
+    """根据本地时间为日志基准路径构造日期分层路径。
+
+    Args:
+        log_file_path: 配置中的日志基准路径，例如 ``logs/app.log``。
+        timestamp: ``LogRecord.created`` 时间戳，或用于测试的日期时间。
+
+    Returns:
+        包含四位年、两位月和 ISO 日期文件名的日志路径。
+    """
+    if isinstance(timestamp, datetime):
+        local_time = (
+            timestamp.astimezone() if timestamp.tzinfo is not None else timestamp
+        )
+    else:
+        local_time = datetime.fromtimestamp(timestamp)
+
+    suffix = log_file_path.suffix or ".log"
+    return (
+        log_file_path.parent
+        / local_time.strftime("%Y")
+        / local_time.strftime("%m")
+        / f"{local_time:%Y-%m-%d}{suffix}"
+    )
+
+
+class DatedRotatingFileHandler(RotatingFileHandler):
+    """按日志记录本地日期切换文件，并在当天目录内按大小轮转。"""
+
+    def __init__(
+        self,
+        filename: Path,
+        maxBytes: int,
+        backupCount: int,
+    ) -> None:
+        """创建延迟打开的日期分层轮转处理器。
+
+        Args:
+            filename: 日志基准路径；其父目录和扩展名用于构造日期路径。
+            maxBytes: 单个当天日志文件触发轮转的最大字节数。
+            backupCount: 当天目录中保留的轮转备份数量。
+        """
+        self._base_log_file_path = Path(filename)
+        super().__init__(
+            filename=filename,
+            maxBytes=maxBytes,
+            backupCount=backupCount,
+            encoding="utf-8",
+            delay=True,
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """根据记录时间切换目标文件，再执行标准按大小轮转。
+
+        Args:
+            record: Python 日志系统正在写出的记录。
+        """
+        dated_path = build_dated_log_path(
+            self._base_log_file_path,
+            record.created,
+        ).absolute()
+        current_path = Path(self.baseFilename)
+        if current_path != dated_path:
+            # 日期变化时关闭旧文件；新文件在真正写入时才由父类打开。
+            if self.stream is not None:
+                self.stream.flush()
+                self.stream.close()
+                self.stream = None
+            dated_path.parent.mkdir(parents=True, exist_ok=True)
+            self.baseFilename = str(dated_path)
+
+        super().emit(record)
 
 
 def get_request_id() -> str:
@@ -47,9 +125,9 @@ def configure_logging(
     """安装包含请求 ID 的控制台和轮转文件日志处理器。
 
     Args:
-        log_file_path: 应用日志文件的绝对路径。
-        max_bytes: 单个日志文件触发轮转的最大字节数。
-        backup_count: 轮转后保留的历史日志文件数量。
+        log_file_path: 应用日志基准路径，其父目录和后缀用于生成日期路径。
+        max_bytes: 单个日期日志文件触发轮转的最大字节数。
+        backup_count: 每个日期日志文件保留的大小轮转备份数量。
     """
     root_logger = logging.getLogger()
 
@@ -74,13 +152,11 @@ def configure_logging(
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # 日志目录不存在时先创建；文件达到上限后生成 app.log.1 等备份。
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = RotatingFileHandler(
+    # 目录和当天文件在第一条日志写出时按记录日期延迟创建。
+    file_handler = DatedRotatingFileHandler(
         filename=log_file_path,
         maxBytes=max_bytes,
         backupCount=backup_count,
-        encoding="utf-8",
     )
     file_handler._mini_rag_handler = True  # type: ignore[attr-defined]
     file_handler.addFilter(request_id_filter)
