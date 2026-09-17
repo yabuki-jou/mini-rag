@@ -31,7 +31,7 @@
 
 ## DEC-001：智慧档案与企业文档智能 V1 范围
 
-- 状态：已确认
+- 状态：已废弃，由 DEC-022 替代
 - 首次纳入台账：2026-09-08
 - 背景：需要明确个人学习项目的产品边界。
 - 决策：V1 聚焦智慧档案与企业文档智能及只读企业制度 Agent；不做标书投标、OCR、表格专用解析、业务运行时多 Agent 编排、BM25/混合检索、Redis 任务队列或生产级分布式部署。
@@ -133,7 +133,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 
 ## DEC-011：当前评测按业务域组织并保留制度 Agent 质量入口
 
-- 状态：已确认
+- 状态：已废弃，由 DEC-022 替代
 - 首次纳入台账：2026-09-13
 - 背景：`pixie_qa/` 根目录混合已删除请假领域、仍在使用的制度 Agent 和智慧档案 P14 评测，且若直接清理旧目录，活跃的制度 Agent 会失去质量入口。
 - 决策：当前评测统一在 `evals/` 下按业务域组织；制度 Agent 使用 `evals/policy_agent/`，智慧档案使用 `evals/archive/`。`pixie_qa/` 只保留本地工具状态与忽略的结果，不再保存评测源码；已删除请假领域的旧运行器、数据集和追踪不保留。
@@ -143,7 +143,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 
 ## DEC-012：旧制度 Collection 与当前 768 维 Embedding 对齐
 
-- 状态：已确认
+- 状态：已废弃，由 DEC-022 替代；仅作为历史迁移记录保留
 - 首次纳入台账：2026-09-13
 - 背景：智慧档案切换到 bge-base/768 后，旧制度 Agent 仍访问冻结为 512 维的 `mini_rag_knowledge_chunks_v1`，真实查询被 Chroma 拒绝并映射为 HTTP 503。
 - 决策：仅在制度 Collection 条目数和 PostgreSQL 待重建文档聚合计数均为 0 时，保留原名与 cosine 度量执行空库重建，以 768 维三字段 canary 锁定并验证新维度，随后精确清理 canary。任何非空状态都必须停止，不能自动删除或覆盖。
@@ -153,7 +153,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 
 ## DEC-013：制度 Agent 应用服务按会话、消息、审计和执行分层
 
-- 状态：已确认
+- 状态：已废弃，由 DEC-022 替代
 - 首次纳入台账：2026-09-13
 - 背景：原 `app/services/agent/sessions.py` 同时承担会话创建、Checkpoint 转换、工具审计和 Graph 执行，任一职责变化都会扩大同一模块的回归范围。
 - 决策：`sessions.py` 只负责会话创建和知识库范围校验；`messages.py` 负责 Checkpoint 与用户可见消息转换；`audit.py` 负责工具调用脱敏和审计持久化；`execution.py` 负责 Graph 调用、错误映射、提交边界和响应构造。Router 直接依赖各职责模块，不保留聚合转发入口。
@@ -246,3 +246,14 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 评测边界：应回答场景必须证明目标标题与答案事实属于同一 `document_ref`。固定集标题只能来自既有去标识化正式资料元数据，禁止为通过门槛伪造；真实模型复验须在 TDD、本地回归和 Step 6 完成后另获用户授权。
 - 替代/复查条件：公开引用需要展示标题、允许模型按持久化文档标识检索、或标题不再由人工确认的正式字段提供时，必须另行确认并更新契约。
 - 依据文件：[`docs/review/FR-042-项目档案助手/真实模型质量评测/评测复盘.md`](review/FR-042-项目档案助手/真实模型质量评测/评测复盘.md)、[`docs/review/FR-042-项目档案助手/真实模型质量评测/问题排查与解决方案.md`](review/FR-042-项目档案助手/真实模型质量评测/问题排查与解决方案.md)、[`app/services/archive/catalog.py`](../app/services/archive/catalog.py)、[`app/agents/tools/archive_tools.py`](../app/agents/tools/archive_tools.py)
+
+## DEC-022：当前产品收敛为智慧档案单主线
+
+- 状态：已确认
+- 首次纳入台账：2026-09-17
+- 背景：通用知识库问答、普通 Chat 和企业制度 Agent 没有当前 Vue 展示入口，并与智慧档案的知识库、文档、会话和检索概念形成两套公开产品语义，增加学习、维护和演示成本。FR-030～FR-042 已形成完整的项目档案闭环。
+- 决策：当前正式产品主线只保留智慧档案 V1、FR-039 档案问答和 FR-042 项目档案助手。删除通用知识库、普通文档、检索测试、普通 Chat 和制度 Agent 的公开 API 与运行代码，不保留 `410` 或占位兼容路由；相邻 Vue 同步删除相应 API 方法、类型和本地会话逻辑。
+- 数据兼容：不删除或迁移现有 PostgreSQL 表与数据、SQLite Checkpoint、Chroma Collection、原文件或 Alembic 历史。`KnowledgeBase`、`Document` 继续作为项目档案数据底座；`AgentSession`、`AgentToolCallLog` 继续服务 FR-042。`AgentType.POLICY` 与数据库约束保留用于兼容历史行，档案入口必须继续拒绝此类历史会话，项目删除不得误清理无项目绑定的历史线程。
+- 质量边界：保留 FR-039/FR-042 的 D5/D6、Top-8、引用、拒答、范围隔离和固定集基线。制度 Agent 评测与实现资料迁入历史归档，不再作为当前发布门；本决策不授权清理旧数据，也不把历史链路验证表述为当前能力。
+- 替代关系：本决策替代 DEC-001、DEC-011、DEC-012 和 DEC-013 的当前产品口径；DEC-012 仍可作为旧 Collection 曾执行过的历史迁移记录阅读。DEC-015～DEC-021 中涉及 FR-042 项目档案助手的约束继续有效，其中“制度/档案双向入口隔离”收敛为“档案入口拒绝历史 POLICY 会话”。
+- 依据文件：[`docs/implementation/智慧档案单主线拆除实施计划.md`](implementation/智慧档案单主线拆除实施计划.md)、[`docs/stage/handoff.md`](stage/handoff.md)
