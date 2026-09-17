@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, SQLModel
 
@@ -17,6 +17,10 @@ from app.models import (
     ArchiveOperation,
     ArchiveOperationStatus,
     ArchiveOperationType,
+    AgentSession,
+    AgentToolCallLog,
+    AgentToolCallStatus,
+    AgentType,
     Document,
     KnowledgeBase,
     Project,
@@ -74,7 +78,7 @@ def test_upgrade_creates_current_schema_in_empty_database(tmp_path) -> None:
         revision = connection.execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-    assert revision == "0010_account_auth"
+    assert revision == "0011_archive_agent_scope"
     engine.dispose()
 
 
@@ -166,6 +170,9 @@ def test_migration_head_matches_sqlmodel_metadata(tmp_path) -> None:
         "expires_at",
         "revoked_at",
     } <= {column["name"] for column in inspector.get_columns("auth_sessions")}
+    assert {"agent_type", "project_id"} <= {
+        column["name"] for column in inspector.get_columns("agent_sessions")
+    }
     engine.dispose()
 
 
@@ -237,4 +244,261 @@ def test_archive_constraints_cover_project_hash_confirmation_and_visibility(tmp_
         with pytest.raises(IntegrityError):
             session.commit()
         session.rollback()
+    engine.dispose()
+
+
+def _sqlite_engine_with_foreign_keys(target_url: str):
+    """为迁移行为测试打开 SQLite 外键，否则级联与复合外键不会生效。"""
+    engine = create_engine(target_url)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        """让每个新 SQLite 连接都执行外键开关。"""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+def test_agent_session_scope_constraints_and_project_cascade(tmp_path) -> None:
+    """SQLite 开启外键后应验证会话范围、错绑、级联和存量类型。"""
+    database_path = tmp_path / "agent-scope.db"
+    target_url = sqlite_url(database_path)
+    upgrade_database(target_url)
+    engine = _sqlite_engine_with_foreign_keys(target_url)
+
+    with Session(engine) as session:
+        user = User(name="agent-owner")
+        knowledge_base = KnowledgeBase(owner_id=user.id, name="agent-kb")
+        other_kb = KnowledgeBase(owner_id=user.id, name="other-kb")
+        session.add(user)
+        session.commit()
+        session.add_all([knowledge_base, other_kb])
+        session.commit()
+        project = Project(owner_id=user.id, kb_id=knowledge_base.id, name="Agent 项目")
+        session.add(project)
+        session.commit()
+
+        policy_session = AgentSession(
+            user_id=user.id,
+            kb_id=knowledge_base.id,
+            agent_type=AgentType.POLICY,
+        )
+        archive_session = AgentSession(
+            user_id=user.id,
+            kb_id=knowledge_base.id,
+            project_id=project.id,
+            agent_type=AgentType.ARCHIVE,
+        )
+        second_archive_session = AgentSession(
+            user_id=user.id,
+            kb_id=knowledge_base.id,
+            project_id=project.id,
+            agent_type=AgentType.ARCHIVE,
+        )
+        session.add_all([policy_session, archive_session, second_archive_session])
+        session.commit()
+
+        session.add(
+            AgentSession(
+                user_id=user.id,
+                kb_id=knowledge_base.id,
+                agent_type=AgentType.ARCHIVE,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        archive_log = AgentToolCallLog(
+            agent_session_id=archive_session.id,
+            tool_call_id="cascade-call",
+            tool_name="list_formal_archives",
+            status=AgentToolCallStatus.COMPLETED,
+        )
+        session.add(archive_log)
+        session.commit()
+        archive_session_id = archive_session.id
+        second_archive_session_id = second_archive_session.id
+        policy_session_id = policy_session.id
+        archive_log_id = archive_log.id
+
+        session.add(
+            AgentSession(
+                user_id=user.id,
+                kb_id=knowledge_base.id,
+                project_id=project.id,
+                agent_type=AgentType.POLICY,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        session.add(
+            AgentSession(
+                user_id=user.id,
+                kb_id=knowledge_base.id,
+                agent_type="INVALID",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        session.add(
+            AgentSession(
+                user_id=user.id,
+                kb_id=other_kb.id,
+                project_id=project.id,
+                agent_type=AgentType.ARCHIVE,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        session.delete(project)
+        session.commit()
+        assert session.get(AgentSession, archive_session_id) is None
+        assert session.get(AgentSession, second_archive_session_id) is None
+        assert session.get(AgentToolCallLog, archive_log_id) is None
+        assert session.get(AgentSession, policy_session_id) is not None
+        assert session.get(KnowledgeBase, knowledge_base.id) is not None
+    engine.dispose()
+
+
+def test_existing_agent_sessions_are_backfilled_to_policy(tmp_path) -> None:
+    """从 0010 升级时，存量制度会话必须获得 POLICY 类型且项目为空。"""
+    database_path = tmp_path / "agent-backfill.db"
+    target_url = sqlite_url(database_path)
+    command.upgrade(build_alembic_config(target_url), "0010_account_auth")
+    engine = _sqlite_engine_with_foreign_keys(target_url)
+    user_id = uuid4()
+    kb_id = uuid4()
+    session_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, name, created_at, updated_at) "
+                "VALUES (:id, :name, :created_at, :updated_at)"
+            ),
+            {
+                "id": user_id.hex,
+                "name": "存量 Agent 用户",
+                "created_at": "2026-08-10 00:00:00",
+                "updated_at": "2026-08-10 00:00:00",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO knowledge_bases (id, owner_id, name, created_at, updated_at) "
+                "VALUES (:id, :owner_id, :name, :created_at, :updated_at)"
+            ),
+            {
+                "id": kb_id.hex,
+                "owner_id": user_id.hex,
+                "name": "存量 Agent 知识库",
+                "created_at": "2026-08-10 00:00:00",
+                "updated_at": "2026-08-10 00:00:00",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO agent_sessions "
+                "(id, user_id, kb_id, thread_id, created_at, updated_at) "
+                "VALUES (:id, :user_id, :kb_id, :thread_id, :created_at, :updated_at)"
+            ),
+            {
+                "id": session_id.hex,
+                "user_id": user_id.hex,
+                "kb_id": kb_id.hex,
+                "thread_id": "legacy-agent-thread",
+                "created_at": "2026-08-10 00:00:00",
+                "updated_at": "2026-08-10 00:00:00",
+            },
+        )
+    engine.dispose()
+
+    upgrade_database(target_url)
+    migrated_engine = _sqlite_engine_with_foreign_keys(target_url)
+    with migrated_engine.connect() as connection:
+        row = connection.execute(
+            text("SELECT agent_type, project_id FROM agent_sessions WHERE id = :id"),
+            {"id": session_id.hex},
+        ).one()
+    assert row.agent_type == "POLICY"
+    assert row.project_id is None
+    migrated_engine.dispose()
+
+
+def test_downgrade_rejects_existing_archive_sessions(tmp_path) -> None:
+    """存在档案会话时回退必须明确失败并保留当前迁移版本。"""
+    database_path = tmp_path / "agent-downgrade-blocked.db"
+    target_url = sqlite_url(database_path)
+    upgrade_database(target_url)
+    engine = _sqlite_engine_with_foreign_keys(target_url)
+    with Session(engine) as session:
+        user = User(name="downgrade-owner")
+        knowledge_base = KnowledgeBase(owner_id=user.id, name="downgrade-kb")
+        session.add(user)
+        session.commit()
+        session.add(knowledge_base)
+        session.commit()
+        project = Project(owner_id=user.id, kb_id=knowledge_base.id, name="降级项目")
+        session.add(project)
+        session.commit()
+        session.add(
+            AgentSession(
+                user_id=user.id,
+                kb_id=knowledge_base.id,
+                project_id=project.id,
+                agent_type=AgentType.ARCHIVE,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="ARCHIVE"):
+        command.downgrade(build_alembic_config(target_url), "0010_account_auth")
+
+    check_engine = _sqlite_engine_with_foreign_keys(target_url)
+    with check_engine.connect() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+    assert revision == "0011_archive_agent_scope"
+    check_engine.dispose()
+
+
+def test_downgrade_removes_agent_scope_without_archive_sessions(tmp_path) -> None:
+    """没有档案会话时回退应删除新增列和约束。"""
+    database_path = tmp_path / "agent-downgrade-ok.db"
+    target_url = sqlite_url(database_path)
+    upgrade_database(target_url)
+    command.downgrade(build_alembic_config(target_url), "0010_account_auth")
+
+    engine = _sqlite_engine_with_foreign_keys(target_url)
+    inspector = inspect(engine)
+    assert {"agent_type", "project_id"}.isdisjoint(
+        {column["name"] for column in inspector.get_columns("agent_sessions")}
+    )
+    assert not {
+        "fk_agent_sessions_project_kb",
+        "ck_agent_sessions_agent_type",
+        "ck_agent_sessions_type_project",
+    } & {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("agent_sessions")
+    }
+    assert not any(
+        foreign_key["name"] == "fk_agent_tool_logs_session_cascade"
+        for foreign_key in inspector.get_foreign_keys("agent_tool_call_logs")
+    )
+    with engine.connect() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+    assert revision == "0010_account_auth"
     engine.dispose()

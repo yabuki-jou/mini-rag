@@ -15,7 +15,7 @@ from app.models.archive import (
     ProjectStage,
 )
 from app.models.archive_audit import ArchiveAuditLog, ArchiveOperation, ArchiveOperationStatus, ArchiveOperationType
-from app.models.agent import AgentSession, AgentToolCallLog, AgentToolCallStatus
+from app.models.agent import AgentSession, AgentToolCallLog, AgentToolCallStatus, AgentType
 from app.models.chat import ChatMessage, ChatSession, MessageRole
 from app.models.checklist import ChecklistItem, ChecklistLink, ChecklistLinkStatus
 from app.models.common import utc_now
@@ -27,6 +27,7 @@ __all__ = [
     "AgentSession",
     "AgentToolCallLog",
     "AgentToolCallStatus",
+    "AgentType",
     "AuthSession",
     "ChatMessage",
     "ChatSession",

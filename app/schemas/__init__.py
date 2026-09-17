@@ -59,6 +59,14 @@ from app.schemas.archive_question import (
     ArchiveQuestionRequest,
     ArchiveQuestionResponse,
 )
+from app.schemas.archive_agent import (
+    ArchiveAgentCitationRead,
+    ArchiveAgentMessageCreate,
+    ArchiveAgentMessageRead,
+    ArchiveAgentResponse,
+    ArchiveAgentSessionCreate,
+    ArchiveAgentSessionRead,
+)
 from app.schemas.archive_catalog import (
     ArchiveAuditOperationType,
     ArchiveDetailRead,
@@ -107,6 +115,12 @@ __all__ = [
     "ArchiveRetrievalRequest",
     "ArchiveRetrievalResponse",
     "ArchiveAnswerStatus",
+    "ArchiveAgentCitationRead",
+    "ArchiveAgentMessageCreate",
+    "ArchiveAgentMessageRead",
+    "ArchiveAgentResponse",
+    "ArchiveAgentSessionCreate",
+    "ArchiveAgentSessionRead",
     "ArchiveQuestionRequest",
     "ArchiveQuestionResponse",
     "AuthAccessTokenRead",

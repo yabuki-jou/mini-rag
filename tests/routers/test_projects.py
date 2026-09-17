@@ -12,7 +12,18 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.db import get_session
 from app.main import app
-from app.models import ChecklistItem, Document, KnowledgeBase, Project, User
+from app.models import (
+    AgentSession,
+    AgentToolCallLog,
+    AgentToolCallStatus,
+    AgentType,
+    ChecklistItem,
+    Document,
+    KnowledgeBase,
+    Project,
+    User,
+)
+from app.services.project import management as project_management
 from tests.support.auth import auth_headers
 
 
@@ -306,3 +317,76 @@ def test_delete_project_with_any_document_is_rejected_without_mutation(
     with Session(engine) as session:
         assert session.get(Project, project_id) is not None
         assert session.get(Document, document_id) is not None
+
+
+def test_delete_project_cleans_archive_sessions_but_preserves_policy_and_kb(
+    project_api: tuple[TestClient, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """公开删除成功前应清理 ARCHIVE 线程/日志/会话并保留 POLICY 与知识库。"""
+    client, engine = project_api
+    user_id = create_user(engine, "archive-delete-owner")
+    project_payload = create_project(client, engine, user_id)
+    project_id = UUID(project_payload["id"])
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        knowledge_base_id = project.kb_id
+        archive_session = AgentSession(
+            user_id=user_id,
+            kb_id=project.kb_id,
+            project_id=project.id,
+            agent_type=AgentType.ARCHIVE,
+        )
+        policy_session = AgentSession(
+            user_id=user_id,
+            kb_id=project.kb_id,
+            project_id=None,
+            agent_type=AgentType.POLICY,
+        )
+        session.add(archive_session)
+        session.add(policy_session)
+        session.commit()
+        session.add(
+            AgentToolCallLog(
+                agent_session_id=archive_session.id,
+                tool_call_id="delete-route-call",
+                tool_name="list_formal_archives",
+                status=AgentToolCallStatus.COMPLETED,
+            )
+        )
+        session.commit()
+        archive_session_id = archive_session.id
+        archive_thread_id = archive_session.thread_id
+        policy_session_id = policy_session.id
+
+    deleted_threads: list[str] = []
+    monkeypatch.setattr(
+        project_management,
+        "delete_checkpoint_thread",
+        lambda *, checkpoint_path, thread_id: deleted_threads.append(thread_id),
+    )
+
+    response = client.delete(
+        f"/projects/{project_id}",
+        headers=auth_headers(engine, user_id),
+    )
+    old_session = client.get(
+        f"/projects/{project_id}/agent-sessions/{archive_session_id}/messages",
+        headers=auth_headers(engine, user_id),
+    )
+
+    assert response.status_code == 204
+    assert deleted_threads == [archive_thread_id]
+    assert old_session.status_code == 404
+    assert old_session.json()["error"]["code"] == "PROJECT_NOT_FOUND"
+    with Session(engine) as session:
+        assert session.get(Project, project_id) is None
+        assert session.get(AgentSession, archive_session_id) is None
+        assert session.get(AgentSession, policy_session_id) is not None
+        assert session.get(KnowledgeBase, knowledge_base_id) is not None
+        assert session.exec(
+            select(AgentToolCallLog).where(
+                AgentToolCallLog.agent_session_id == archive_session_id
+            )
+        ).all() == []

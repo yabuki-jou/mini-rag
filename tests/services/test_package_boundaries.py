@@ -53,6 +53,8 @@ def test_services_domain_modules_exist() -> None:
         "project/management.py",
         "project/checklists.py",
         "agent/sessions.py",
+        "agent/archive_sessions.py",
+        "agent/archive_execution.py",
         "agent/messages.py",
         "agent/audit.py",
         "agent/execution.py",

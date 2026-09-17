@@ -5,28 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from app.agents.admin.graph import build_admin_graph
+from app.agents.checkpoint import build_thread_config, open_checkpoint_store
 from app.core.config import settings
-
-
-def build_thread_config(thread_id: str) -> dict[str, dict[str, str]]:
-    """构造 LangGraph Checkpointer 要求的线程配置。
-
-    Args:
-        thread_id: Agent 会话对应的稳定线程标识。
-
-    Returns:
-        可直接传给 Graph ``invoke`` 和 ``get_state`` 的配置字典。
-
-    Raises:
-        ValueError: 线程标识为空或只包含空白字符时抛出。
-    """
-    normalized_thread_id = thread_id.strip()
-    if not normalized_thread_id:
-        raise ValueError("thread_id 不能为空。")
-    return {"configurable": {"thread_id": normalized_thread_id}}
 
 
 @dataclass
@@ -103,16 +85,7 @@ def build_admin_runtime(
     严格 JsonPlus 序列化器不启用 pickle，也不额外放行任意模块，
     从而限制 Checkpoint 反序列化可创建的对象类型。
     """
-    resolved_path = (checkpoint_path or settings.agent_checkpoint_path).resolve()
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(resolved_path, check_same_thread=False)
-    serializer = JsonPlusSerializer(
-        pickle_fallback=False,
-        allowed_json_modules=None,
-        allowed_msgpack_modules=None,
-    )
-    checkpointer = SqliteSaver(connection, serde=serializer)
-    checkpointer.setup()
+    store = open_checkpoint_store(checkpoint_path or settings.agent_checkpoint_path)
 
     try:
         # 只有生产运行时未显式传入模型时才加载模型模块，避免普通导入
@@ -123,15 +96,15 @@ def build_admin_runtime(
             model = get_chat_model()
         graph = build_admin_graph(
             model,
-            checkpointer=checkpointer,
+            checkpointer=store.checkpointer,
         )
     except Exception:
-        connection.close()
+        store.close()
         raise
 
     return AdminAgentRuntime(
         graph=graph,
-        checkpointer=checkpointer,
-        connection=connection,
-        checkpoint_path=resolved_path,
+        checkpointer=store.checkpointer,
+        connection=store.connection,
+        checkpoint_path=store.checkpoint_path,
     )

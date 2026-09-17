@@ -787,3 +787,63 @@ def test_retrieval_diagnostics_keeps_full_validated_top_thirty_before_threshold(
         "b" * 64,
     ):
         assert forbidden not in serialized
+
+
+def test_answer_candidates_return_fixed_top_eight_without_public_threshold(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """回答候选必须保留重排顺序中的前八条，并忽略公开检索阈值。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(
+        {
+            "ids": [[f"{index:064d}" for index in range(10)]],
+            "documents": [[f"候选-{index + 1}" for index in range(10)]],
+            "metadatas": [[
+                {
+                    "document_id": str(document_id),
+                    "filename": "正式资料.pdf",
+                    "location_type": "PDF_PAGE",
+                    "location_start": index + 1,
+                    "location_end": index + 1,
+                }
+                for index in range(10)
+            ]],
+            "distances": [[0.1 + index * 0.01 for index in range(10)]],
+        }
+    )
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [index / 10 for index in range(10)],
+    )
+    monkeypatch.setattr(settings, "archive_reranker_score_threshold", 0.95, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="正式证据是什么？",
+            session=session,
+        )
+
+    assert collection.calls[0]["n_results"] == 30
+    assert response.requested_top_k == 8
+    assert response.returned_count == 8
+    assert [item.excerpt for item in response.items] == [
+        "候选-10",
+        "候选-9",
+        "候选-8",
+        "候选-7",
+        "候选-6",
+        "候选-5",
+        "候选-4",
+        "候选-3",
+    ]
