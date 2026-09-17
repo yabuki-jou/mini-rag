@@ -10,15 +10,10 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import RequestContextMiddleware, configure_logging
 from app.migration_service import upgrade_database
 from app.routers import (
-    agent,
     archive_agent,
     auth,
-    chat,
-    documents,
     health,
-    knowledge_bases,
     projects,
-    retrieval,
 )
 
 
@@ -63,10 +58,5 @@ app.add_middleware(RequestContextMiddleware)
 register_exception_handlers(app)
 app.include_router(health.router)
 app.include_router(auth.router)
-app.include_router(knowledge_bases.router)
 app.include_router(projects.router)
-app.include_router(documents.router)
-app.include_router(retrieval.router)
-app.include_router(chat.router)
-app.include_router(agent.router)
 app.include_router(archive_agent.router)
