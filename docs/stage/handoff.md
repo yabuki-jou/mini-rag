@@ -533,3 +533,774 @@ Router 契约修复已完成，验证记录见第 30 节；提交和远端同步
   未读取，以及 `status` 遮蔽；Router 全量回归为 `127 passed`，完整后端回归为
   `499 passed, 2 skipped, 130 warnings`；`compileall app tests scripts evals` 和
   `git diff --check` 通过。
+
+## 31. 当前用户资料接口与前端显示名修复（2026-09-14）
+
+- 新增受保护的 GET /auth/me：复用现有 Access Token 身份依赖，返回 UserRead 的公开资料；不新增密码字段、令牌字段或独立服务。
+- 相邻 Vue 工作台在登录和刷新恢复会话后读取该接口；后端 name 用于页面显示的用户名，username 保留为账号。
+- 前端 TDD：RED 为 API 方法缺失及登录后未请求资料；GREEN 后 API/Store 定向 68 passed、前端完整 124 passed，typecheck 与 build 通过。
+- 后端路由测试 10 passed，覆盖当前资料、缺少认证和 Refresh Token 拒绝；运行中 8000 与 Vite 5173 代理的 OpenAPI 均暴露 /auth/me，匿名代理请求为 401。
+
+## 32. FR-042 项目档案助手需求修正与架构草案（2026-09-14）
+
+- 用户确认项目档案助手采用持久化会话 MVP：保留 FR-039 直接问答，新增目录与原文证据两个
+  只读工具；会话绑定 `user_id + project_id + kb_id + thread_id`，复用 SQLite Checkpoint 机制与
+  PostgreSQL 脱敏工具审计，不引入运行时多 Agent。
+- FR-042 首次需求评审的 R1～R7 已裁决；第一次独立复审提出的 N1～N8 已由主 Agent 写入
+  `docs/design/需求说明.md`，并追加 DEC-015～DEC-017。第二次独立复审因审查 Agent 用量上限
+  中断，当前准确状态为“主审修正完成，独立二次复审待补”，不得写成评审通过。
+- `docs/design/技术架构.md` 已按实际 `AgentSession`、AdminAgentRuntime、Checkpoint 消息投影、
+  正式目录/检索、D5/D6 问答和项目删除代码形成 FR-042 主 Agent 草案。草案选择独立 Archive
+  Graph 与 Checkpoint 文件、档案专用工具 DTO、每轮两个 Tool Call/60 秒预算、完成轮次标记、
+  `DELETING` 会话和幂等线程清理；本机静态确认当前 `SqliteSaver` 提供 `delete_thread(thread_id)`。
+- 本阶段只修改需求、决策、评审、架构和交接文档，没有创建迁移、模型、路由、Graph、测试或
+  评测资产，也没有运行真实 PostgreSQL、Chroma、DeepSeek 或浏览器验证。下一步先由用户确认
+  架构草案，或在审查 Agent 恢复后补独立需求复审；随后才进入数据库设计、API 设计、明确的
+  Implementation Plan 和逐行为 TDD。
+
+## 33. FR-042 架构草案主审评审（2026-09-14）
+
+- 主 Agent 对 `docs/design/技术架构.md` §10.7 与受影响的 §12/§13/§16.1/§17/§18 完成一次
+  核验式评审，结论为**有条件通过、本轮不予确认**，报告写入 `docs/review/FR-042-架构评审.md`。
+- 核验成立的关键点：独立 Checkpoint 文件与 `JsonPlusSerializer(pickle_fallback=False)`、
+  `messages.py` 硬编码 `search_company_policy` 不可复用、`retrieve_archive_chunks(top_k=8)`
+  取值范围（但其可选阈值过滤后来被识别为 C1）、`list_formal_archives` 的四个筛选维度、空候选固定拒答、
+  `delete_empty_project` 当前无行锁且不处理会话、上传路径已有 `Project.with_for_update()` 先例、
+  `AgentSession` 当前无类型/项目/状态字段。
+- 5 项必须修改：A1 项目行锁不得横跨 60 秒模型调用（会阻塞同项目上传并长期占用连接池，建议
+  收窄为仅锁 AgentSession 行）；A2「单次决策多个 Tool Call 即整轮失败」与需求「一个或多个
+  工具、单轮两次预算」及 AC-13 冲突；A3 证据工具结果投影未定义，`document_id`/`chunk_id`/
+  分数可能进入模型上下文与审计；A4 `questions.py` 的 `_build_archive_prompt`/
+  `_parse_model_decision` 为私有且公共入口自带检索，「复用 D5/D6」需先抽出公共判定函数；
+  A5 `get_chat_model()` 为无参 `@lru_cache` 单例，「逐调用下传剩余预算」当前无法实现。
+- 8 项建议（`turn_id` 缺列、Checkpoint 成功而 PG 提交失败的分支、失败轮的 HTTP 语义、
+  会话上下文增长策略、存量 Agent 端点需按类型过滤、`has_source_evidence`/`document_ref`
+  术语、`delete_thread` 在初次评审时未复现、目录投影建议共享查询不共享 DTO）；后续复现与裁决
+  见第 34 节。
+- 本轮只新增评审文档并更新需求评审与交接记录，未修改架构草案正文、未创建迁移/模型/路由/
+  Graph/测试资产，也未运行真实 PostgreSQL、Chroma、DeepSeek 或 SQLite 集成验证。
+
+## 34. FR-042 架构评审裁决与修正确认（2026-09-14）
+
+- 用户确认主 Agent 对架构评审的逐项判断：A1 收窄普通消息锁到 AgentSession；A2 采用 Tool Call
+  整批预算校验；A3 使用安全证据 DTO 与服务端引用映射；A4 抽出 FR-039/FR-042 共用 D5/D6
+  判定；A5 将真实可限制等待的调用适配器纳入范围。完整失败轮返回 `200 + FAILED`，无法形成
+  完整轮次的 Checkpoint/PG 保存失败返回 503。
+- B1～B8 已写入架构下游边界：新增不存正文的 AgentTurn、选中引用映射、最近 10 轮/20,000
+  码点模型上下文、制度存量会话类型迁移、字段证据派生口径，以及目录共享查询但不共享 DTO。
+- 代码复核纠正两点：`retrieve_archive_chunks` 仍可能按非空配置执行 Reranker 阈值过滤，因此新增
+  显式无统一阈值的 Top-8 回答候选入口；现有制度工具 `max_attempts=3`，FR-042 必须使用独立的
+  `max_attempts=2` 重试策略。
+- 当前项目解释器已确认 `SqliteSaver.delete_thread(thread_id)` 存在，并以内存 SQLite 连续删除
+  不存在的线程两次成功；真实文件、存在的历史线程和项目删除联动仍须集成测试。
+- 修正已写入需求 AC-01～20、BR-030～039、NFR-022～024、技术架构、DEC-018 和架构评审报告。
+  FR-042 架构主审已通过并由用户确认；需求独立二次复审仍因审查 Agent 用量阻塞，数据库/API
+  设计、Implementation Plan、迁移和代码实现尚未开始。
+
+## 35. FR-042 架构修正复核（主审第二轮，2026-09-14）
+
+- 对修正后的需求说明、技术架构 §7/§10.7/§12/§13/§15/§16.1/§17/§18、DEC-018 与代码基线做
+  逐条复核：A1～A5、B1～B8、C1/C2 全部通过，需求/架构/DEC 三处口径一致，AC-01～20 在 §16.1
+  全部有承接点，架构确认结论维持有效。复核记录写入 `docs/review/FR-042-架构评审.md` §10。
+- 复核新发现 2 项数据库设计开工前必须补齐：
+  D1 `AgentTurn` 只存轮次 UUID/会话/状态/时间，未定义与 Checkpoint 消息的关联键，而「最近 10 轮
+  文本对投影」和「按 `turn_id` 成对出现」都依赖该映射；Checkpoint 失败或 PG 提交失败会打破
+  位置对齐，不能靠顺序推断。建议规定 `HumanMessage.id = turn_id` 或为 AgentTurn 增加
+  `user_message_id/assistant_message_id`（仍不保存正文）。
+  D2 `AgentTurnCitation` 声明「随关联档案删除」，但 §10.6 文档删除流程与 §12.1 一致性表均未列入，
+  仅项目删除（§10.7.5）写了清理；需补清理步骤并固化「历史正文不回溯改写、引用按当前可见性过滤」。
+- 另 6 项建议：D3 `AgentTurn.RUNNING` 是否在轮次开始插入及崩溃遗留处置；D4「Graph 统一决定唯一
+  一次重试」措辞；D5 `AgentExecutionStatus` 只有 COMPLETED、`AgentResponse`/`AgentMessageRead`
+  的 `sources` 是 `SourceRead`，与 FR-039 引用形状不同，API 设计需另行定义；D6「最近 10 轮 /
+  20,000 码点」为架构自定常量，缺需求或 DEC 依据；D7 请求级模型工厂与现有 `@lru_cache` 单例的
+  连接复用策略；D8 Chroma/DeepSeek 请求级超时能力未真实探测，Fake 不能替代。
+- 同时更正本报告自身：A3 原写「`retrieve_archive_chunks` 不施加 Reranker 阈值」不准确，过滤实际
+  发生在 `_rerank_candidates()` L136-141，C1 的必要性由此确认。
+- 本轮只新增评审与交接记录，未修改需求/架构/DEC 正文，未创建迁移、模型、路由、Graph、测试或
+  评测资产，也未运行真实 PostgreSQL、Chroma、DeepSeek 或 SQLite 集成验证。
+
+## 36. FR-042 MVP 范围收敛（2026-09-14）
+
+- 用户确认当前目标是先完成“最小能通过的功能”，避免项目因低频故障和生产级并发要求继续膨胀。
+  主 Agent 据此复审需求与架构，最新裁决追加为 DEC-019；DEC-018 全部废弃，DEC-017 的失败轮次
+  持久化和工具批次部分废弃。
+- MVP 保留：持久化档案助手会话、服务端 `user_id + project_id + kb_id + thread_id` 绑定、制度/
+  档案会话类型隔离、目录和正式证据两个只读工具、CONFIRMED/删除阻断过滤、Top-8+D5/D6、当前
+  回答引用、无依据拒答、输入校验与脱敏工具审计。
+- MVP 简化：`AgentSession` 只新增 `agent_type` 与可空 `project_id`；不新增 AgentTurn、
+  AgentTurnCitation 或 `DELETING`；复用同一受保护 Checkpoint 文件；每次模型决策最多一个 Tool
+  Call、单轮最多顺序两个；最终基础设施失败统一返回 503；历史只返回完整用户/助手正文，不恢复
+  历史引用。
+- 延期项：SQLite/PostgreSQL 原子提交、跨组件动态 60 秒预算、完整失败轮次、历史引用恢复、同一
+  会话并发消息和消息/项目删除并发一致性。上述限制不属于本地单实例 MVP 验收范围，后续只有真实
+  故障、容量或部署需求出现时才重新立项。
+- `FR-042-需求评审.md` 与 `FR-042-架构评审.md` 已追加最新复审，需求和架构主审均通过并由用户
+  确认。当前只完成文档静态修订，未创建迁移、模型、路由、Graph、测试或评测资产，也未运行代码
+  测试或真实 PostgreSQL、Chroma、DeepSeek、SQLite 验证。
+- 下一步：先按 DEC-019/DEC-020 修订数据库设计和 API 设计，再产出 Implementation Plan；计划确认后才按
+  Multi-Agent Development Workflow 和逐行为 TDD 开始实现。
+
+## 37. FR-042 MVP 收敛复核（主审，2026-09-14）
+
+- 复核对象：DEC-019 生效后的需求说明 FR-042/BR-035～039/NFR-022～024/§12.5/§16、技术架构
+  §1/§3/§7/§10.7/§12/§15/§16.1/§17～§19，并与 `app/models/agent.py`、`app/schemas/`、
+  `app/services/archive/` 和《接口设计》既有约定交叉核对。复核记录写入
+  `FR-042-需求评审.md` §11 与 `FR-042-架构评审.md` §12。
+- 复核结论：MVP 收敛成立，A1～A5 与 B1～B8 的落点未被回退；D1、D2、D3、D6、D7 因方案取消而
+  自然消解，D4 措辞已修正，D8 随 NFR-024 重写降级为基线记录项。数据库设计与接口设计当前不含
+  任何 FR-042 内容，与「尚未开始」一致。
+- 待修正（3 项）：
+  - 需求 C1（硬冲突）：AC-FR-042-03 要求「复用 FR-039 的引用 Schema 且不新增第二套结构」，
+    但 FR-039 的 `ArchiveRetrievalItemRead` 必含 `chunk_id`/`document_id`/`score`，
+    与 BR-038「用户可见响应不得包含持久化标识或检索分数」互相排斥。建议改为复用其
+    「文件、位置、摘录」字段定义。API 设计前必须消除。
+  - 架构 C2：§1 引言 L17～L19 仍写「独立的…Checkpoint 文件」，与 DEC-019、§3.1、§10.7.4、
+    §17「共用同一受保护 Checkpoint 文件」矛盾。
+  - 架构 C3：§16.1 AC-12 行 L919 仍写「独立文件」，同上。
+- 需在接口契约定稿前确定（3 项）：C4 模型越界（多 Tool Call/第三次调用）应用 4xx 而非 503；
+  C5 档案助手回答状态枚举与 FR-039 `ArchiveAnswerStatus`、现有 `AgentExecutionStatus` 的关系；
+  C7 模型输入投影与历史接口是否使用同一配对规则（以及上下文无上限需登记为已知限制）。
+- 两条实现前提：`get_chat_model()` 当前是无参 `@lru_cache` 单例且未设 `timeout`，「复用现有可配置
+  超时」需先做参数化改造；档案入口不能复用 `AgentSessionCreate`（其 `kb_id` 为必填），须按
+  《接口设计》§2.1 只接受路径中的 `project_id`。
+- 本轮只新增评审与交接记录，未修改需求/架构/DEC 正文，未创建迁移、模型、路由、Graph、测试或
+  评测资产，也未运行代码测试或真实 PostgreSQL、Chroma、DeepSeek、SQLite 验证。
+
+## 38. FR-042 MVP 复核问题裁决（2026-09-14）
+
+- C1 按推荐方案闭环：档案助手使用脱敏引用 DTO，复用 FR-039 的 `filename`、`location_type`、
+  `location_start`、`location_end`、`excerpt` 字段名称与语义，但不复用含 UUID 和分数的完整 DTO。
+- C2/C3 已清除技术架构中的“独立 Checkpoint 文件”残留；制度与档案 Agent 使用独立 Graph 和工具，
+  复用同一受保护 Checkpoint 文件，并由全局唯一 `thread_id` 与会话类型隔离。
+- C4 确认模型 Tool Call 越界使用 `503 ARCHIVE_AGENT_MODEL_OUTPUT_INVALID`，真实依赖失败使用
+  `503 ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`；不使用会错误归因给客户端的 4xx。
+- C5 对外复用 `ArchiveAnswerStatus`：目录/有据为 `ANSWERED`，无依据为
+  `REFUSED_NO_EVIDENCE`；`CATALOG` 仅为 Graph 内部状态。档案入口必须使用专用 Schema，不能复用
+  要求客户端提交 `kb_id` 的 `AgentSessionCreate`。
+- C6/C7 已闭环：没有本轮工具依据不得陈述档案事实；历史与模型输入使用同一完整轮次投影，忽略
+  ToolMessage 和孤立消息；上下文不设独立上限作为短会话 MVP 已知限制。
+- `get_chat_model()` 的固定可配置请求超时已列为 Implementation Plan 必须包含的最小改造，不引入
+  跨组件动态总预算。裁决追加为 DEC-020。
+- 当前需求与架构已通过，可以进入数据库设计与 API 设计；仍未授权直接编写迁移、模型、路由或
+  Graph 代码。本轮没有运行代码测试或真实服务验证。
+
+## 39. FR-042 数据库设计草案（2026-09-14）
+
+- 已按用户要求在实际修改前创建并切换到分支 `codex/fr-042-archive-agent-mvp`；
+  创建分支时的既有未提交改动原样保留。
+- 已核对 `app/models/agent.py`、`app/models/project.py`、`0003_agent_api.py`、当前迁移头
+  `0010_account_auth`（文件 `0010_account_password_authentication.py`）和项目删除服务。代码基线确认：现有
+  `AgentSession` 没有会话类型/项目字段，工具日志外键没有级联删除，项目删除尚未
+  处理 Agent 会话或 Checkpoint。
+- `docs/design/数据库设计.md` 已形成 FR-042 最小草案：只为 `agent_sessions`
+  增加 `agent_type` 和可空 `project_id`，以检查约束和 `(project_id, kb_id)` 复合外键
+  防止类型错配与项目/知识库错绑；工具日志表只把会话外键改为
+  `ON DELETE CASCADE`。不新增 AgentTurn、历史引用、会话删除状态或第二份 Checkpoint。
+- 草案为后续前向迁移预留 `0011_archive_agent_scope`，包括存量会话回填
+  `POLICY`、档案会话约束、工具日志级联和本地降级前置条件；迁移文件尚未创建。
+- 删除空项目的数据顺序已固定为：锁定 Project 并读取当前项目的 ARCHIVE 线程
+  → 幂等清理 Checkpoint → 删除 Project 并级联删除档案会话/日志。KnowledgeBase 与
+  `project_id IS NULL` 的制度会话保留；不承诺 PostgreSQL/SQLite 原子性或并发删除。
+- 当前仅完成文档静态设计与 diff 检查，未修改 SQLModel，未创建迁移，也未运行数据库、
+  Chroma、DeepSeek 或 Checkpoint 验证。待用户确认本数据库设计后，下一步只进入
+  FR-042 API 设计，仍不直接实现代码。
+
+## 40. FR-042 数据库设计主审评审（2026-09-14）
+
+- 复核对象：`数据库设计.md` §5、§6.1、§6.11（L416～L467）、§11（L591～L624）、§12（L626～L660），
+  并与需求说明 FR-042、技术架构 §7/§10.7、DEC-019、现有 SQLModel 与 `0003`～`0010` 迁移、
+  `tests/test_migration_service.py`、`tests/models/test_schema_comment_contract.py` 交叉核对。
+  评审记录写入 `docs/review/FR-042-数据库设计评审.md`。
+- 结论：**方案方向成立，但有 3 项必须在迁移落地前修正**，修正后可进入 API 设计。
+- 必须修正：
+  - **DB-1（确定的错误）** 数据库设计 L596 与 handoff L692 写「`down_revision` 指向
+    `0010_account_password_authentication`」，但该迁移的 revision id 实际是 `0010_account_auth`
+    （`0010_account_password_authentication.py` L10，受 Alembic VARCHAR(32) 限制取短名；
+    实施计划 L198、验收报告 L112、handoff L116 与 `test_migration_service.py` L77 均用短名）。
+    照抄会导致 `alembic upgrade` 报 `Can't locate revision`。
+  - **DB-2** `agent_tool_call_logs.agent_session_id` 的外键在 `0003_agent_api.py` L57 是匿名创建的，
+    PostgreSQL 实际名为 `agent_tool_call_logs_agent_session_id_fkey`；§11 第 9 步未写 drop 目标，
+    迁移会在第一步失败。
+  - **DB-3** `tests/models/test_schema_comment_contract.py` L45～L50 断言注释映射键集合与 SQLModel
+    列集合完全相等，而 L32～L38 只合并 0006/0008/0010。给 `AgentSession` 加两列会使该测试必红；
+    必须在 0011 提供两列注释，**并同时修改该测试文件**加载 0011。
+- 建议 4 项：DB-4 SQLite 默认不启用外键，`test_migration_service.py` 未设 `PRAGMA foreign_keys=ON`，
+  §12 的两条级联/复合外键验收在该链路上不成立，须挂到启用 PRAGMA 的测试或标注为 PostgreSQL 门；
+  DB-5 复合外键建议显式写 `MATCH SIMPLE`；DB-6 `0011_archive_agent_session_scope` 恰为 32 字符，
+  建议缩短为 `0011_archive_agent_scope`；DB-7 Project 行锁跨越外部 Checkpoint 删除的持有窗口
+  需在架构或数据库设计中显式写明。
+- 核验成立：`projects` 上 `uq_projects_id_kb_id` 在 `0005` L81 已存在，复合外键引用目标合法；
+  `ON DELETE CASCADE` 有 `0005` L107 先例；制度会话因 `project_id IS NULL` 在结构上不可能被级联
+  清理，比服务层约定更强；VARCHAR+CHECK 符合 §5 约定且有 `app/models/project.py` 先例；
+  先加列回填 `POLICY` 再加 CHECK 的顺序可执行；新增列范围与 DEC-019 完全一致，未引入
+  AgentTurn、历史引用、`DELETING` 或第二份 Checkpoint。
+- 本轮只新增评审记录与本节，未修改数据库设计正文、SQLModel 或迁移，未运行任何代码测试、
+  数据库迁移或真实服务验证。
+
+## 41. FR-042 数据库设计评审修正（2026-09-14）
+
+- DB-1 已修正：下一迁移 revision id 缩短为 `0011_archive_agent_scope`（长度 24），
+  `down_revision` 明确指向真实 revision id `0010_account_auth`，并区分其文件名
+  `0010_account_password_authentication.py`。
+- DB-2 已修正：迁移顺序要求 PostgreSQL 先用 Inspector 按受限列和引用表精确
+  找到旧匿名外键，当前预期默认名为
+  `agent_tool_call_logs_agent_session_id_fkey`；删除后以具名外键
+  `fk_agent_tool_logs_session_cascade` 和 `ON DELETE CASCADE` 重建。SQLite 由 batch alter 加
+  naming convention 处理反射到的匿名约束。
+- DB-3 已修正：`0011` 必须为 `agent_type/project_id` 提供注释映射，并在同一
+  TDD 切片修改 `tests/models/test_schema_comment_contract.py` 合并 `0011`。该既有测试的
+  修改已列为 Implementation Plan 必须项。
+- DB-4 采用最小双层验证：SQLite 测试连接显式开启 `PRAGMA foreign_keys=ON`，用于
+  确定性 TDD 验证错绑拒绝和级联语义；完成前再用目标 PostgreSQL 验证真实迁移头、
+  外键名、`MATCH SIMPLE` 与 `ON DELETE CASCADE`。SQLite 通过不替代 PostgreSQL 门。
+- DB-5～DB-7 已接受：复合外键 DDL 显式写 `MATCH SIMPLE`；revision id 采用短名；
+  Project 行锁持有到 PostgreSQL 提交，锁窗口内同项目会话创建与上传阻塞，但锁不得
+  扩大到模型调用或普通消息执行。
+- 数据库设计的主审必修项已闭环；待用户确认后可进入 FR-042 API 契约设计。
+  本轮仍未修改 SQLModel、迁移或测试代码，也未运行数据库、Chroma、DeepSeek 或 Checkpoint 验证。
+
+## 42. FR-042 API 契约草案（2026-09-15）
+
+- 用户已确认 FR-042 数据库设计；当前分支仍为 `codex/fr-042-archive-agent-mvp`。
+- `docs/design/接口设计.md` 已新增 FR-042 最小契约，只包含四个项目嵌套端点：
+  创建会话、发送消息、读取完整轮次历史和读取脱敏工具日志。不新增会话列表、
+  详情、重命名、用户删除、流式响应或工具直调端点。
+- 创建请求固定为 `extra="forbid"` 的空 JSON 对象 `{}`，以便稳定拒绝客户端提交
+  `user_id/project_id/kb_id/thread_id/agent_type`。创建响应只返回会话 ID、项目 ID
+  和时间，不暴露内部知识库、Graph 线程或会话类型。
+- 档案助手会话使用 `session_id + user_id + project_id + kb_id + ARCHIVE` 整体查找；
+  已授权项目下任一错配统一返回 `404 ARCHIVE_AGENT_SESSION_NOT_FOUND`。既有制度入口
+  必须反向固定过滤 `POLICY`，不能使用 ARCHIVE 会话打开 Checkpoint。
+- 消息请求固定 `message`，按 `CRLF/CR → LF`、去除首尾 Unicode 穽白、`1..2000`
+  码点的顺序校验。响应只使用 `ArchiveAnswerStatus`，当前证据引用只含轮次内单调编号
+  `S1..S16`、文件名、位置和摘录；单次证据工具仍固定 Top-8，两次调用不重用编号。
+  目录临时引用同理为轮次内 `D1..D40`。两类响应均不包含文档/Chunk ID、分数或 `document_ref`。
+- 历史接口返回按 Checkpoint 顺序的 `USER/ASSISTANT` 完整轮次，ToolMessage 与不完整轮次
+  均隐藏；本期不恢复历史引用，因此每个历史项的 `citations=[]`。历史与工具日志都不
+  分页，仅面向本地短会话 MVP。
+- 工具日志顶层复用 `AgentToolCallLogRead`，但参数/结果摘要已固定白名单；不存查询原文、
+  筛选值、文件名、摘录、资源 ID、分数、Token、提示词或异常原文。同一 `tool_call_id`
+  的传输重试只形成一条审计。
+- 稳定错误新增 `404 ARCHIVE_AGENT_SESSION_NOT_FOUND`、
+  `503 ARCHIVE_AGENT_MODEL_OUTPUT_INVALID` 和 `503 ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`。
+  目录空与无证据均是 `200`，分别使用固定目录空文案和 `REFUSED_NO_EVIDENCE`。
+- `DELETE /projects/{project_id}` 路径不变；空项目只在 ARCHIVE Checkpoint、会话、日志和
+  Project 都清理后返回 `204`，KnowledgeBase 和 POLICY 会话保留。
+- API 文档§4.4 的 FR-039 Citation 示例原先与实际 Schema 不一致：文档误写了
+  `citation_id` 且遗漏 `chunk_id/score/reranker_score`。本轮已按当前
+  `ArchiveQuestionResponse.citations: list[ArchiveRetrievalItemRead]` 修正示例，并明确 FR-042 只复用
+  其文件/位置/摘录字段，不复用含内部标识与分数的完整 DTO。
+- FR-042 AC-01～AC-19 已全部映射到第 13 节。当前仅完成 API 文档草案和静态自审，未创建
+  `app/schemas/archive_agent.py`、Router、Service、Graph、迁移或测试，也未运行 PostgreSQL、
+  Checkpoint、Chroma 或 DeepSeek 验证。待用户确认 API 契约后，下一步是产出 FR-042
+  Implementation Plan，计划确认前仍不进入代码 TDD。
+
+## 43. FR-042 API 契约主审评审（2026-09-15）
+
+- 评审记录：`docs/review/FR-042-接口设计评审.md`（主 Agent 主审，不替代需求侧独立复审）。
+- 核验成立：`ArchiveAnswerStatus` 两值、`ArchiveRetrievalItemRead` 必含持久化标识与分数、
+  `uq_agent_tool_logs_session_call` 真实存在且 `tool_name` 为字符串、§4.4 FR-039 引用示例
+  已与代码逐字段一致且 `citation_id` 仅出现在第 13 节、AC-01～AC-19 全部有落点、
+  项目层 `404 PROJECT_NOT_FOUND`/`403 PROJECT_FORBIDDEN` 与既有依赖一致。
+- 必须在 API 定稿前补齐 4 项：
+  - **API-1**：`judge_archive_answer` 的失败映射未定义。FR-039 冻结契约与现有实现
+    （`questions.py` L245～L261、P14-D5 L113/L130/L131）都把判定层失败映射为
+    `ARCHIVE_ANSWER_UNAVAILABLE`，而 AC-16/§13.6 要求 FR-042 返回
+    `ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`。共用函数时会直接违反 AC-16。
+  - **API-2**：两次证据调用时传给判定层的候选集合与 `S` 编号基准未定义；判定层按传入
+    列表位置编号并反查（`questions.py` L44～L53、L145、L274～L278），取并集还是最后一次
+    未写明会导致引用静默错位。
+  - **API-3**：模型零工具调用却陈述档案原文事实时，§13.3 的"普通回答"分支会返回
+    `200 ANSWERED`，AC-06 后半句没有判别机制、无法写成测试。
+  - **API-4**：写回 Checkpoint 的最终 AIMessage 是判定层文本还是工具循环文本未定义，
+    影响 AC-01/AC-07 与 BR-032。
+- 建议 5 项：`answer` 正文 `[S1]` 标记来源、`document_ref` 两套 `D` 命名空间、参数无效
+  调用的 `FAILED` 审计与 `error_code` 白名单、不分页接口的条数上限声明、会话响应不含
+  `agent_type` 的理由。
+- 文档同步项：需求 L1108～L1109 与数据库设计 L678 仍写"数据库/API 尚未开始/尚未定稿"；
+  接口设计 L599 与 §4.4 的 `chunk_id` 示例口径不同。
+- 本轮未修改任何设计正文、代码、迁移或测试，未运行真实服务；等待用户就 API-1～API-4 裁决。
+
+## 44. FR-042 API 契约主审修正（2026-09-15）
+
+- 已按 `docs/review/FR-042-接口设计评审.md` 的 API-1～API-9 修正需求、架构、数据库状态和
+  API 设计正文；评审报告 §9 复核结论为 **API 契约通过主审，待用户确认**。
+- API-1：公共 D5/D6 判定函数只返回结果或中性失败；FR-039 继续映射
+  `ARCHIVE_ANSWER_UNAVAILABLE`，FR-042 映射 `ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`，
+  不改变既有 FR-039 对外契约。
+- API-2：正常完成时只由最后一次成功工具调用决定最终结果。证据分支只把该次原始 Top-8
+  按原顺序交给公共判定层并重新编号 `S1..S8`，不合并、去重或重排两次调用结果；较早结果
+  只用于下一次工具选择或查询调整。
+- API-3/API-4：零个成功工具调用一律固定拒答；HTTP `answer` 与 Checkpoint 最终 AIMessage
+  完全相同。证据正文来自判定层，目录正文来自确定性目录投影，工具选择循环自由文本不持久化。
+- API-5/API-6：不向回答正文注入 `[Sn]`，不修改 FR-039；FR-042 公共 Citation 去除
+  `citation_id`。目录调用内引用改为 `A1..A20`，证据调用内为 `S1..S8`，与判定 Prompt 内部
+  证据文档 `D` 分组互不相通。
+- API-7～API-9：已注册工具参数无效计入调用额度并写一条 `FAILED` 脱敏审计；安全错误码固定
+  四值。历史和工具日志不分页且不设条数上限，登记为短会话限制。创建响应不含 `agent_type`
+  的理由已写明。
+- 同步修正接口设计中的 64 位 `chunk_id` 示例，以及需求、数据库设计和学习计划的阶段状态。
+- 本轮只修改设计与状态文档，未创建 `0011`、SQLModel、Schema、Router、Service、Graph 或测试，
+  未运行 PostgreSQL、SQLite Checkpoint、Chroma、DeepSeek 或代码测试。
+- 下一步：等待用户确认本版 API 契约；确认后先产出可执行的 FR-042 Implementation Plan，
+  计划再次确认前不得进入代码 TDD。
+
+## 45. FR-042 API 契约主审最终复核（2026-09-15）
+
+- 复核记录：`docs/review/FR-042-接口设计评审.md` §10。结论：**MVP API 契约主审通过，确认可接受。**
+- API-1～API-9 逐条核验通过：中性错误与双入口映射、只认最后一次成功证据调用并按原顺序重建
+  `S1..S8`、零成功工具调用一律拒答、HTTP `answer` = Checkpoint 最终 AIMessage、不注入 `[Sn]`
+  且不暴露 `citation_id`、三个编号命名空间互不相通、失败审计与四个安全错误码、
+  不分页接口边界、会话响应不含 `agent_type` 的理由。
+- 本轮新增核验成立：`judge_archive_answer` 的编号基准链路自洽（`questions.py` L44～L61、
+  L139～L146、L274～L278，`candidate_count ≤ 8` 消除 `S1..S16` 越界）；固定拒答文案与
+  `questions.py` L25 `_REFUSAL_ANSWER` 逐字一致；`AgentToolCallLogRead` 不含会话归属字段；
+  `delete_empty_project`（`project/management.py` L178～L201）明确保留知识库，与 §13.7
+  「KnowledgeBase 和 POLICY 会话不在删除范围」一致；数据库设计 DB-1～DB-7 已全部落位。
+- 本次复核当时发现两项缺口（现已在 §46 闭环）：
+  - **P-1**：传给公共判定层的 `question` 未定义——固定为用户本轮规范化消息，而非模型改写的检索 query。
+  - **P-2**：空候选短路未写入 API 契约——0 候选时不得调用判定层，否则 DeepSeek 抖动会把
+    确定性 `200 REFUSED_NO_EVIDENCE` 变成 `503`。
+- 建议三项：P-3 目录正文确定性模板（内容字段、排序、禁止 `A{n}`/`document_ref`）、
+  P-4 模型正文自带 `[Sn]` 的处理、P-5 需求 §15 登记「历史与工具日志读取不分页且不设条数上限」。
+- Implementation Plan 必须显式包含：P-1/P-2 的 §13.3 补齐、P-3 模板、`0011_archive_agent_scope`
+  迁移与 PostgreSQL 集成门、`tests/models/test_schema_comment_contract.py` 并入 `0011` 注释的必改项、
+  `get_chat_model()` 固定可配置请求超时改造、`questions.py` 抽出公共 `judge_archive_answer`
+  且不改变 FR-039 对外契约。
+- 本轮只写评审与交接记录，未修改 `接口设计.md`、需求、技术架构、数据库设计或任何代码；
+  未运行 PostgreSQL、SQLite Checkpoint、Chroma、DeepSeek 或代码测试。
+
+## 46. FR-042 API 最终缺口补齐（2026-09-15）
+
+- 已在进入 Implementation Plan 前补齐最终复核 P-1～P-5，避免把未冻结的可观察行为带入实现计划。
+- 公共判定层的 `question` 固定为本轮规范化用户消息；模型改写的证据检索 `query` 只影响候选获取。
+- 证据工具返回 0 个候选时不调用公共判定模型，直接短路为固定
+  `REFUSED_NO_EVIDENCE` 和空引用；至少 1 个候选才进入 D5/D6。
+- 非空目录正文使用固定模板：按既有目录稳定顺序逐行输出文件名与五字段的
+  `value/source/has_source_evidence`；不输出 `A{n}`、`document_ref`、确认时间、UUID、版本或分数。
+- 为保持 FR-039 公共判定输出不变，服务端不注入、剥离或拒绝模型自行写入正文的 `[Sn]`；
+  客户端不得解析该文本，结构化 `citations` 数组是唯一可信引用。
+- 需求 §15 已同步历史与工具日志读取不分页、不设条数上限的短会话限制。
+- 评审报告 §11 复核 P-1～P-5 全部闭环。当前仍只完成文档设计，未创建或修改 FR-042 代码、
+  迁移和测试，也未运行 PostgreSQL、SQLite Checkpoint、Chroma 或 DeepSeek。
+- 下一步：等待用户确认最终 API 契约；确认后产出 FR-042 Implementation Plan。计划必须覆盖
+  `0011_archive_agent_scope` 与 PostgreSQL 集成门、注释契约测试并入 `0011`、
+  `get_chat_model()` 固定可配置超时、公共 `judge_archive_answer` 且保持 FR-039 对外契约，
+  以及所有已冻结 API 行为的 RED/GREEN 切片。计划再次确认前不进入代码 TDD。
+
+## 47. FR-042 API 冻结前落点核验（2026-09-15）
+
+- 核验记录：`docs/review/FR-042-接口设计评审.md` §12。结论：**P-1～P-5 全部闭环，API 契约达到可冻结状态。**
+- P-1：§13.3 L920～L921 与技术架构 §10.7.3 L720～L722 一致固定判定层 `question` 为用户本轮规范化
+  消息；§13.9 的 AC-03/05/06/19 行已同步。
+- P-2：§13.3 L922～L923 与 `questions.py` L201～L224 既有短路同构，且保证 `candidate_count ≥ 1`，
+  同时保护 `_parse_model_decision` 的编号校验。
+- P-3：模板五字段与 §13.6 L988～L992 名称/顺序一致；排序沿用 `catalog.py` L135 的
+  `confirmed_at DESC, id DESC`；禁止 `A{n}`、`document_ref`、`confirmed_at`、UUID、版本、分数。
+- P-4/P-5：`[Sn]` 原样透传且不作为公开契约、`citations` 为唯一可信引用；需求 §15 L1106～L1107
+  登记不分页与不设条数上限。
+- 设计文档已无「普通回答/自由回答」残留成功分支，也无 `S1..S16`/`D1..D40` 旧编号口径。
+- 遗留点（不违反任何 AC，建议 Implementation Plan 冻结前定调）：
+  - **W-1**：目录正文模板无分页信息，「当前目录结果共 {当前页条目数} 份」可被读成总数；
+    `catalog.py` L102～L104 已返回 `page/page_size/total`，模型又可控制 `page`。三选一收口：
+    补页码与总数、只改措辞、或固定 `page=1`。
+  - **W-2**：`request_id` 仅以 §13.3 示例出现，建议在 §13.8 补 `ArchiveAgentResponse` 字段清单。
+  - **W-3**（可选）：handoff §42 L775～L777 的 `S1..S16`/`D1..D40` 已被 §44 取代，可加一句指针。
+- 本轮只写评审与交接记录，未修改 `接口设计.md`、需求、技术架构、数据库设计或任何代码；
+  未运行 PostgreSQL、SQLite Checkpoint、Chroma、DeepSeek 或代码测试。
+
+## 48. FR-042 API 冻结前分页与 DTO 收口（2026-09-15）
+
+- W-1 采用完整分页信息方案：非空目录正文固定显示 `page`、当前页条目数和 `total`，均来自
+  最后一次成功目录工具结果；页内编号从 `1` 重新开始且不表示全局序号。模型仍可控制
+  合法 `page/page_size`，没有收紧为只读第一页。
+- W-2 已补齐 `ArchiveAgentResponse` 字段清单：仅包含 `session_id`、`answer_status`、`answer`、
+  `citations` 和 `request_id`，禁止范围、Graph 和检索内部字段。
+- §42 中的 `S1..S16/D1..D40` 是当时 API 草案的历史记录，已由 §44、§46 及当前正式接口设计
+  替代；Implementation Plan 和代码不得引用旧编号规则，必须使用目录调用内 `A1..A20` 与证据
+  调用内 `S1..S8`。
+- 本轮仍只修改设计、评审与交接文档，未修改代码、迁移或测试，未运行真实服务。
+- 下一步：等待用户确认最终 API 契约；确认后开始编写 FR-042 Implementation Plan。
+
+## 49. FR-042 Implementation Plan 草案（2026-09-15）
+
+- 用户已确认 §48 收口后的 FR-042 API 契约。主 Agent已创建
+  `docs/implementation/FR042-项目档案助手MVP实施计划.md`，当前为待用户确认草案；未开始代码 TDD。
+- 计划按实际代码拆为 P00 基线门、P01 会话类型/迁移、P02 公共 Top-8/D5-D6/模型超时、
+  P03 Schema/会话创建/双向隔离、P04 两个只读工具、P05 Archive Graph/Checkpoint、
+  P06 四端点/历史/审计、P07 项目删除联动，随后执行后端集成、相邻 Vue、真实 DeepSeek 固定集和交付文档。
+- 每个切片严格执行实际 RED → 最小 GREEN → REFACTOR；实现任务边界清晰后优先交给 GPT-5.6 Luna，
+  GPT-5.6 Sol 负责计划、RED/GREEN 证据和 Git diff 主审。
+- 计划显式纳入 `0011_archive_agent_scope`、PostgreSQL 集成门、`0011` 注释合并、
+  `get_chat_model()` 固定可配置超时、FR-039/FR-042 共用无统一阈值 Top-8 与
+  `judge_archive_answer`、请求内原始候选隔离、目录分页模板及 AC-01～AC-19。
+- 相邻 Vue 仓库当前在 `feature/ui-feedback-and-layout` 且存在未提交改动；Vue 修改前必须先由用户
+  确认这些改动的归属和目标基线，再建立对应 `codex/fr-042-archive-agent-mvp` 分支。不得自动 stash、
+  reset 或夹带现有改动。
+- 真实 LLM 质量按仓库既有 `evals/archive/` 结构执行：复用 12 题，新增至少 2 个目录题和 2 组
+  两轮追问；Mock 只证明确定性控制流，未完成真实 DeepSeek 固定集不得宣称 FR-042 质量通过。
+- 当前下一步：用户确认本 Implementation Plan 后，从 P00 开始；在此之前不创建迁移、测试或代码。
+
+## 50. FR-042 P00 基线门（2026-09-15）
+
+- 用户已确认 `docs/implementation/FR042-项目档案助手MVP实施计划.md`。当前后端分支仍为
+  `codex/fr-042-archive-agent-mvp`，P00 未创建任何 FR-042 功能代码、迁移或测试。
+- 第一次后端全量测试得到 `1 failed, 488 passed, 2 skipped`。唯一失败为
+  `tests/evals/archive/test_project_grounded_materials.py::test_project_grounded_candidates_trace_to_declared_source_lines`：
+  FR-040 项目有据评测仍把 `docs/design/接口设计.md` 的删除契约标为旧行号 `620～628`，实际原文已因
+  既有设计扩展移动到 `642～650`，属于可解释的基线资料定位漂移，不是 FR-042 功能失败。
+- 按 Multi-Agent Workflow 将该机械修正交给 GPT-5.6 Luna：先实际复现 RED，再只修改
+  `evals/archive/datasets/archive-question-project-grounded.json` 中该样本的候选定位和三组
+  `expected_evidence` 行号；主 Agent核对新位置逐行对应原摘录，未接受源码或设计正文附带修改。
+- 修正后后端全量测试为 `489 passed, 2 skipped, 130 warnings`，耗时 96.57 秒；
+  `python -m compileall -q app tests evals scripts` 通过。warning 为既有 Starlette/httpx2 与
+  Pixie/jsonpickle 弃用提示，本轮未处理。
+- 静态基线：Alembic head 为 `0010_account_auth`；`AgentSession` 仍只有
+  `created_at/id/kb_id/thread_id/updated_at/user_id`；OpenAPI 尚无
+  `/projects/{project_id}/agent-sessions` 路由，符合“FR-042 尚未实现”。
+- 本轮未运行 PostgreSQL 真实迁移、共享 SQLite Checkpoint 读写、Chroma、真实 DeepSeek 或浏览器；
+  P00 通过不能冒充这些后续门槛。
+- 相邻 Vue 仓库仍在 `feature/ui-feedback-and-layout` 且存在未提交改动；它不阻塞后端 P01，但 Vue
+  阶段开始前必须由用户确认其归属和目标基线，不得自动 stash/reset。
+- 下一步学习检查点：用户确认后进入 FR042-P01，只实施 `AgentSession` 类型/项目绑定和
+  `0011_archive_agent_scope` 迁移的 RED/GREEN，不提前开始公共判定、Graph、Router 或 Vue。
+
+## 51. FR-042 P01 会话范围与数据库迁移（2026-09-15）
+
+- 当前分支为 `codex/fr-042-archive-agent-mvp`。按 Multi-Agent Workflow 将 P01 的模型、迁移和测试
+  交给 GPT-5.6 Luna 实现，主 Agent复核 Git Diff、修正任务边界并完成最终验收；未提交、未推送。
+- RED 已实际形成：模型测试因缺少 `AgentType` 无法收集，迁移 head 仍为 `0010_account_auth`，注释契约
+  未合并 `0011`。GREEN 新增 `AgentType.POLICY/ARCHIVE`、`AgentSession.agent_type/project_id`、
+  `0011_archive_agent_scope` 以及数据库级类型/项目组合、复合项目知识库外键、项目索引和工具日志级联。
+- SQLite 相关模型与迁移测试覆盖存量会话回填 `POLICY`、非法类型、POLICY/ARCHIVE 项目组合、跨知识库
+  错绑、项目删除级联、制度会话和知识库保留，以及有/无 ARCHIVE 会话时的安全 downgrade。
+- 真实 PostgreSQL 使用随机且预先确认不存在的临时 schema 执行 `0001` 到 `0011` 全链迁移。第一次复测
+  揭示旧 `command.check()` 会把历史注释、Enum/VARCHAR 和旧约束元数据差异误当作 P01 失败，故门禁
+  收敛为本期结构与行为的直接断言；第二次复测又证明 `pg_get_constraintdef()` 会省略默认
+  `MATCH SIMPLE` 文本，最终改由 `pg_constraint.confmatchtype = 's'` 验证真实语义。
+- 最终真实 PostgreSQL 门为 `1 passed`：确认 revision、目标列、具名 CHECK、项目索引、复合外键
+  `MATCH SIMPLE ON DELETE CASCADE`、工具日志级联、四类非法插入拒绝、合法 POLICY/ARCHIVE 写入及
+  项目删除后的级联/保留行为。每次临时 schema 均在所有权匹配后删除，未修改现有业务 schema。
+- 最终相关测试为 `14 passed, 1 skipped`；跳过项仅因常规本地进程未注入 `POSTGRES_TEST_URL`，已有上述
+  独立真实 PostgreSQL 通过证据。后端全量为 `496 passed, 2 skipped, 130 warnings`，`compileall` 通过；
+  warning 仍为既有 Starlette/httpx2、Pixie/jsonpickle 提示。
+- 下一步学习检查点：用户确认后进入 FR042-P02，只实施共享模型固定超时、无统一阈值 Top-8 回答候选、
+  D5/D6 公共判定和 FR-039 不回归测试，不提前创建 P03 会话 Router、Graph 或 Vue。
+
+## 52. FR-042 P02 共享模型、候选与证据判定基础（2026-09-15）
+
+- 当前分支仍为 `codex/fr-042-archive-agent-mvp`。P02 先由 GPT-5.6 Luna 写测试并实际得到
+  `9 failed, 40 passed`：失败分别来自超时配置、模型工厂参数、无阈值候选入口、FR-039 入口迁移和
+  公共判定结果/中性异常缺失，属于有效 RED。
+- GREEN 增加 `deepseek_request_timeout_seconds`（默认 30 秒且必须为正数）并同步 `.env.example`；
+  `get_chat_model()` 保留无参缓存入口和客户端默认重试语义，同时允许后续 Archive Runtime 显式取得
+  `max_retries=0` 的独立缓存实例，两种入口都使用固定请求超时。
+- `retrieve_archive_answer_candidates` 复用正式文档范围、Top-30 Chroma 候选、本地 Reranker 和稳定
+  排序，只固定返回原始 Top-8，不使用公开 `archive_reranker_score_threshold`；既有
+  `retrieve_archive_chunks` 仍保留公开阈值和 `top_k` 契约。
+- `questions.py` 抽出不可变 `ArchiveAnswerDecision`、中性 `ArchiveAnswerJudgmentError` 和
+  `judge_archive_answer`。公共函数只消费调用方问题、候选和模型，复用原 D5/D6 Prompt、严格 JSON
+  解析与引用编号；不检索、不构造模型、不包含 HTTP 错误码。FR-039 改用无阈值候选入口，空候选仍
+  不调用模型，公共判定失败仍映射既有 `503 ARCHIVE_ANSWER_UNAVAILABLE`。
+- 实现 Agent 在 GREEN 后续验证阶段触发子 Agent 用量上限，主 Agent按计划中的无子 Agent 退化规则接管
+  Diff 审查和测试，没有扩大文件或需求范围。相关配置/模型/检索/问答测试为 `49 passed`；FR-039
+  Router 与 D5/D6 固定资料契约测试为 `16 passed`。
+- 最终后端全量测试为 `505 passed, 2 skipped, 144 warnings`，`python -m compileall -q app tests`
+  通过。warning 为既有 Starlette/httpx2 与 Pixie/jsonpickle 弃用提示；本轮未调用真实 DeepSeek，
+  Mock 只证明确定性控制流，不能作为 FR-042 回答质量通过证据。
+- 下一步学习检查点：用户确认后进入 FR042-P03，只实施 HTTP Schema、档案会话创建和双向五要素隔离，
+  不提前创建 P04 只读工具、Graph、Checkpoint 会话执行或 Vue。
+
+## 53. FR-042 P03 路由切片歧义修正（2026-09-15）
+
+- 用户确认 P03 不注册空壳端点：本切片 OpenAPI 只允许出现
+  `POST /projects/{project_id}/agent-sessions`，并负向断言消息、历史和工具日志三个端点不存在；
+  P06 新增对应 OpenAPI 正向验收并完成四端点闭环。
+- POLICY ID 的反向隔离分两层验证：P03 先在 ARCHIVE 五要素查找 service/dependency 层拒绝，保证
+  Graph/Checkpoint 之前已有安全边界；P06 再验证三个真实 ARCHIVE 路由统一返回
+  `404 ARCHIVE_AGENT_SESSION_NOT_FOUND`。
+- Implementation Plan 的 P03 RED/GREEN、P06 RED、AC 映射、文档状态和当前下一步已同步。本次只调整
+  实施切片与验收时机，不改变四个冻结端点、六个 DTO、错误码、Top-8 或 D5/D6 契约。
+- 当前下一步：按修订后的 FR042-P03 进入 TDD RED；本切片不创建 P04 工具、Graph、Checkpoint 执行
+  或三个未实现路由。
+
+## 54. FR-042 P03 HTTP Schema、会话创建与双向隔离（2026-09-15）
+
+- 当前分支仍为 `codex/fr-042-archive-agent-mvp`。既有 Luna 实现 Agent 已达到子 Agent 用量上限，
+  主 Agent 按 Implementation Plan 的退化规则接管本切片，并继续执行实际 RED、最小 GREEN 和 Diff 审查；
+  未改变冻结需求、API、数据库结构或切片范围。
+- Schema RED 为缺少 `app.schemas.archive_agent` 导致收集失败；GREEN 新增六个独立 DTO，固定空对象
+  创建、`extra="forbid"`、消息换行与 Unicode 首尾空白规范化、1～2000 码点，以及不含内部 ID/分数
+  的引用和响应字段。Schema 定向测试为 `4 passed`。
+- Service/dependency RED 为档案会话创建、五要素查找与注入模块缺失；GREEN 后创建只写 PostgreSQL，
+  以同一时刻生成 `created_at/updated_at`，不构造模型或 Checkpoint，并使用
+  `session_id + user_id + project_id + kb_id + ARCHIVE` 整体查找。制度依赖同步收紧为只接受
+  `POLICY + project_id IS NULL`；相关服务与依赖测试为 `5 passed`。
+- Router 测试最初暴露测试夹具将带外键的 User/KnowledgeBase/Project 同批提交，以及提交后读取已过期
+  User 实例的问题；修正夹具后取得有效 RED：创建请求返回 `404`，唯一原因是目标路由尚未注册。
+  最小 GREEN 只注册 `POST /projects/{project_id}/agent-sessions`，空对象创建、字段隐藏、项目 404/403、
+  `422 VALIDATION_ERROR` 和其余三个端点不存在的 OpenAPI 契约共 `10 passed`。
+- 既有制度消息、历史和工具日志三个入口均已加入 ARCHIVE ID 反向隔离回归，处理函数被替换为失败哨兵，
+  三个请求仍统一得到 `404 AGENT_SESSION_NOT_FOUND`，证明拒绝发生在读取 Checkpoint/日志或执行服务前。
+  多目录同名测试模块造成的 pytest 收集冲突已通过将路由测试命名为
+  `tests/routers/test_archive_agent_routes.py` 消除；服务包边界清单已纳入新增模块。
+- P03 相关测试最终为 `45 passed, 7 warnings`；后端全量回归为
+  `526 passed, 2 skipped, 144 warnings`；`python -m compileall -q app tests` 通过。warning 仍为既有
+  Starlette/httpx2 与 Pixie/jsonpickle 弃用提示。本切片未调用真实 PostgreSQL、Chroma 或 DeepSeek；
+  P01 的真实 PostgreSQL 迁移/约束证据仍有效，但不能由本轮 SQLite Router 测试替代。
+- 下一步学习检查点：用户确认后进入 FR042-P04，只实施目录与原文证据两个只读工具及请求内安全映射，
+  不提前创建 Archive Graph、Checkpoint 执行或消息、历史、工具日志三个 HTTP 端点。
+
+## 55. FR-042 P04 两个只读工具与请求内安全映射（2026-09-15）
+
+- 用户已明确授权连续执行后续切片。P04 由 GPT-5.6 Luna 按冻结计划执行 TDD；有效 RED 为
+  `list_agent_formal_archives` 导入失败和 `app.agents.tools.archive_tools` 模块缺失，不是夹具或环境错误。
+- `catalog.py` 抽取并复用正式范围、删除阻断、五类筛选和稳定排序谓词，新增 Agent 专用安全投影；
+  目录项只含调用内 `A` 引用、文件名、确认时间和五字段 `value/source/has_source_evidence`，正文逐字固定
+  分页首行与五字段模板，空目录使用固定文案。
+- 新增目录与证据两个只读工具。模型工具 Schema 隐藏服务端 `user_id/project_id/kb_id`、`top_k`、
+  `document_ref` 与注入参数；证据查询规范化后固定调用无统一阈值 Top-8 候选入口，只把 `S1..S8`、
+  文件名、位置和摘录写入 ToolMessage。
+- 原始 `document_id/chunk_id/score/reranker_score` 只保留在按 `tool_call_id` 隔离的请求级注册表；
+  ToolMessage 和可序列化消息投影不含这些字段，失败调用清理自身记录，请求成功或异常退出均清空注册表。
+- 实现 Agent 的 P04 相关回归为 `77 passed`、全量为 `535 passed, 2 skipped, 144 warnings`。主 Agent
+  独立复核目录/工具/FR-038/FR-039 相关测试为 `63 passed, 93 warnings`，全量为
+  `535 passed, 2 skipped, 144 warnings`；`compileall app tests` 通过。warning 仍为既有弃用提示。
+- 本切片未连接真实 PostgreSQL、Chroma 或 DeepSeek；只证明确定性范围、参数和安全投影，不代表
+  FR-042 工具选择或回答质量通过。下一步直接进入 P05，只实现 Archive Graph、共享 Checkpoint Runtime
+  与可信最终投影，不注册消息、历史或工具日志 HTTP 端点。
+
+## 56. FR-042 P05 Archive Graph、Checkpoint 与可信最终投影（2026-09-16）
+
+- GPT-5.6 Luna 实现 Agent 在分析阶段长时间未产生 RED 或文件改动；主 Agent 确认无外部阻塞后终止该子任务，
+  按已确认实施计划接管 P05。首次有效 RED 为 `app.agents.archive` 模块缺失造成 2 个收集错误。
+- GREEN 新增档案专用 Graph/State/Prompt/Runtime/完整轮次投影，并抽取 POLICY/ARCHIVE 共用严格
+  SQLite Checkpoint 存储。Graph 限制模型每次决策最多一个工具、单轮最多两次；参数失败占额度，
+  多工具、未注册工具和第三次调用均在禁止执行前失败。
+- 最终响应只由最后一次成功工具决定：目录使用确定性模板，证据使用规范化用户原问题与该次原始
+  Top-8 调用公共 D5/D6 判定，零成功工具或空证据使用固定拒答。Checkpoint 只保存 HumanMessage 与
+  服务端可信最终 AIMessage，不持久 ToolMessage、自由文本、原始候选、标识或分数。
+- 对模型、工具和证据判定的连接/超时只额外尝试一次，内部重试不增加工具调用数或重复检索。
+  补充 RED 证明了判定重试、工具最终失败的安全 `FAILED` 事件，以及工具成功后模型失败仍保留已有事件；
+  三条均在预期位置失败后由最小实现转绿。
+- P05 聚焦测试为 `18 passed`；连同旧制度 Agent、P04 工具、FR-039 问答/检索的相关回归为
+  `73 passed, 102 warnings`；后端全量为 `552 passed, 2 skipped, 146 warnings`，`compileall app tests`
+  与 `git diff --check` 通过（仅既有 CRLF 提示）。
+- 本切片未调用真实 DeepSeek、PostgreSQL 或 Chroma；上述证据只证明确定性 Graph/Checkpoint 控制流，不是
+  工具选择或回答质量评测结论。下一步直接进入 P06，实现消息执行、完整轮次历史、脱敏工具审计和
+  四端点闭环，不提前修改项目删除流程或 Vue。
+
+## 57. FR-042 P06 消息执行、历史、审计与四端点闭环（2026-09-16）
+
+- 当前工具环境无可调用的实现子 Agent 接口，主 Agent 按 Multi-Agent Workflow 退化规则执行 P06，
+  仍保持“冻结计划→实际 RED→最小 GREEN→Diff 主审”。服务层首次 RED 为
+  `app.services.agent.archive_execution` 模块缺失；Router RED 为三个路径/OpenAPI 契约不存在。
+- 新增档案助手应用服务：注入 `user_id + project_id + kb_id`，执行同一 `thread_id`，只用 Graph
+  可信结果构造 `ArchiveAgentResponse`，成功后更新会话时间。完整轮次历史与下一轮模型输入复用
+  同一投影，历史引用固定为空。
+- 工具日志按 `(agent_session_id, tool_call_id)` 幂等写入，只接受两个冻结工具名、四个安全错误码和
+  冻结参数/结果摘要键；读取时再做白名单复核。自动重试的累计耗时只落一条记录，不持久查询原文、
+  筛选值、文件名、摘录、回答、范围 ID、文档/Chunk ID 或分数。
+- Router 现已完成四端点。消息 Schema 的 422 在会话查找和 Runtime 之前结束；三个真实 ARCHIVE 入口对
+  POLICY ID 统一返回 `404 ARCHIVE_AGENT_SESSION_NOT_FOUND`。Graph 越界映射
+  `ARCHIVE_AGENT_MODEL_OUTPUT_INVALID`，模型、工具、Checkpoint、Runtime 与 PostgreSQL 最终失败映射
+  `ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`，不泄露异常正文或 FR-039 错误码。
+- 跨层集成测试使用真实 Router、Archive Graph、SQLite Checkpoint 和业务库，用固定候选/模型桩验证
+  连续两轮上下文、固定拒答、证据回答、五字段引用和 PostgreSQL 脱敏工具日志；响应与日志均无内部
+  ID、分数或查询原文。
+- P06 相关回归为 `82 passed, 19 warnings`；后端全量为
+  `567 passed, 2 skipped, 146 warnings`；`compileall app tests` 与 `git diff --check` 通过（仅既有
+  CRLF 提示）。本切片未调用真实 DeepSeek/Chroma/PostgreSQL，Mock 不代表工具选择或回答质量通过。
+- 下一步直接进入 P07：在既有空项目删除流程中幂等清理 ARCHIVE Checkpoint 线程、会话和工具日志，
+  不改变公开删除路由或 Vue。
+
+## 58. FR-042 P07 项目删除联动（2026-09-16）
+
+- 当前分支仍为 `codex/fr-042-archive-agent-mvp`。当前工具环境没有可调用的实现子 Agent 接口，主 Agent
+  按已确认 Implementation Plan 的退化规则执行实际 RED、最小 GREEN 和 Diff 主审；未新增公开路由、
+  删除状态或数据库结构。
+- P07 首次有效 RED 为 4 个服务测试因 `delete_empty_project` 不接受隔离 `checkpoint_path` 而失败。
+  GREEN 在既有空项目删除服务内增加 Project 行锁、ARCHIVE 会话枚举、Checkpoint 幂等删除，以及
+  工具日志→会话→项目的显式事务清理；文档门禁仍在任何会话或 Checkpoint 清理前返回既有 409。
+- 真实临时共享 SQLite Checkpoint 文件验证了目标 ARCHIVE 线程删除、其他项目 ARCHIVE 与 POLICY 线程
+  保留；Checkpoint 失败时业务事务 rollback，Checkpoint 已删但数据库提交失败时同一删除可安全重试。
+  Router 回归证明公开 DELETE 仍返回 204、旧项目/会话不可访问、KnowledgeBase 与 POLICY 会话保留。
+- P07 聚焦测试为 `15 passed, 3 warnings`，扩大到迁移、模型、依赖、项目/Agent 路由的相关回归为
+  `59 passed, 9 warnings`；后端全量为 `572 passed, 2 skipped, 148 warnings`；
+  `python -m compileall -q app tests` 与 `git diff --check` 通过（仅既有 CRLF 提示）。
+- P07 本地实现阶段没有连接或写入真实 PostgreSQL、Chroma、DeepSeek，也没有修改相邻 Vue 仓库。
+- `tests/test_migration_service_postgres.py` 已把该真实门补成可选测试：专用空库升级到 `0011` 后，创建
+  ARCHIVE 会话/工具日志与真实临时 Checkpoint，再调用项目删除服务并核对 Project、会话、日志和线程
+  清零，同时保留 KnowledgeBase/POLICY。未设置 `POSTGRES_TEST_URL` 的普通本地预检为 `1 skipped`。
+- 用户随后明确授权真实 PostgreSQL 隔离写入。第一次尝试因 Windows pytest 用户临时目录无权限而在
+  测试 setup 前失败；当次随机 schema 已按所有权核验清理。将 pytest 临时目录固定到工作区后，第二次
+  在新的随机 schema 完成 0001→0011 迁移、约束、Project 行锁删除服务、日志/会话清理和真实临时
+  SQLite Checkpoint 线程删除，结果为 `1 passed in 32.08s`。
+- 第二次随机 schema 同样按所有权核验删除，并以独立只读系统目录查询确认剩余数量为 0；临时运行器和
+  pytest 临时目录均已清理。随后后端全量复跑为 `572 passed, 2 skipped, 148 warnings`。
+- 下一步进入 Swagger、真实 Chroma/DeepSeek 固定集与 Vue 验收。新的外部写入须另获用户授权；Vue
+  阶段仍须先处理相邻仓库的既有脏工作区和分支门。
+
+## 59. FR-042 P08 第二轮真实评测与判定收敛（2026-09-16）
+
+- 用户已分别授权两轮 17 条真实 DeepSeek 固定集。第二轮结果目录为
+  `pixie_qa/results/20260916-093042`；32 条 pending 已逐条落盘评分，数据集详细/摘要分析和根行动计划
+  均已写入，官方 Step 6 verifier 通过。没有跳过任何成功运行产生的分析义务。
+- 第二轮严格条目通过率为 `15/17（88.2%）`，较第一轮 `12/17（70.6%）` 提升。ToolPath 为
+  `16/16`，证明事实问题绕行目录工具的提示修正生效；Privacy `17/17`、目录 `2/2`、无据拒答
+  `2/2`、隔离拒答 `2/2`、受控失败 `1/1` 均通过。
+- 剩余失败为 Q-02 与 MULTI-02 第一轮：安全候选分别直接包含“编制单位：北辰设计院”和
+  `文档日期：2025-03-18`，工具路径正确但公共判定错误拒答。8 个单轮有据问题达到 `7/8`，但两组
+  多轮只有 MULTI-01 完整通过，因此 §10.3 的多轮质量门仍为 `1/2`，不得宣称 FR-042 质量通过。
+- 在完成第二轮 Step 6 后继续 TDD：提示契约 RED 后，`questions.py` 增加“先定位目标文档，再核对同一
+  `document_ref` 字段”的窄化规则；数据材料 RED 后，生成器新增逐轮 `expected_document_filenames`
+  和写出前的同文档事实绑定门；评估器 RED 后，多轮 EvidenceFaithfulness 改为逐轮评分并取最低分，
+  任一核心事实失败时必须低于 0.5。
+- 本轮三个 RED 均实际运行并在预期断言失败，最小 GREEN 后相关测试为 `41 passed`；后端全量为
+  `596 passed, 2 skipped, 207 warnings`，`compileall app tests evals scripts` 与 `git diff --check`
+  通过（仅既有 CRLF 提示）。上述本地测试不证明修改后的真实 DeepSeek 质量。
+- 当前未发起第三轮真实模型调用，也未修改相邻 Vue 仓库。Pixie 展示服务可能仍运行在既有 7118 端口，
+  未经用户确认不停止。下一步须由用户重新授权第三轮真实 DeepSeek 固定集；完成该轮 Step 6 并确认
+  多轮 `2/2` 后，才能进入 Swagger、Vue 与交付文档的最终验收。
+
+## 60. FR-042 P08 第三轮真实评测、不合格分析与复盘（2026-09-16）
+
+- 用户已授权第三轮 17 条真实 DeepSeek 固定集，结果目录为
+  `pixie_qa/results/20260916-151651`。17 条 HTTP/Graph/模型调用均完成；Pixie 在最终控制台汇总时因
+  Windows GBK 无法编码 `⏳` 而退出，故使用 `scripts/recover_fr042_pixie_result.py` 从已落盘的
+  17 份 Trace 恢复结果，没有重复调用付费模型。`meta.json` 已明确记录恢复事实。
+- 32 条待评分均已完成。数据集详细/摘要分析、根行动计划详细/摘要均已写入，官方 Step 6 verifier
+  返回 `Step 6 completion check passed.`，当前结果目录没有 pending。
+- 第三轮严格通过 `15/17（88.2%）`。ToolPath `16/16`、Privacy `17/17`、目录 `2/2`、多轮 `2/2`、
+  受控失败 `1/1` 均通过；MULTI-02 已由第二轮失败变为两轮完整通过。
+- 当前失败为 Q-02、Q-03，EvidenceFaithfulness 均为 0.0。两题都只正确调用一次证据工具，候选也分别
+  含“编制单位：北辰设计院”和“项目阶段：施工阶段”，但候选只暴露英文文件名，缺少把用户所说
+  “设计说明”“施工方案”映射到目标文档的模型可见身份信息，公共判定层因此保守拒答。
+- 有据单轮问答仅 `6/8`，低于 §10.3 的 `7/8` 门槛，所以 FR-042 真实模型质量仍不通过。当前不应继续
+  堆叠 Prompt 或虚构标题证据；应先裁决是否把已确认档案的稳定标题/显示名作为模型可见候选字段，并
+  保证它与文件名、`document_ref` 和字段摘录同源。
+- 用户要求的简明记录已建立在 `docs/review/FR-042-真实模型质量评测/`，其中《评测复盘》记录第一轮
+  问题、第二轮优化和第三轮现状，《问题排查与解决方案》固定排查顺序、解决方案与通过标准。
+- 下一步先完成上述契约裁决，再按 TDD 增加文档身份绑定正例、跨文档负例和身份不足拒答测试，实施最小
+  修正并完成回归。第四轮真实 DeepSeek 调用须另获用户授权；当前未修改 Vue，未提交或推送。
+
+## 61. FR-042 DEC-021 文档标题身份绑定本地修正（2026-09-16）
+
+- 用户确认采用主 Agent 推荐方案：证据候选复用当前 `CONFIRMED` 档案已人工确认的 `TITLE`，作为可空
+  `document_title` 帮助模型把自然语言文档称呼绑定到同一 `document_ref`；不新增数据库列，不根据
+  文件名或模型输出推断标题。该稳定决策已登记为 DEC-021，并同步需求、架构、接口与实施计划。
+- 本轮使用 eval-driven-dev 已完成第三轮 Step 6 后的行动项。当前无可调用的 Luna 实现接口，主 Agent
+  按既定退化规则执行 TDD 和 Diff 审查，没有改变公开 HTTP Schema、引用 DTO、数据库迁移或工具参数。
+- RED 新增并实际运行 4 项契约：正式标题读取服务不存在、证据工具未注入标题、公共判定 Prompt 未展示
+  标题、固定集没有逐轮标题绑定；结果为 `4 failed`，失败位置均与预期一致。
+- GREEN 在目录服务中按 `project_id + CONFIRMED + 删除可见性` 读取目标文档标题；证据工具对检索候选
+  再做一次正式范围交集，只向模型投影可空标题。标题只用于身份，事实答案仍要求同一 `document_ref`
+  的 `excerpt`；Checkpoint 继续只保存受信用户/助手消息，公开引用与工具审计字段不变。
+- 固定集标题来自 `scripts/generate_archive_v1_eval_data.py` 的既有虚构正式元数据，Q-02/Q-03 分别绑定
+  “星河办公楼改造工程设计说明”和“星河办公楼改造工程施工方案”，禁止测试脚本猜测标题。生成器新增
+  `expected_document_titles` 硬门，并要求标题、文件名和答案事实共享请求内文档引用。
+- 最小 GREEN 四项为 `4 passed`；扩展到目录、工具、公共判定、评测材料、Graph、执行服务和 Router 为
+  `94 passed, 134 warnings`；后端全量为 `598 passed, 2 skipped, 207 warnings`。warning 均为既有
+  Starlette/httpx2 与 Pixie/jsonpickle 弃用提示。
+- `python -m compileall -q app tests evals scripts` 与 `git diff --check` 已通过，后者仅显示既有 CRLF
+  提示；固定集抽查确认 Q-02、Q-03、MULTI-02 的预期标题、文件名和候选标题一致。
+- 当前仍只证明本地确定性行为和固定集数据约束，不能证明 DeepSeek 已修复 Q-02/Q-03。下一步须由用户
+  另行授权第四轮真实模型固定集；当前未提交、未推送、未改 Vue。
+
+## 62. FR-042 P08 第四轮真实评测通过（2026-09-17）
+
+- 用户明确同意将本轮虚构、去标识化固定集发送至 DeepSeek，仅授权第四轮完整 17 条评测。结果目录为
+  `pixie_qa/results/20260916-155823`；未发起第五轮调用。
+- Pixie 使用 UTF-8 环境原生完成运行与落盘，没有复现第三轮 Windows GBK 汇总异常。17 条均经过 HTTP
+  入口、生产 Archive Graph、真实 DeepSeek 和临时 Checkpoint；目录/检索外部世界为受控注入数据。
+- 严格通过 `17/17`。有据单轮 `8/8`、无据 `2/2`、隔离 `2/2`、目录 `2/2`、多轮 `2/2`、Trace
+  隐私 `17/17`、受控失败 `1/1`；Q-02、Q-03 已分别正确回答“北辰设计院”“施工阶段”并返回同文档引用。
+- 32 条 Agent Evaluator pending 已依据每轮输入、工具路径、安全候选、响应和引用逐条评分并写回，当前
+  pending 为 0。详细/摘要分析和详细/摘要行动计划均已生成，官方 Step 6 verifier 返回
+  `Step 6 completion check passed.`。
+- 本结论只证明一次修复后的固定集真实模型运行通过，不能替代真实 PostgreSQL、Chroma、文件和 Vue
+  端到端证据，也不能证明长期稳定性。下一步先完成 Swagger/HTTP 真实本地闭环，再进入 Vue 最小联调。
+- 当前未提交、未推送、未修改 Vue。Pixie 服务仍保持在既有 7118 端口；未经用户确认不停止。
+
+## 63. FR-042 真实后端闭环验收通过（2026-09-17）
+
+- 用户授权进入实际本地后端闭环验收。只读预检发现 8000/8001/5432/7118 均未监听、本机无 Docker CLI，
+  项目当前 PostgreSQL 配置指向远端开发实例且 `public` Schema 为 `0010_account_auth`。本轮没有迁移或
+  写入共享 `public`，而是在同一实例创建随机隔离 Schema，并在结束时删除。
+- 验收使用本地 FastAPI、临时 Chroma 1.5.9、本地 BGE/Reranker、文件系统、SQLite Checkpoint 和真实
+  DeepSeek；资料是一份完全虚构 TXT。随机 Schema 从空状态迁移至 `0011_archive_agent_scope`。
+- 主链路完成：注册/登录→创建项目→上传→解析→七字段人工确认→`CONFIRMED`/Chroma 索引→创建档案
+  会话→目录题→有据题与同文档引用→无据固定拒答→读取 3 组完整历史→读取脱敏工具审计。
+- 第一次业务验收脚本错误要求三轮恰好 3 条工具日志；第二次仍错误要求无据题至少调用一次证据工具。
+  需求、架构、API 与单测明确允许单轮最多两个调用，且零成功工具时固定拒答。第三次按正式契约验证：
+  目录 1 次、有据 1 次、无据 0 次，最终通过。前两次失败均为验收器过约束，不是应用缺陷。
+- 最终聚合：健康检查通过、迁移 `0011`、文档已索引、目录/有据/无据三类响应通过、历史 3 轮、工具
+  审计 2 条、公开响应脱敏通过。清理后 PostgreSQL/Chroma/文件/Checkpoint 均为零，随机 Schema 已删除。
+- 简明复盘位于 `docs/review/FR-042-本地后端闭环验收/`。临时 Chroma 和验收目录已停止并删除，8000、
+  8001 均未继续监听；先前 §62 所述 Pixie 7118 当前也已不再监听。当前未修改 Vue、未提交、未推送；
+  下一步进入相邻 Vue 仓库分支门和最小联调。
+
+## 64. FR-042 Vue 确定性接入完成，真实业务代理联调待恢复 Chroma（2026-09-17）
+
+- 相邻 Vue 仓库基线工作区干净，已从 `feature/ui-feedback-and-layout` 创建并切换到
+  `codex/fr-042-archive-agent-mvp`；未执行 stash、reset、提交或推送。
+- 按 TDD 完成 FR-042 独立“档案助手”入口：新增四端点 DTO/API、当前会话 Store、顺序消息、当前回答
+  状态、五字段脱敏引用、历史刷新、脱敏工具日志和项目切换清理；现有 FR-039 单轮智能检索保持独立。
+- RED 分别证明 API 方法缺失、Store 动作缺失、面板缺失、View 路由/侧栏缺失和过期历史错误污染；
+  GREEN 后前端完整回归为 `11` 个测试文件、`130 passed`，类型检查和生产构建均通过。
+- 本地临时启动 FastAPI 与 Vite 后，新增页面深链返回 `200`；FR-042 创建会话端点经直接 `8000` 和
+  Vite `5173/api` 均返回相同 `401 AUTHENTICATION_REQUIRED`，证明受保护路由与代理可达。
+- 健康检查显示 PostgreSQL 和 768 维 Embedding 正常、Chroma 未运行，直接与代理均返回 `503 degraded`；
+  浏览器控制服务返回 `nodeRepl.fetch request failed`。因此没有新增登录后三类问题或真实 DOM 点击证据。
+- 标准 `python run.py` 启动自动执行 Alembic，使当前开发库 `public` Schema 从 `0010_account_auth` 升至
+  `0011_archive_agent_scope`；未执行回滚。临时 FastAPI/Vite 已停止，8000/5173 均无监听。
+- 下一步恢复本地 Chroma 并使用现有演示用户/项目/正式 TXT 完成 Vite 代理顺序验收：新建会话→目录题
+  →有据题→无据题→历史→工具日志；完成后再审查两个仓库的提交范围，不提前提交或推送。
+
+## 65. FR-042 Vue 真实代理闭环验收通过（2026-09-17）
+
+- 用户明确授权 Vue 真实代理闭环验收。本轮没有使用共享演示数据，而是建立随机隔离 PostgreSQL
+  Schema、独立临时 Collection、文件目录和 Checkpoint；资料、账号、项目和人物均为虚构数据。
+- 隔离 Schema 从空状态迁移到 `0011_archive_agent_scope`。全部业务请求经 Vite `5173/api` 代理完成：
+  注册登录、创建项目、上传解析、七字段人工确认、正式索引、创建会话、目录题、有据题、无据题、
+  历史与工具日志；前端深链接同时返回 `200`。
+- 最终三轮状态为 `ANSWERED / ANSWERED / REFUSED_NO_EVIDENCE`；有据回答包含目标事实和 1 条同文件
+  脱敏引用，无据回答使用固定文案；历史为 6 条完整消息且引用按 MVP 契约恒空；工具日志只有目录与
+  证据两个只读工具，共 2 条，安全摘要未出现范围 ID、原文事实或分数。
+- 前三次未通过均已定位：公开响应不含 `final_chunk_count`、历史引用按契约恒空、复合问题一次真实模型
+  调用保守拒答。前两项是验收器过约束；第三项通过把闭环烟测收敛为单一直接证据问题解决，复杂质量
+  仍由已完成的 17 条固定集承担。第四次完整通过，未修改产品代码。
+- 验收前确认临时正式 Collection 有 Chunk、Checkpoint 非空、文件已落盘；结束后隔离 Schema 和两个
+  Collection 剩余数量均为 0，8 个临时文件、Checkpoint 与 ASCII 临时目录已删除。8000/5173 已停止；
+  用户原有 Docker Chroma `8001` 保持运行且未清理其他 Collection。
+- 简明记录位于 `docs/review/FR-042-Vue真实代理闭环验收/`。本轮证明真实 HTTP 代理闭环，不包含新的
+  浏览器 DOM 点击证据，也不证明长期稳定性。下一步是审查两个仓库 diff 与提交范围；未经用户要求不
+  提交、不推送，也不发起第五轮真实固定集。
+
+## 66. FR-042 提交前契约偏差修复（2026-09-17）
+
+- 提交前审查发现后端 Runtime 构造阶段的 `AppError` 会原样泄漏 `DEEPSEEK_NOT_CONFIGURED`，违反
+  FR-042 冻结错误码；Vue 同时仍使用两个旧工具名，导致真实工具日志显示原始英文名称。
+- 后端按 TDD 增加构造 `AppError` 的失败用例，实际 RED 为返回 `DEEPSEEK_NOT_CONFIGURED`；修正后
+  显式区分 Runtime 打开、执行和关闭阶段：打开/关闭异常统一映射依赖不可用，执行阶段已有业务错误
+  保持原样。新增回归用例同时覆盖模型输出业务错误与关闭阶段 `AppError`。
+- Vue RED 使用真实 `search_confirmed_archive_evidence` 后中文标签断言失败；GREEN 将两个映射改为
+  `list_formal_archives` 与 `search_confirmed_archive_evidence`，并同步 API/Store 测试中的脱敏摘要。
+- 后端路由相关测试 `20 passed`，后端全量 `601 passed, 2 skipped, 207 warnings`；Vue 相关测试
+  `76 passed`，全量 `130 passed`，类型检查和生产构建通过；后端 `compileall` 与两个仓库
+  `git diff --check` 通过。warning 仍为既有弃用和 CRLF 提示。
+- 未重复执行第五轮真实 DeepSeek 固定集，因为本轮没有修改 Prompt、Graph、检索或公共判定层；未新增
+  业务决策，未提交、未推送。下一步只做两个仓库最终提交范围审查和显式暂存规划。
+
+## 67. FR-042 最终提交范围审查（2026-09-17）
+
+- Vue 仓库当前 12 个修改/新增文件全部属于 FR-042，可作为一个独立提交；构建产物与 TypeScript 缓存
+  均未进入状态清单。
+- 后端应拆为当前用户资料前置、FR-042 功能、FR-042 评测资产和 FR-042 文档四类提交。详细边界记录在
+  `docs/review/FR-042-提交范围审查/提交范围.md`；实际暂存必须逐路径执行，禁止 `git add -A`。
+- `scripts/policy_collection_embedding_rebuild.py` 与其测试明确排除。当前 diff 会撤销 §22 已完成的安全
+  收口，包括只读预检、聚合计数、维度错误分类、canary 精确命中和异常脱敏；该组修改与 FR-042 无依赖，
+  且归属未确认，因此本轮保持未暂存，不擅自修改或回滚。
+- 用户已授权继续提交。后端当前用户资料、FR-042 功能和评测资产已分别提交为 `f497f15`、`26abb22`、
+  `c6661dd`；本文档随 FR-042 文档提交。每次提交前均已核对 `git diff --cached`，上述两个排除文件
+  始终不在索引中。下一步完成 Vue 独立提交，再推送两个仓库的同名功能分支。
