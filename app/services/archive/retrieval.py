@@ -40,6 +40,7 @@ _BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文
 _ARCHIVE_QUERY_EXPRESSION_PREFIX = "档案证据检索问题："
 _C4B_RERANKER_QUERY_EXPRESSION_PREFIX = "请从项目档案中查找与问题直接匹配的原文证据："
 _DIAGNOSTIC_CANDIDATE_KEY_DOMAIN = "mini-rag.archive-retrieval-diagnostic.candidate.v1"
+_ARCHIVE_ANSWER_TOP_K = 8
 _ArchiveCandidate = tuple[float, ArchiveRetrievalItemRead]
 _RerankedArchiveCandidate = tuple[float, float, ArchiveRetrievalItemRead]
 
@@ -370,7 +371,7 @@ def retrieve_archive_diagnostics(
     )
 
 
-def retrieve_archive_chunks(
+def _retrieve_archive_items(
     *,
     user_id: UUID,
     project_id: UUID,
@@ -378,8 +379,10 @@ def retrieve_archive_chunks(
     query: str,
     top_k: int,
     session: Session,
+    apply_score_threshold: bool,
+    observe_result: bool,
 ) -> ArchiveRetrievalResponse:
-    """检索当前项目正式档案并转换为可追溯证据。"""
+    """复用正式范围和 Chroma 查询，按调用方策略生成有序证据。"""
     if not query or not query.strip():
         raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
     if top_k < 1 or top_k > 10:
@@ -404,12 +407,13 @@ def retrieve_archive_chunks(
         response = ArchiveRetrievalResponse(
             items=[], requested_top_k=top_k, returned_count=0
         )
-        eval_wrap(
-            response.model_dump(mode="json"),
-            purpose="state",
-            name="archive_retrieval_result",
-            description="正式档案检索实际返回的可追溯证据项。",
-        )
+        if observe_result:
+            eval_wrap(
+                response.model_dump(mode="json"),
+                purpose="state",
+                name="archive_retrieval_result",
+                description="正式档案检索实际返回的可追溯证据项。",
+            )
         return response
 
     retrieval_started_at = perf_counter()
@@ -420,8 +424,16 @@ def retrieve_archive_chunks(
         query=query,
         formal_ids=formal_ids,
     )
-    rerank_threshold = settings.archive_reranker_score_threshold
-    reranked_candidates = _rerank_candidates(query=query, candidates=candidates)
+    rerank_threshold = (
+        settings.archive_reranker_score_threshold
+        if apply_score_threshold
+        else None
+    )
+    reranked_candidates = (
+        _rerank_candidates(query=query, candidates=candidates)
+        if apply_score_threshold
+        else _score_and_order_candidates(query=query, candidates=candidates)
+    )
     items = [item for _, _, item in reranked_candidates[:top_k]]
     logger.info(
         "archive_retrieval_complete user_id=%s project_id=%s top_k=%s formal_documents=%s returned_count=%s rerank_threshold=%s duration_ms=%.2f",
@@ -438,10 +450,67 @@ def retrieve_archive_chunks(
         requested_top_k=top_k,
         returned_count=len(items),
     )
-    eval_wrap(
-        response.model_dump(mode="json"),
-        purpose="state",
-        name="archive_retrieval_result",
-        description="正式档案检索实际返回的可追溯证据项。",
-    )
+    if observe_result:
+        eval_wrap(
+            response.model_dump(mode="json"),
+            purpose="state",
+            name="archive_retrieval_result",
+            description="正式档案检索实际返回的可追溯证据项。",
+        )
     return response
+
+
+def retrieve_archive_chunks(
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    kb_id: UUID,
+    query: str,
+    top_k: int,
+    session: Session,
+) -> ArchiveRetrievalResponse:
+    """检索当前项目正式档案，并保留公开接口的可选分数阈值行为。"""
+    return _retrieve_archive_items(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        query=query,
+        top_k=top_k,
+        session=session,
+        apply_score_threshold=True,
+        observe_result=True,
+    )
+
+
+def retrieve_archive_answer_candidates(
+    *,
+    user_id: UUID,
+    project_id: UUID,
+    kb_id: UUID,
+    query: str,
+    session: Session,
+    observe_result: bool = True,
+) -> ArchiveRetrievalResponse:
+    """返回当前项目固定 Top-8 回答候选，不应用公开检索分数阈值。
+
+    Args:
+        user_id: 当前已认证用户标识。
+        project_id: 当前项目标识。
+        kb_id: 当前项目绑定的知识库标识。
+        query: 用于取得回答证据候选的问题文本。
+        session: 当前业务数据库会话。
+        observe_result: 是否保留 FR-039 使用的原始候选评测观测。
+
+    Returns:
+        保留既有重排稳定顺序的前八条正式档案候选。
+    """
+    return _retrieve_archive_items(
+        user_id=user_id,
+        project_id=project_id,
+        kb_id=kb_id,
+        query=query,
+        top_k=_ARCHIVE_ANSWER_TOP_K,
+        session=session,
+        apply_score_threshold=False,
+        observe_result=observe_result,
+    )

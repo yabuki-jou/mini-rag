@@ -44,8 +44,11 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 
 
 @lru_cache
-def get_chat_model() -> ChatOpenAI:
+def get_chat_model(*, max_retries: int | None = None) -> ChatOpenAI:
     """创建并缓存连接 DeepSeek OpenAI 兼容接口的聊天客户端。
+
+    Args:
+        max_retries: 可选的客户端隐藏重试次数；为 ``None`` 时保留客户端默认行为。
 
     Returns:
         使用固定模型、接口地址和零温度配置的聊天客户端。
@@ -70,10 +73,18 @@ def get_chat_model() -> ChatOpenAI:
             message="DeepSeek API 密钥未配置。",
         )
 
-    # 客户端创建本身不会发送请求；temperature=0 用于提高制度问答稳定性。
+    # 无参入口不显式覆盖客户端既有重试默认；档案助手可按需关闭隐藏重试。
+    client_options: dict[str, object] = {
+        "api_key": api_key,
+        "model": settings.deepseek_model,
+        "base_url": settings.deepseek_base_url,
+        "temperature": 0,
+        "timeout": settings.deepseek_request_timeout_seconds,
+    }
+    if max_retries is not None:
+        client_options["max_retries"] = max_retries
+
+    # 客户端创建本身不会发送请求；temperature=0 用于提高问答稳定性。
     return ChatOpenAI(
-        api_key=api_key,
-        model=settings.deepseek_model,
-        base_url=settings.deepseek_base_url,
-        temperature=0,
+        **client_options,
     )

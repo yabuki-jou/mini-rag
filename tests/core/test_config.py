@@ -41,6 +41,25 @@ def test_settings_default_to_formal_bge_base_embedding() -> None:
     assert settings.archive_embedding_context_mode == "evidence_values"
 
 
+def test_settings_default_and_validate_deepseek_request_timeout() -> None:
+    """DeepSeek 请求超时必须有 30 秒默认值，并拒绝非正数。"""
+    assert Settings(_env_file=None).deepseek_request_timeout_seconds == 30
+    assert (
+        Settings(
+            _env_file=None,
+            deepseek_request_timeout_seconds=12.5,
+        ).deepseek_request_timeout_seconds
+        == 12.5
+    )
+
+    for invalid_timeout in (0, -1):
+        with pytest.raises(ValidationError):
+            Settings(
+                _env_file=None,
+                deepseek_request_timeout_seconds=invalid_timeout,
+            )
+
+
 def test_settings_supports_only_explicit_archive_embedding_context_modes() -> None:
     """正式索引的向量上下文模式必须是受控枚举，便于固定集复现实验。"""
     assert (

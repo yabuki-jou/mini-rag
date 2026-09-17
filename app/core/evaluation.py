@@ -1,9 +1,36 @@
 """提供可选 Pixie 评测观测，生产环境未安装时保持无操作。"""
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from collections.abc import Iterator
 from typing import Any, Literal, TypeVar
 
 
 T = TypeVar("T")
+_EVAL_NAME_COUNTS: ContextVar[dict[str, int] | None] = ContextVar(
+    "archive_eval_name_counts",
+    default=None,
+)
+
+
+@contextmanager
+def evaluation_name_scope() -> Iterator[None]:
+    """为一次多工具或多轮评测提供稳定且不冲突的 Wrap 名称。"""
+    token = _EVAL_NAME_COUNTS.set({})
+    try:
+        yield
+    finally:
+        _EVAL_NAME_COUNTS.reset(token)
+
+
+def _scoped_name(name: str) -> str:
+    """只在显式评测作用域内给重复名称追加稳定序号。"""
+    counts = _EVAL_NAME_COUNTS.get()
+    if counts is None:
+        return name
+    count = counts.get(name, 0) + 1
+    counts[name] = count
+    return name if count == 1 else f"{name}__{count}"
 
 
 def eval_wrap(
@@ -31,6 +58,6 @@ def eval_wrap(
     return pixie.wrap(
         data,
         purpose=purpose,
-        name=name,
+        name=_scoped_name(name),
         description=description,
     )

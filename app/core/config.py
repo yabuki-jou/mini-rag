@@ -46,6 +46,7 @@ class Settings(BaseSettings):
         deepseek_api_key: DeepSeek API 密钥。
         deepseek_base_url: DeepSeek 的 OpenAI 兼容接口地址。
         deepseek_model: 生成回答所使用的模型名称。
+        deepseek_request_timeout_seconds: DeepSeek 单次请求固定超时秒数。
         auth_jwt_secret: 签发和验证 JWT 的本地机密；为空时认证接口安全地拒绝服务。
         auth_access_token_minutes: Access Token 有效期，单位为分钟。
         auth_refresh_token_days: Refresh Token 与认证会话有效期，单位为天。
@@ -112,6 +113,7 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
+    deepseek_request_timeout_seconds: float = Field(default=30, gt=0)
 
     # 认证密钥不得提供不安全默认值；部署者必须通过本地 .env 明确配置。
     auth_jwt_secret: SecretStr | None = None

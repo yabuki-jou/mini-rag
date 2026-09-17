@@ -1,14 +1,20 @@
 """实现 FR-030 的项目生命周期与项目专属知识库范围。"""
 
 from collections.abc import Sequence
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
+from app.agents.checkpoint import delete_checkpoint_thread
+from app.core.config import settings
 from app.core.errors import AppError
 from app.models import (
+    AgentSession,
+    AgentToolCallLog,
+    AgentType,
     ArchiveAuditLog,
     ArchiveDocumentType,
     ChecklistItem,
@@ -175,21 +181,84 @@ def update_project(
     return project
 
 
-def delete_empty_project(*, project_id: UUID, session: Session) -> None:
+def delete_empty_project(
+    *,
+    project_id: UUID,
+    session: Session,
+    checkpoint_path: Path | None = None,
+) -> None:
     """删除没有文档的项目及项目级数据，但保留内部知识库记录。
 
     绑定知识库可能包含旧系统文档；项目删除不能通过清理知识库破坏既有 RAG/Agent 数据。
     """
-    project = read_project(project_id=project_id, session=session)
-    document_exists = session.exec(
-        select(Document.id).where(Document.project_id == project.id).limit(1)
-    ).first()
+    try:
+        # PostgreSQL 保持该行锁直到最终提交；SQLite 会忽略 FOR UPDATE，
+        # 但仍可验证相同的删除顺序与可观察结果。
+        project = session.exec(
+            select(Project).where(Project.id == project_id).with_for_update()
+        ).first()
+        if project is None:
+            raise AppError(404, "PROJECT_NOT_FOUND", "项目不存在或无权访问。")
+        document_exists = session.exec(
+            select(Document.id).where(Document.project_id == project.id).limit(1)
+        ).first()
+    except AppError:
+        raise
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise AppError(
+            503,
+            "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE",
+            "项目档案助手暂不可用。",
+        ) from exc
     if document_exists is not None:
         raise AppError(409, "PROJECT_HAS_DOCUMENTS", "项目存在文档记录，不能删除。")
 
     try:
-        # PostgreSQL 由外键级联删除清单和审计。SQLite 测试未启用外键级联时显式删除清单，
-        # 使两种验证方言具有相同的项目级删除语义。
+        archive_sessions = list(
+            session.exec(
+                select(AgentSession).where(
+                    AgentSession.project_id == project.id,
+                    AgentSession.agent_type == AgentType.ARCHIVE,
+                )
+            ).all()
+        )
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise AppError(
+            503,
+            "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE",
+            "项目档案助手暂不可用。",
+        ) from exc
+
+    resolved_checkpoint_path = checkpoint_path or settings.agent_checkpoint_path
+    try:
+        for archive_session in archive_sessions:
+            delete_checkpoint_thread(
+                checkpoint_path=resolved_checkpoint_path,
+                thread_id=archive_session.thread_id,
+            )
+    except Exception as exc:
+        session.rollback()
+        raise AppError(
+            503,
+            "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE",
+            "项目档案助手暂不可用。",
+        ) from exc
+
+    try:
+        # PostgreSQL 有级联约束；这里仍显式按日志→会话→项目删除，
+        # 使 SQLite 和 PostgreSQL 拥有同一可观察语义。
+        for archive_session in archive_sessions:
+            for tool_log in _read_agent_tool_logs(
+                session=session,
+                agent_session_id=archive_session.id,
+            ):
+                session.delete(tool_log)
+        session.flush()
+        for archive_session in archive_sessions:
+            session.delete(archive_session)
+        session.flush()
         for checklist_item in _read_project_checklist_items(session=session, project_id=project.id):
             session.delete(checklist_item)
         for audit_log in _read_project_audit_logs(session=session, project_id=project.id):
@@ -198,7 +267,11 @@ def delete_empty_project(*, project_id: UUID, session: Session) -> None:
         session.commit()
     except SQLAlchemyError as exc:
         session.rollback()
-        raise AppError(500, "PROJECT_DELETE_FAILED", "项目删除失败。") from exc
+        raise AppError(
+            503,
+            "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE",
+            "项目档案助手暂不可用。",
+        ) from exc
 
 
 def _build_demo_checklist_items(*, project_id: UUID) -> list[ChecklistItem]:
@@ -227,6 +300,19 @@ def _read_project_audit_logs(*, session: Session, project_id: UUID) -> Sequence[
     """读取项目审计，供删除时显式清理 SQLite 测试数据。"""
     return session.exec(
         select(ArchiveAuditLog).where(ArchiveAuditLog.project_id == project_id)
+    ).all()
+
+
+def _read_agent_tool_logs(
+    *,
+    session: Session,
+    agent_session_id: UUID,
+) -> Sequence[AgentToolCallLog]:
+    """读取单个档案会话日志，供项目删除时显式清理。"""
+    return session.exec(
+        select(AgentToolCallLog).where(
+            AgentToolCallLog.agent_session_id == agent_session_id
+        )
     ).all()
 
 

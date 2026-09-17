@@ -48,11 +48,14 @@ flowchart LR
 
 详细设计见：
 
+- [文档总览](docs/README.md)
 - [需求说明](docs/design/需求说明.md)
 - [技术架构](docs/design/技术架构.md)
 - [数据库设计](docs/design/数据库设计.md)
 - [API 设计](docs/design/接口设计.md)
 - [智慧档案实施计划](docs/implementation/智慧档案V1实施计划.md)
+- [项目档案助手 MVP 实施计划](docs/implementation/FR042-项目档案助手MVP实施计划.md)
+- [最终验收报告](docs/review/验收报告.md)
 - [P14 C.1 双排序诊断决策](docs/review/P14-rag检索质量改进/P14-C1-双排序诊断决策.md)
 - [P14-D5 证据充分性与拒答判定层方案](docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md)
 - [P14-D6 文档绑定与 Top-8 证据保留方案](docs/review/P14-rag检索质量改进/P14-D6-文档绑定与Top8证据保留方案.md)
@@ -65,10 +68,10 @@ flowchart LR
 - [Agent 演示步骤](docs/implementation/智能体演示步骤.md)
 - [V1 候选发布说明](docs/releases/V1发布说明.md)
 
-以 `LEARNING_PLAN.md`、`docs/stage/handoff.md` 和 V1 候选发布说明为当前状态来源；P14
+以 `LEARNING_PLAN.md`、`docs/stage/handoff.md`、`docs/decisions.md` 和 V1 候选发布说明为当前状态来源；P14
 检索质量的 C2～D6 方案保留为历史实验与决策证据，不再作为当前待执行任务。
-其余 `docs/review/` 与 `docs/stage/` 材料保留其产生时的评审、学习或验收上下文，不作为当前
-实现状态的来源。当前制度 Agent 与智慧档案评测分别位于 `evals/policy_agent/` 和
+`docs/review/` 保留当前评审、质量门和验收证据；仅供追溯的旧评审与阶段材料位于
+`docs/archive/`，不作为当前实现状态的来源。当前制度 Agent 与智慧档案评测分别位于 `evals/policy_agent/` 和
 `evals/archive/`；`pixie_qa/` 只保留本地 Pixie 状态及忽略的运行结果。
 
 ## 主要能力

@@ -17,7 +17,8 @@ from app.agents.admin.observability import ToolObservation
 from app.db import get_session
 from app.dependencies import get_admin_agent_runtime
 from app.main import app
-from app.models import AgentSession, KnowledgeBase, User
+from app.models import AgentSession, AgentType, KnowledgeBase, Project, User
+from app.routers import agent as agent_router
 from app.services.agent import execution as agent_service
 from tests.support.auth import auth_headers
 
@@ -292,3 +293,53 @@ def test_other_user_cannot_read_agent_session(
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "AGENT_SESSION_FORBIDDEN"
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "json_body"),
+    [
+        ("POST", "messages", {"message": "查询项目档案"}),
+        ("GET", "messages", None),
+        ("GET", "tool-calls", None),
+    ],
+)
+def test_policy_routes_hide_archive_agent_sessions(
+    agent_api: tuple[TestClient, Engine, FakeAgentRuntime],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    suffix: str,
+    json_body: dict[str, str] | None,
+) -> None:
+    """制度 Agent 的三个会话入口都不得接收 ARCHIVE 会话 ID。"""
+    client, engine, _ = agent_api
+    user_id, kb_id = create_user_and_kb(engine, "archive-owner")
+    project = Project(owner_id=user_id, kb_id=kb_id, name="档案项目")
+    archive_session = AgentSession(
+        user_id=user_id,
+        kb_id=kb_id,
+        project_id=project.id,
+        agent_type=AgentType.ARCHIVE,
+    )
+    archive_session_id = archive_session.id
+    with Session(engine) as session:
+        session.add(project)
+        session.commit()
+        session.add(archive_session)
+        session.commit()
+
+    def fail_if_called(*_: Any, **__: Any) -> Any:
+        raise AssertionError("ARCHIVE 会话不应进入制度 Agent 处理函数。")
+
+    monkeypatch.setattr(agent_router, "send_agent_message", fail_if_called)
+    monkeypatch.setattr(agent_router, "read_agent_messages", fail_if_called)
+    monkeypatch.setattr(agent_router, "read_agent_tool_calls", fail_if_called)
+
+    response = client.request(
+        method,
+        f"/agent-sessions/{archive_session_id}/{suffix}",
+        headers=auth_headers(engine, user_id),
+        json=json_body,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "AGENT_SESSION_NOT_FOUND"

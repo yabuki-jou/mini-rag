@@ -8,7 +8,7 @@ from fastapi import Depends
 from app.core.errors import AppError
 from app.dependencies.auth import CurrentUserDep
 from app.dependencies.database import SessionDep
-from app.models import AgentSession, ChatSession, Document, KnowledgeBase
+from app.models import AgentSession, AgentType, ChatSession, Document, KnowledgeBase
 
 
 def get_owned_knowledge_base(
@@ -165,7 +165,11 @@ def get_owned_agent_session(
         AppError: Agent 会话不存在或不属于当前用户。
     """
     agent_session = session.get(AgentSession, session_id)
-    if agent_session is None:
+    if (
+        agent_session is None
+        or agent_session.agent_type != AgentType.POLICY
+        or agent_session.project_id is not None
+    ):
         raise AppError(404, "AGENT_SESSION_NOT_FOUND", "Agent 会话不存在。")
     if agent_session.user_id != current_user.id:
         raise AppError(403, "AGENT_SESSION_FORBIDDEN", "无权访问该 Agent 会话。")

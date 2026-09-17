@@ -170,3 +170,79 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 影响：控制台日志、request ID、格式和按大小轮转保持不变；`LOG_MAX_BYTES` 与 `LOG_BACKUP_COUNT` 分别作用于每个日期文件。不同日期的文件不由 `LOG_BACKUP_COUNT` 自动清理，原有 `logs/app.log*` 不迁移、不重命名、不删除。
 - 替代/复查条件：需要按保留天数或总空间自动清理、集中采集，或日志时区不再使用主机本地时区时复查。
 - 依据文件：[`docs/implementation/NFR-021日志按日期分层实施计划.md`](implementation/NFR-021日志按日期分层实施计划.md)、[`app/core/logging.py`](../app/core/logging.py)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-015：项目档案助手采用持久化会话 MVP
+
+- 状态：已确认
+- 首次纳入台账：2026-09-14
+- 背景：现有 `archive-questions` 已完成单次“受控检索 → Grounded Prompt → 带引用回答”闭环；但用户还会提出“当前有哪些正式资料”“先找到验收资料再核对原文”这类需要在结构化目录与原文证据之间选择查询路径的问题。既有 `search_company_policy` 的语义仅适用于企业制度，不能直接复用到项目档案。
+- 决策：在不替换 FR-039 直接问答的前提下，新增一个只读的项目档案助手，作为后续 FR-042。该助手使用持久化会话，且每个会话必须绑定已验证的 `user_id + project_id + kb_id + thread_id`。会话复用现有 Agent 的 SQLite Checkpoint 与 PostgreSQL 脱敏工具审计机制；旧制度会话与项目档案会话必须以受控会话类型区分，档案会话必须持久化项目绑定。MVP 仅提供两个只读工具：`list_formal_archives` 用于查询当前项目的正式档案目录，`search_confirmed_archive_evidence` 用于检索当前项目正式档案的可追溯原文证据。
+- 安全与回答约束：模型只能提交查询词或受控目录筛选条件；`user_id`、`project_id`、`kb_id`、正式文档范围及最终引用对象均由服务端注入或映射。原文事实性回答必须引用 `CONFIRMED` 且未被可见性阻断的档案原文；无充分证据时必须拒答。目录工具仅用于正式档案导航，不得把人工无证据字段包装为原文依据。助手不提供写工具、自动确认、自动清单关联、跨项目检索或自动合规结论。
+- 影响：LangGraph 仅负责单个项目档案助手的“范围校验 → 模型判断 → 工具调用 → 模型回答”循环，不引入运行时多 Agent 编排。`archive-questions` 继续作为简单事实问答的默认、确定性路径；档案助手通过独立项目 API 暴露，后续必须先完成 FR-042 的需求、架构、数据库/API 设计、实施计划和 TDD，再开始迁移与实现。
+- 替代/复查条件：用户确认不再需要跨轮项目档案追问、工具审计或 Checkpoint 恢复时，可评估降级为无状态调用；需要写入档案、清单或外部业务系统时，必须另行决策，不得由本决策自动授权。
+- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/接口设计.md`](design/接口设计.md)、[`app/agents/admin/graph.py`](../app/agents/admin/graph.py)、[`app/services/archive/catalog.py`](../app/services/archive/catalog.py)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)
+
+## DEC-016：FR-042 需求评审问题裁决（部分已废弃）
+
+- 状态：部分已废弃；硬 60 秒时限、工具批次和并发删除保证由 DEC-019 替代，其余范围与安全裁决继续有效
+- 首次纳入台账：2026-09-14
+- 背景：FR-042 首次需求评审发现持久化前提与旧架构基线冲突，并缺少助手质量门、D5/D6 拒答依据、重试幂等、客户端输入、删除阻断、项目删除联动和会话类型隔离口径。
+- 决策：保留 DEC-015 确认的 SQLite Checkpoint，并在架构阶段显式修订“只保留给旧 Agent”的旧基线；档案业务事实仍不得进入 Checkpoint。证据回答沿用 P14-D5 结构化充分性判定与 D6 文档绑定/Top-8，不恢复统一 Reranker 拒答阈值。新增助手固定集，复用 12 个正式问答样本并增加目录与两轮追问，安全门保持 100%，其他新门槛由主 Agent 产生基线、用户确认后冻结。客户端请求体出现未声明范围字段、空白消息或超过 2000 个 Unicode 码点的消息统一返回 `422 VALIDATION_ERROR`。同一请求内的连接/超时重试不得重复消息和工具审计，客户端主动重发视为新轮次。删除一经受理即持续阻断可见性，失败不自动恢复；项目删除成功前必须清理其档案助手会话、Checkpoint 线程和工具记录。MVP 不提供会话列表、主动删除或重命名，但必须双向隔离制度会话与档案会话。
+- 影响：FR-042 需求新增可执行 AC、固定集入口和删除生命周期；技术架构、数据库与 API 设计必须逐项落实上述边界。单轮最多两个模型发起的工具调用且总处理时限为 60 秒；工具业务空结果与基础设施失败必须返回不同语义，后者不得驱动模型继续回答。
+- 替代/复查条件：改用 PostgreSQL 保存会话消息、增加会话管理动作、改变 D5/D6 证据判定路线、放宽工具数量或引入写工具时，必须另行确认并更新本决策。
+- 依据文件：[`docs/review/FR-042-需求评审.md`](review/FR-042-需求评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md`](review/P14-rag检索质量改进/P14-D5-证据充分性与拒答判定层方案.md)、[`docs/review/P14-rag检索质量改进/P14-D6-文档绑定与Top8证据保留方案.md`](review/P14-rag检索质量改进/P14-D6-文档绑定与Top8证据保留方案.md)
+
+## DEC-017：FR-042 失败轮次、目录引用与输入规范（部分已废弃）
+
+- 状态：部分已废弃；失败轮次持久化与硬工具批次口径由 DEC-019 替代，目录字段、输入规范与临时引用口径继续有效
+- 首次纳入台账：2026-09-14
+- 背景：FR-042 独立复审确认原 R1～R7 已闭环，同时发现失败轮次落盘、目录临时引用、目录字段白名单、无效工具调用计数和换行长度规范仍可能产生多种实现解释。
+- 决策：模型或工具最终失败时保存一个用户消息和一个固定助手不可用消息，已发起工具按 `tool_call_id` 最多保存一条 `FAILED` 脱敏记录，会话时间只更新一次；Checkpoint 读写失败不产生完成标记、不展示中间消息且不更新会话时间。目录工具只返回标题、资料类型、文档日期、编制单位、项目阶段五个登记字段及来源标记；临时 `document_ref` 只绑定本轮目录结果与服务端来源映射，证据工具不接收它，后续追问根据已见文件名或登记信息重新查询并重新校验范围。消息先把 `CRLF` 和单独 `CR` 规范化为 `LF`，再去除首尾 Unicode 空白并按 Python 字符串 Unicode 码点计数。参数校验失败的模型工具调用计入单轮两个调用上限。
+- 影响：项目档案助手的失败历史、审计条数、会话排序、目录 DTO、跨轮追问和边界测试均有唯一判定口径；DeepSeek 不可用不阻止创建会话，发送消息则按模型最终失败口径形成完整失败轮次且不调用工具。原文引用复用 FR-039 的响应结构。
+- 替代/复查条件：若后续允许按目录标识定向检索、改变失败轮次可见性、引入请求幂等键或调整工具调用预算，必须另行确认并更新本决策。
+- 依据文件：[`docs/review/FR-042-需求评审.md`](review/FR-042-需求评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)
+
+## DEC-018：FR-042 架构评审裁决（已废弃）
+
+- 状态：已废弃，由 DEC-019 替代
+- 首次纳入台账：2026-09-14
+- 背景：FR-042 主 Agent 架构评审发现项目锁可能跨越模型调用、并行 Tool Call 口径冲突、证据 DTO 可能携带持久化标识、D5/D6 没有公共复用边界，以及 60 秒预算无法由现有客户端兑现；代码复核还发现正式检索仍保留可选阈值过滤，现有制度 Agent 工具策略最多尝试三次。
+- 决策：消息轮次只锁定对应 `AgentSession`，创建会话与项目删除只在协调事务中锁 Project；项目删除按 Project→ARCHIVE 会话顺序锁定并先提交 `DELETING`。单次模型决策可以产生一个或两个 Tool Call：整批不超过剩余预算时全部执行，超过剩余预算时整批不执行并直接形成稳定失败轮次。证据工具只向模型和 Checkpoint 返回请求内编号、文件名、位置与摘录；持久化文档/Chunk 标识和分数保留在请求内服务端映射，工具审计只保存脱敏计数与状态。`questions.py` 必须抽出接收既有候选的公共 D5/D6 判定函数，FR-039 与 FR-042 共用，不能复制判定或重复检索。FR-042 新增不经过统一 Reranker 拒答阈值的 Top-8 候选入口，并使用总尝试次数为 2 的独立模型/工具重试策略。
+- 超时与持久化：60 秒必须由可实际中止等待的模型、Chroma 和数据库调用适配器共同执行，不能只在调用返回后检查时钟；现有无参数缓存客户端行为不得静默冒充逐调用超时。新增不保存消息正文的 Agent 轮次元数据，使历史与模型上下文只接受 PostgreSQL 已完成轮次；Checkpoint 已写而 PostgreSQL 最终提交失败时，该轮隐藏并返回 503。模型/工具失败但固定失败轮次和业务记录均已保存时返回 `200 + FAILED + 固定不可用消息`；Checkpoint 或最终业务记录保存失败、无法形成完整轮次时返回稳定 503。
+- 其他边界：模型上下文不回放历史 ToolMessage，只投影已完成的用户/助手消息和本轮工具结果；现有制度入口固定只接受制度会话，项目入口固定只接受档案会话。目录字段的 `has_source_evidence` 是根据字段标记和当前证据关系计算的对外派生值。当前项目解释器已静态确认 `SqliteSaver.delete_thread(thread_id)` 存在，且在内存 SQLite 上连续删除不存在的线程保持幂等；真实文件、真实线程和项目删除联动仍须通过集成测试。
+- 影响：数据库设计必须承接 `agent_type/project_id/status`、Agent 轮次元数据及必要的历史引用映射；API 设计必须区分完整失败轮次与未完成基础设施失败。架构主审问题闭环不替代仍待补的需求独立二次复审，也不授权迁移或代码实现。
+- 替代/复查条件：改为无锁租约、允许截断执行部分并行工具、把工具标识写入 Checkpoint、改变 60 秒硬上限、统一失败 HTTP 语义或恢复 Reranker 统一拒答阈值时，必须另行确认。
+- 依据文件：[`docs/review/FR-042-架构评审.md`](review/FR-042-架构评审.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)、[`app/services/archive/questions.py`](../app/services/archive/questions.py)、[`app/agents/admin/observability.py`](../app/agents/admin/observability.py)
+
+## DEC-019：FR-042 收敛为最小可演示闭环
+
+- 状态：已确认
+- 首次纳入台账：2026-09-14
+- 背景：FR-042 的第二轮架构方案为处理 PostgreSQL/SQLite 非原子提交、历史引用恢复、并发删除和硬 60 秒截止，引入了 AgentTurn、AgentTurnCitation、会话删除状态、动态预算适配器及多 Tool Call 批次规则。它们可以提高生产级一致性，但显著扩大迁移、事务、故障注入与维护范围，不符合当前“先完成最小能通过功能”的目标。
+- 保留范围：持久化项目档案助手会话；服务端固定绑定 `user_id + project_id + kb_id + thread_id`；制度/档案会话类型隔离；目录与正式证据两个只读工具；CONFIRMED 与删除可见性过滤；D5/D6 公共判定、无统一阈值的 Top-8 候选；当前回答引用、无依据拒答、脱敏工具审计；输入校验；连接/超时最多额外尝试一次。
+- 简化决策：模型每次决策最多调用一个工具，单轮最多顺序调用两个；多个 Tool Call 直接稳定失败。复用同一受保护 SQLite Checkpoint 文件，以全局唯一 `thread_id` 和服务端会话类型隔离。只在 `AgentSession` 增加 `agent_type` 与可空 `project_id`，不新增 AgentTurn、AgentTurnCitation 或 `DELETING` 状态。历史只返回完整用户/助手消息正文，不返回 ToolMessage，也不承诺恢复历史引用。模型、工具、Checkpoint 或 PostgreSQL 最终失败统一返回稳定 503，不保存“完整失败轮次”作为业务承诺。
+- 已知限制：MVP 不解决 SQLite 与 PostgreSQL 的原子提交，不实现跨 DeepSeek/Chroma/数据库的动态 60 秒总预算，不保证同一会话并发消息或消息与项目删除并发时的强一致性。项目删除仍按“幂等清理 Checkpoint → 删除工具日志/会话/项目”执行，任一层失败不得返回成功；上述并发动作不进入本地验收场景。
+- 影响：DEC-018 全部废弃；DEC-016 的硬 60 秒时限、工具批次和并发删除保证废弃；DEC-017 中失败轮次持久化与并行工具批次部分废弃，其余范围、安全、目录字段、输入规范和临时引用口径继续有效。需求与架构主审按本决策通过，下一步可以进入数据库设计、API 设计和 Implementation Plan，但在计划确认前不得开始代码实现。生产级轮次一致性、历史引用恢复、并发删除状态机和硬时限如以后确有需要，必须基于真实故障或容量证据重新立项。
+- 依据文件：[`docs/review/FR-042-需求评审.md`](review/FR-042-需求评审.md)、[`docs/review/FR-042-架构评审.md`](review/FR-042-架构评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)
+
+## DEC-020：FR-042 MVP 引用、状态与错误语义
+
+- 状态：已确认
+- 首次纳入台账：2026-09-14
+- 背景：DEC-019 生效后的复核发现，FR-039 的 `ArchiveRetrievalItemRead` 必含持久化文档/Chunk 标识和检索分数，不能同时满足 FR-042 的脱敏响应要求；同时还需固定模型 Tool Call 越界、公开回答状态、孤立 Checkpoint 消息及客户端超时的最小口径。
+- 决策：FR-042 使用独立的脱敏引用 DTO，但复用 FR-039 的 `filename`、`location_type`、`location_start`、`location_end`、`excerpt` 字段名称与语义，不复用含 `document_id`、`chunk_id`、`score`、`reranker_score` 的完整 DTO。公开 `answer_status` 复用 `ArchiveAnswerStatus`：目录和有据回答为 `ANSWERED`，无依据为 `REFUSED_NO_EVIDENCE`；`CATALOG` 只用于 Graph 内部路由。
+- 错误与证据：合法客户端请求触发的多个 Tool Call、未注册工具或累计第三次调用属于服务端依赖的模型输出违反契约，不归因于客户端，返回 `503 ARCHIVE_AGENT_MODEL_OUTPUT_INVALID`；真实模型/工具连接、超时、Checkpoint 或 PostgreSQL 最终失败返回 `503 ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`。模型没有调用本轮目录工具时不得陈述目录结果，没有调用本轮证据工具或证据不足时不得陈述档案原文事实，统一走无依据拒答。
+- 历史与超时：历史接口和后续模型输入使用同一完整轮次投影，忽略中间 ToolMessage 和任何没有最终 AIMessage 的孤立轮次。MVP 不设置独立上下文轮数或码点上限，该限制只适合短会话演示。实施时必须为当前 `get_chat_model()` 增加固定、可配置的请求超时，但不引入跨 DeepSeek、Chroma 和数据库传播的动态总预算。
+- 影响：需求与技术架构中的 C1～C7 已获得唯一口径；数据库/API 设计必须新增档案助手专用创建/响应 Schema，创建请求不复用要求客户端提交 `kb_id` 的 `AgentSessionCreate`，项目范围只来自路径和服务端 ProjectContext。该决策不授权代码实现，仍须先完成数据库设计、API 设计和 Implementation Plan。
+- 依据文件：[`docs/review/FR-042-需求评审.md`](review/FR-042-需求评审.md)、[`docs/review/FR-042-架构评审.md`](review/FR-042-架构评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`app/schemas/archive_retrieval.py`](../app/schemas/archive_retrieval.py)、[`app/schemas/archive_question.py`](../app/schemas/archive_question.py)、[`app/schemas/agent.py`](../app/schemas/agent.py)
+
+## DEC-021：证据候选携带已确认文档标题用于身份绑定
+
+- 状态：已确认
+- 首次纳入台账：2026-09-16
+- 背景：FR-042 第三轮真实模型固定集严格通过 15/17，但 Q-02、Q-03 在候选已含正确字段值时仍错误拒答。两条候选只向模型暴露英文文件名，无法稳定关联用户问题中的中文文档名称；继续堆叠 Prompt 不能补足该身份信息。
+- 决策：`search_confirmed_archive_evidence` 的模型可见安全候选新增可空 `document_title`，只复用当前 `CONFIRMED` 档案的已确认 `TITLE` 字段，不新增数据库列或第二套标题来源。该字段只用于定位目标文档；事实回答仍必须由同一 `document_ref` 下的原文摘录支持。标题缺失时返回 `null`，不得从文件名、问题或模型输出推断。人工确认但无原文证据的标题可以作为身份元数据，不能单独作为其他原文事实的回答依据。
+- 安全边界：标题查询继续受当前服务端 `project_id`、正式状态和删除可见性阻断约束；模型不能提交或覆盖标题、`document_ref` 或范围参数。`document_title` 可以进入本轮 ToolMessage 和公共判定 Prompt；Checkpoint 仍只保存既有受信用户/助手投影，不新增 ToolMessage 持久化。标题不进入当前公开引用 DTO、历史引用、工具审计或持久化标识映射；文档 UUID、Chunk ID 和分数仍不得泄露。
+- 评测边界：应回答场景必须证明目标标题与答案事实属于同一 `document_ref`。固定集标题只能来自既有去标识化正式资料元数据，禁止为通过门槛伪造；真实模型复验须在 TDD、本地回归和 Step 6 完成后另获用户授权。
+- 替代/复查条件：公开引用需要展示标题、允许模型按持久化文档标识检索、或标题不再由人工确认的正式字段提供时，必须另行确认并更新契约。
+- 依据文件：[`docs/review/FR-042-真实模型质量评测/评测复盘.md`](review/FR-042-真实模型质量评测/评测复盘.md)、[`docs/review/FR-042-真实模型质量评测/问题排查与解决方案.md`](review/FR-042-真实模型质量评测/问题排查与解决方案.md)、[`app/services/archive/catalog.py`](../app/services/archive/catalog.py)、[`app/agents/tools/archive_tools.py`](../app/agents/tools/archive_tools.py)

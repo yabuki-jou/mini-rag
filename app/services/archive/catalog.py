@@ -1,6 +1,8 @@
 """实现 AV1-P10 文档处理列表、正式档案目录和脱敏审计查询。"""
 
+from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -14,6 +16,7 @@ from app.models import (
     Document,
     ProjectStage,
     ArchiveDocumentType,
+    FieldEvidence,
 )
 from app.schemas.archive_catalog import (
     ArchiveDetailRead,
@@ -124,6 +127,42 @@ def list_formal_archives(
     if document_date_from is not None and document_date_to is not None and document_date_from > document_date_to:
         raise AppError(422, "VALIDATION_ERROR", "日期区间起点不能晚于终点。")
 
+    rows = _formal_archive_rows(
+        project_id=project_id,
+        document_type=document_type,
+        project_stage=project_stage,
+        document_date_from=document_date_from,
+        document_date_to=document_date_to,
+        document_date_is_null=document_date_is_null,
+        authoring_organization=authoring_organization,
+        session=session,
+    )
+    filtered: list[ArchiveSummaryRead] = []
+    for document, archive_document, fields in rows:
+        filtered.append(
+            _build_archive_summary(
+                document=document,
+                archive_document=archive_document,
+                fields=fields,
+            )
+        )
+    total = len(filtered)
+    start = (page - 1) * page_size
+    return ArchivePageRead(items=filtered[start : start + page_size], page=page, page_size=page_size, total=total)
+
+
+def _formal_archive_rows(
+    *,
+    project_id: UUID,
+    document_type: ArchiveDocumentType | None,
+    project_stage: ProjectStage | None,
+    document_date_from: date | None,
+    document_date_to: date | None,
+    document_date_is_null: bool,
+    authoring_organization: str | None,
+    session: Session,
+) -> list[tuple[Document, ArchiveDocument, dict[ArchiveFieldName, ArchiveFieldValue]]]:
+    """共享正式目录的范围、阻断、筛选和稳定排序谓词。"""
     blocked_ids = list_visibility_blocked_document_ids(project_id, session)
     rows = session.exec(
         select(Document, ArchiveDocument)
@@ -134,7 +173,7 @@ def list_formal_archives(
         )
         .order_by(ArchiveDocument.confirmed_at.desc(), Document.id.desc())
     ).all()
-    filtered: list[ArchiveSummaryRead] = []
+    filtered: list[tuple[Document, ArchiveDocument, dict[ArchiveFieldName, ArchiveFieldValue]]] = []
     for document, archive_document in rows:
         if document.id in blocked_ids:
             continue
@@ -155,16 +194,185 @@ def list_formal_archives(
             continue
         if authoring_organization is not None and current_org != authoring_organization:
             continue
-        filtered.append(
-            _build_archive_summary(
-                document=document,
-                archive_document=archive_document,
-                fields=fields,
+        filtered.append((document, archive_document, fields))
+    return filtered
+
+
+def list_agent_confirmed_document_titles(
+    *,
+    project_id: UUID,
+    document_ids: set[UUID],
+    session: Session,
+) -> dict[UUID, str | None]:
+    """读取当前项目可见正式档案的已确认标题，供证据候选绑定文档身份。
+
+    Args:
+        project_id: 已由服务端鉴权并绑定到档案助手会话的项目 ID。
+        document_ids: 已通过正式检索初步范围校验的候选文档 ID。
+        session: 当前短生命周期数据库 Session。
+
+    Returns:
+        仍处于可见正式范围的候选文档及其可空标题；不在范围内的 ID 不返回。
+    """
+    if not document_ids:
+        return {}
+    rows = _formal_archive_rows(
+        project_id=project_id,
+        document_type=None,
+        project_stage=None,
+        document_date_from=None,
+        document_date_to=None,
+        document_date_is_null=False,
+        authoring_organization=None,
+        session=session,
+    )
+    titles: dict[UUID, str | None] = {}
+    for document, _, fields in rows:
+        if document.id not in document_ids:
+            continue
+        title = archive_field_value(fields.get(ArchiveFieldName.TITLE))
+        titles[document.id] = str(title) if title is not None else None
+    return titles
+
+
+_AGENT_CATALOG_FIELDS: tuple[ArchiveFieldName, ...] = (
+    ArchiveFieldName.TITLE,
+    ArchiveFieldName.DOCUMENT_TYPE,
+    ArchiveFieldName.DOCUMENT_DATE,
+    ArchiveFieldName.AUTHORING_ORGANIZATION,
+    ArchiveFieldName.PROJECT_STAGE,
+)
+
+
+@dataclass(frozen=True)
+class AgentCatalogPage:
+    """保存不含持久化标识的目录工具安全投影。"""
+
+    page: int
+    page_size: int
+    total: int
+    items: list[dict[str, object]]
+
+    def as_dict(self) -> dict[str, object]:
+        """转换为可写入 ToolMessage 的纯 JSON 数据。"""
+        return {
+            "page": self.page,
+            "page_size": self.page_size,
+            "total": self.total,
+            "items": [dict(item) for item in self.items],
+        }
+
+
+def _safe_field_value(
+    field: ArchiveFieldValue | None,
+    *,
+    current_snapshot_id: UUID | None,
+    session: Session,
+) -> dict[str, object]:
+    """投影目录字段值、来源和当前快照证据标记。"""
+    value = archive_field_value(field)
+    if isinstance(value, Enum):
+        value = value.value
+    elif isinstance(value, date):
+        value = value.isoformat()
+    has_source_evidence = False
+    if field is not None and current_snapshot_id is not None and not field.no_source_evidence:
+        has_source_evidence = session.exec(
+            select(FieldEvidence.id)
+            .where(
+                FieldEvidence.field_value_id == field.id,
+                FieldEvidence.snapshot_id == current_snapshot_id,
             )
-        )
-    total = len(filtered)
+            .limit(1)
+        ).first() is not None
+    return {
+        "value": value,
+        "source": field.source.value if field is not None and field.source is not None else None,
+        "has_source_evidence": has_source_evidence,
+    }
+
+
+def list_agent_formal_archives(
+    *,
+    project_id: UUID,
+    page: int,
+    page_size: int,
+    document_type: ArchiveDocumentType | None,
+    project_stage: ProjectStage | None,
+    document_date_from: date | None,
+    document_date_to: date | None,
+    document_date_is_null: bool,
+    authoring_organization: str | None,
+    session: Session,
+) -> AgentCatalogPage:
+    """返回档案助手专用的正式目录脱敏投影。"""
+    if page < 1:
+        raise AppError(422, "ARCHIVE_AGENT_TOOL_ARGUMENT_INVALID", "页码必须为正整数。")
+    if page_size < 1 or page_size > 20:
+        raise AppError(422, "ARCHIVE_AGENT_TOOL_ARGUMENT_INVALID", "页大小必须在 1 到 20 之间。")
+    if document_date_is_null and (document_date_from is not None or document_date_to is not None):
+        raise AppError(422, "ARCHIVE_AGENT_TOOL_ARGUMENT_INVALID", "日期为空筛选不能与日期区间同时使用。")
+    if document_date_from is not None and document_date_to is not None and document_date_from > document_date_to:
+        raise AppError(422, "ARCHIVE_AGENT_TOOL_ARGUMENT_INVALID", "日期区间起点不能晚于终点。")
+    rows = _formal_archive_rows(
+        project_id=project_id,
+        document_type=document_type,
+        project_stage=project_stage,
+        document_date_from=document_date_from,
+        document_date_to=document_date_to,
+        document_date_is_null=document_date_is_null,
+        authoring_organization=authoring_organization,
+        session=session,
+    )
+    total = len(rows)
     start = (page - 1) * page_size
-    return ArchivePageRead(items=filtered[start : start + page_size], page=page, page_size=page_size, total=total)
+    items: list[dict[str, object]] = []
+    for document, archive_document, fields in rows[start : start + page_size]:
+        items.append(
+            {
+                "document_ref": f"A{len(items) + 1}",
+                "filename": document.filename,
+                "confirmed_at": archive_document.confirmed_at.isoformat()
+                if archive_document.confirmed_at is not None
+                else None,
+                "fields": {
+                    field_name.value: _safe_field_value(
+                        fields.get(field_name),
+                        current_snapshot_id=archive_document.current_snapshot_id,
+                        session=session,
+                    )
+                    for field_name in _AGENT_CATALOG_FIELDS
+                },
+            }
+        )
+    return AgentCatalogPage(page=page, page_size=page_size, total=total, items=items)
+
+
+def render_agent_catalog_text(page: AgentCatalogPage) -> str:
+    """按固定分页和五字段模板生成目录正文。"""
+    if not page.items:
+        return "当前项目没有可见的正式档案。"
+    field_labels = (
+        (ArchiveFieldName.TITLE, "标题"),
+        (ArchiveFieldName.DOCUMENT_TYPE, "资料类型"),
+        (ArchiveFieldName.DOCUMENT_DATE, "文档日期"),
+        (ArchiveFieldName.AUTHORING_ORGANIZATION, "编制单位"),
+        (ArchiveFieldName.PROJECT_STAGE, "项目阶段"),
+    )
+    lines = [f"第 {page.page} 页，本页 {len(page.items)} 份，共 {page.total} 份："]
+    for index, item in enumerate(page.items, start=1):
+        fields = item["fields"]
+        field_text = []
+        for field_name, label in field_labels:
+            field = fields[field_name.value]
+            value = field["value"] if field["value"] is not None else "未登记"
+            source = field["source"] if field["source"] is not None else "null"
+            evidence = "true" if field["has_source_evidence"] else "false"
+            field_text.append(
+                f"{label}：{value}（source={source}, has_source_evidence={evidence}）"
+            )
+        lines.append(f"{index}. 文件名：{item['filename']}；" + "；".join(field_text))
+    return "\n".join(lines)
 
 
 def read_formal_archive(*, document: Document, session: Session) -> ArchiveDetailRead:

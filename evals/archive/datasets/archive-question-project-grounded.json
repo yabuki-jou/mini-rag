@@ -160,7 +160,7 @@
                       "__dict__": {
                         "chunk_id": "3333333333333333333333333333333333333333333333333333333333333333",
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000004"},
-                        "filename": "handoff.md",
+                        "filename": "handoff-2026-09-17.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
                         "location_start": 62,
                         "location_end": 63,
@@ -176,7 +176,7 @@
                       "__dict__": {
                         "chunk_id": "3434343434343434343434343434343434343434343434343434343434343434",
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000004"},
-                        "filename": "handoff.md",
+                        "filename": "handoff-2026-09-17.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
                         "location_start": 60,
                         "location_end": 61,
@@ -201,7 +201,7 @@
         "retrieval_latency_ms": 0,
         "expected_answer": "Q-01 第一候选已含准确日期但仍错误拒答",
         "expected_evidence": {
-          "relative_path": "docs/stage/handoff.md",
+          "relative_path": "docs/archive/stage/handoff-2026-09-17.md",
           "items": [
             {
               "location_type": "TEXT_LINE_RANGE",
@@ -212,7 +212,7 @@
           ]
         },
         "difficulty": "challenging",
-        "source_document": "docs/stage/handoff.md"
+        "source_document": "docs/archive/stage/handoff-2026-09-17.md"
       }
     },
     {
@@ -236,8 +236,8 @@
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000005"},
                         "filename": "接口设计.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
-                        "location_start": 620,
-                        "location_end": 628,
+                        "location_start": 642,
+                        "location_end": 650,
                         "excerpt": "删除可从任一稳定用户可见文档状态发起。服务先创建内部\n`DELETE + RUNNING + visibility_blocking = true`，使档案立即退出正式目录、检索和问答，\n随后依次清理 Final Chunk、原文件、快照、字段、证据和清单关联。\n\n- 全部成功：返回 `204 No Content`，保留脱敏删除审计。\n- 解析、建议、确认或另一删除操作运行中：返回 `409 DOCUMENT_OPERATION_IN_PROGRESS`。\n- 外部清理失败：返回 `503 DOCUMENT_DELETE_INCOMPLETE`，文档保持正式范围外；再次调用\n  同一 `DELETE` 恢复未完成删除，不创建重复文件、记录、向量或成功审计。",
                         "score": 0.94,
                         "reranker_score": 0.92
@@ -263,20 +263,20 @@
           "items": [
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 620,
-              "location_end": 622,
+              "location_start": 642,
+              "location_end": 644,
               "excerpt": "使档案立即退出正式目录、检索和问答"
             },
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 624,
-              "location_end": 624,
+              "location_start": 646,
+              "location_end": 646,
               "excerpt": "- 全部成功：返回 `204 No Content`，保留脱敏删除审计。"
             },
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 626,
-              "location_end": 627,
+              "location_start": 648,
+              "location_end": 649,
               "excerpt": "- 外部清理失败：返回 `503 DOCUMENT_DELETE_INCOMPLETE`，文档保持正式范围外；再次调用\n  同一 `DELETE` 恢复未完成删除，不创建重复文件、记录、向量或成功审计。"
             }
           ]
