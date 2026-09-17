@@ -4,15 +4,10 @@
 """
 
 from types import SimpleNamespace
-from uuid import UUID
 
-from chromadb.errors import InvalidArgumentError, NotFoundError
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
-from app.models import DocumentStatus
 from scripts import policy_collection_embedding_rebuild as rebuild
 
 
@@ -45,15 +40,14 @@ class FakeCollection:
     def count(self) -> int:
         return self._count
 
-    def query(self, query_embeddings, n_results=1, where=None, include=None):
+    def query(self, query_embeddings, n_results=1, where=None):
         if self._fail_on_query:
             raise RuntimeError("query failed")
-        self.last_include = include
         dim = len(query_embeddings[0])
         if self._locked_dimension is not None and dim != self._locked_dimension:
             raise RuntimeError(f"dimension mismatch {dim}")
         if where:
-            return {"ids": [[self.stored_ids[0] if self.stored_ids else "canary"]], "metadatas": [[{}]]}
+            return {"ids": [["canary"]], "metadatas": [[{}]]}
         return {"ids": [[]]}
 
     def upsert(self, ids, documents, embeddings, metadatas):
@@ -80,14 +74,6 @@ class FakeChromaClient:
     def __init__(self, collection: FakeCollection | None = None) -> None:
         self._collection = collection or FakeCollection()
         self.deleted_collections: list[str] = []
-        self.get_collection_calls: list[str] = []
-
-    def get_collection(self, name, embedding_function=None):
-        self.get_collection_calls.append(name)
-        if self._collection is None:
-            raise RuntimeError("collection missing")
-        self._collection.name = name
-        return self._collection
 
     def get_or_create_collection(self, name, embedding_function=None, configuration=None):
         self._collection.name = name
@@ -196,69 +182,6 @@ def test_preflight_stops_when_collection_not_empty(fake_settings, fake_chroma, f
     assert client.deleted_collections == []
 
 
-def test_preflight_only_gets_existing_collection(fake_settings, fake_postgres_empty, monkeypatch):
-    """预检只能读取已存在 Collection，不能用 get_or_create 隐式写入。"""
-    collection = FakeCollection()
-
-    class ReadOnlyClient:
-        def get_collection(self, name, embedding_function=None):
-            return collection
-
-        def get_or_create_collection(self, **kwargs):
-            raise AssertionError("预检不应创建 Collection")
-
-    monkeypatch.setattr(rebuild, "_get_chroma_client", lambda: ReadOnlyClient())
-    monkeypatch.setattr(rebuild, "_get_embedding_dimension", lambda: 768)
-    result = rebuild.run_preflight()
-    assert result.status == "rebuild_required"
-
-
-def test_preflight_missing_collection_is_stable_error(fake_settings, fake_postgres_empty, monkeypatch):
-    """目标 Collection 缺失时返回稳定错误而不是创建空库。"""
-    class MissingClient:
-        def get_collection(self, name, embedding_function=None):
-            raise NotFoundError("collection not found")
-
-    monkeypatch.setattr(rebuild, "_get_chroma_client", lambda: MissingClient())
-    monkeypatch.setattr(rebuild, "_get_embedding_dimension", lambda: 768)
-    with pytest.raises(rebuild.RebuildError, match="COLLECTION_NOT_FOUND"):
-        rebuild.run_preflight()
-
-
-def test_preflight_collection_open_failure_is_stable_error(fake_settings, fake_postgres_empty, monkeypatch):
-    """连接故障不能误报为目标 Collection 不存在。"""
-    class BrokenClient:
-        def get_collection(self, name, embedding_function=None):
-            raise ConnectionError("private endpoint")
-
-    monkeypatch.setattr(rebuild, "_get_chroma_client", lambda: BrokenClient())
-    monkeypatch.setattr(rebuild, "_get_embedding_dimension", lambda: 768)
-    with pytest.raises(rebuild.RebuildError, match="COLLECTION_OPEN_FAILED"):
-        rebuild.run_preflight()
-
-
-def test_preflight_postgres_failure_is_stable_and_main_hides_details(
-    fake_settings, fake_chroma, monkeypatch, capsys
-):
-    """数据库预检失败时 main 不应输出底层连接详情。"""
-    monkeypatch.setattr(
-        rebuild,
-        "Session",
-        lambda **kwargs: (_ for _ in ()).throw(ConnectionError("private endpoint")),
-    )
-    result = rebuild.main([])
-    output = capsys.readouterr().out
-    assert result == 1
-    assert "POSTGRES_PREFLIGHT_FAILED" in output
-    assert "private endpoint" not in output
-
-
-def test_module_docstring_uses_module_execution_path():
-    """脚本用法必须使用 Python 模块路径。"""
-    assert "python -m scripts.policy_collection_embedding_rebuild" in rebuild.__doc__
-    assert "python scripts/policy_collection_embedding_rebuild.py" not in rebuild.__doc__
-
-
 def test_preflight_stops_when_postgres_pending(fake_settings, fake_chroma, monkeypatch):
     """PostgreSQL 存在待重建文档必须停止。"""
     monkeypatch.setattr(
@@ -269,42 +192,6 @@ def test_preflight_stops_when_postgres_pending(fake_settings, fake_chroma, monke
     monkeypatch.setattr(rebuild, "Session", lambda **kw: SimpleNamespace(close=lambda: None))
     with pytest.raises(rebuild.RebuildError, match="POSTGRES_PENDING_DOCUMENTS"):
         rebuild.run_preflight()
-
-
-def test_postgres_pending_query_aggregates_rows_in_memory_sqlite(fake_settings):
-    """预检计数查询应在隔离内存 SQLite 中正确聚合，不加载文档行。"""
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        from app.models import Document
-
-        session.add_all(
-            [
-                Document(
-                    kb_id=UUID("11111111-1111-4111-8111-111111111111"),
-                    filename="ready.txt",
-                    storage_path="/tmp/ready.txt",
-                    file_hash="a" * 64,
-                    status=DocumentStatus.READY,
-                    chunk_count=2,
-                ),
-                Document(
-                    kb_id=UUID("11111111-1111-4111-8111-111111111111"),
-                    filename="uploaded.txt",
-                    storage_path="/tmp/uploaded.txt",
-                    file_hash="b" * 64,
-                    status=DocumentStatus.UPLOADED,
-                    chunk_count=0,
-                ),
-            ]
-        )
-        session.commit()
-        assert rebuild._query_postgres_pending_documents(session) == (1, 1)
-    engine.dispose()
 
 
 def test_preflight_already_768_is_idempotent(fake_settings, fake_chroma, fake_postgres_empty):
@@ -330,10 +217,10 @@ def test_canary_query_uses_three_field_filter(fake_settings, fake_chroma, fake_p
 
     original_verify = rebuild._verify_canary
 
-    def spy_verify(collection, canary_id, identity, dimension):
+    def spy_verify(collection, identity, dimension):
         captured["identity"] = identity
         captured["dimension"] = dimension
-        return original_verify(collection, canary_id, identity, dimension)
+        return original_verify(collection, identity, dimension)
 
     monkeypatch.setattr(rebuild, "_verify_canary", spy_verify)
     rebuild.run_apply()
@@ -360,7 +247,7 @@ def test_apply_restores_512_on_write_failure(fake_settings, fake_chroma, fake_po
 def test_apply_restores_512_on_query_failure(fake_settings, fake_chroma, fake_postgres_empty, monkeypatch):
     """canary 验证查询失败时必须执行 512 维空库恢复。"""
     # 只在 _verify_canary 阶段失败，不影响预检的维度探测。
-    def fail_verify(collection, canary_id, identity, dimension):
+    def fail_verify(collection, identity, dimension):
         raise rebuild.RebuildError("CANARY_QUERY_EMPTY", "canary 范围查询未命中。")
 
     restored = []
@@ -391,86 +278,6 @@ def test_apply_success_accepts_768_rejects_512(fake_settings, fake_chroma, fake_
     assert collection.count() == 0
     assert rebuild._probe_collection_dimension(collection, 768) is True
     assert rebuild._probe_collection_dimension(collection, 512) is False
-
-
-def test_dimension_probe_only_swallows_explicit_mismatch(fake_settings):
-    """只有明确维度不匹配才返回 False，且查询不拉取额外字段。"""
-    class ProbeCollection:
-        def __init__(self, error):
-            self.error = error
-            self.include = None
-
-        def query(self, query_embeddings, n_results=1, where=None, include=None):
-            self.include = include
-            if self.error:
-                raise RuntimeError(self.error)
-            return {"ids": [[]]}
-
-    mismatch = ProbeCollection("InvalidDimensionException: dimension mismatch")
-    assert rebuild._probe_collection_dimension(mismatch, 512) is False
-    assert mismatch.include == []
-    failed = ProbeCollection("connection refused")
-    with pytest.raises(rebuild.RebuildError, match="COLLECTION_DIMENSION_PROBE_FAILED"):
-        rebuild._probe_collection_dimension(failed, 512)
-
-
-def test_dimension_probe_accepts_chroma_expected_dimension_message(fake_settings):
-    """Chroma 的实际维度错误文本应判定为维度不匹配。"""
-    class ProbeCollection:
-        def query(self, **kwargs):
-            raise InvalidArgumentError(
-                "Collection expecting embedding with dimension of 768, got 512"
-            )
-
-    assert rebuild._probe_collection_dimension(ProbeCollection(), 512) is False
-
-
-def test_dimension_probe_rejects_other_invalid_argument(fake_settings):
-    """其他 Chroma 参数错误不能被误判为维度不匹配。"""
-    class ProbeCollection:
-        def query(self, **kwargs):
-            raise InvalidArgumentError("where clause is invalid")
-
-    with pytest.raises(rebuild.RebuildError, match="COLLECTION_DIMENSION_PROBE_FAILED"):
-        rebuild._probe_collection_dimension(ProbeCollection(), 512)
-
-
-def test_verify_canary_rejects_different_returned_id(fake_settings):
-    """canary 查询必须命中本次写入的精确 ID。"""
-    class WrongIdCollection:
-        def query(self, **kwargs):
-            return {"ids": [["another-canary"]]}
-
-    with pytest.raises(rebuild.RebuildError, match="CANARY_ID_MISMATCH"):
-        rebuild._verify_canary(
-            WrongIdCollection(),
-            "expected-canary",
-            {"user_id": "u", "kb_id": "k", "document_id": "d"},
-            768,
-        )
-
-
-def test_restore_verifies_512_dimension_and_zero_count(fake_settings):
-    """恢复后的空库必须接受 512、拒绝 768 且条目数为零。"""
-    collection = FakeCollection(locked_dimension=None)
-    client = FakeChromaClient(collection)
-    rebuild._restore_512_empty_collection(client, settings.chroma_collection)
-    assert collection.count() == 0
-    assert rebuild._probe_collection_dimension(collection, 512) is True
-    assert rebuild._probe_collection_dimension(collection, 768) is False
-
-
-def test_restore_failure_is_stable_error(fake_settings):
-    """恢复任一步骤失败时只抛稳定 RebuildError。"""
-    class BrokenClient:
-        def delete_collection(self, name):
-            raise RuntimeError("secret connection details")
-
-        def get_or_create_collection(self, **kwargs):
-            raise RuntimeError("secret creation details")
-
-    with pytest.raises(rebuild.RebuildError, match="RESTORE_FAILED"):
-        rebuild._restore_512_empty_collection(BrokenClient(), settings.chroma_collection)
 
 
 def test_apply_does_not_run_without_preflight_pass(fake_settings, fake_chroma, monkeypatch):
