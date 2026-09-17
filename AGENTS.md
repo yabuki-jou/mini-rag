@@ -6,9 +6,9 @@
 
 ## 项目定位与长期边界
 
-本项目是个人学习为主、可供朋友小范围使用的企业知识库与只读 Agent 后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；相邻 Vue 工作台仅用于本地联调，不以公开多用户网站或公开前端产品为部署目标。当前运行与开发基线为本地环境；是否部署到云端、部署拓扑和资源规格须在 V1 功能完成后另行评估确认。
+本项目是个人学习为主、可供朋友小范围使用的智慧档案与企业文档智能后端，使用 FastAPI、SQLModel、PostgreSQL、LangChain、LangGraph、本地 BGE、Chroma 和 DeepSeek。Swagger 用于 API 契约诊断与验收；相邻 Vue 工作台仅用于本地联调，不以公开多用户网站或公开前端产品为部署目标。当前运行与开发基线为本地环境；是否部署到云端、部署拓扑和资源规格须另行评估确认。
 
-当前业务方向是“智慧档案与企业文档智能”及既有只读企业制度 Agent。已删除的员工请假领域及其写工具、人工确认/决定接口不恢复；不推进标书投标、标书解析生成、投标合规审查、OCR、表格专用解析、业务运行时多 Agent 编排、BM25/混合检索、Redis 任务队列或生产级分布式部署。正式向量能力使用 Chroma；不得把历史 Milvus、云主机实验或本机健康检查写成完整云端部署结论。未来云端网络与资源方案待部署决策后确定。
+当前正式能力只有智慧档案 V1、FR-039 档案问答和 FR-042 项目档案助手。通用知识库、普通 Chat 和制度 Agent 的公开 API 与运行代码已下线，不保留兼容入口；相关表、历史数据、Checkpoint、Chroma Collection、原文件和 Alembic 迁移仅作兼容/追溯保留。`POLICY` 仅表示历史会话行，档案入口必须单向拒绝它们。已删除的员工请假领域及其写工具、人工确认/决定接口不恢复；不推进标书投标、标书解析生成、投标合规审查、OCR、表格专用解析、业务运行时多 Agent 编排、BM25/混合检索、Redis 任务队列或生产级分布式部署。正式向量能力使用 Chroma；不得把历史 Milvus、云主机实验或本机健康检查写成完整云端部署结论。
 
 ## 当前状态与决策入口
 
@@ -26,29 +26,24 @@
 - 三份文档均不得记录 `.env`、密钥、凭据、Token、数据库内容或业务数据。
 - 普通代码任务无需机械更新三份文档，只有上述触发事件发生时才更新。
 
-## 企业知识库 Agent 当前范围
+## 当前正式能力范围
 
-目标是完成可通过 Vue 工作台与 Swagger 演示、可写入简历的单 Agent 业务闭环，而不是追求 Tool 或 Agent 数量。
+目标是完成可通过 Vue 工作台与 Swagger 演示、可写入简历的智慧档案单主线闭环，而不是追求 Tool 或 Agent 数量。
 
-当前唯一工具：
-
-```text
-search_company_policy      查询当前会话绑定知识库中的公司制度
-```
+历史制度 Agent 的工具和运行时不属于当前正式能力；其资料只保留在 `docs/archive/legacy-policy-agent/`。
 
 目标链路：
 
 ```text
-用户消息 → 校验 Agent 会话授权范围
-→ DeepSeek 判断是否调用制度检索工具
-→ 工具使用服务端注入的 user_id + kb_id 检索 Chroma
-→ DeepSeek 仅依据工具结果回答
-→ 返回引用并把脱敏调用记录写入 PostgreSQL
+项目与文档 → 解析、人工确认、正式索引
+→ FR-039 检索/证据问答，或 FR-042 项目档案助手
+→ 服务端固定 user_id + project_id + kb_id 范围
+→ 返回引用/拒答并写入脱敏审计或工具记录
 ```
 
-既有制度检索 Agent 的实现与验证以 `docs/implementation/既有检索与智能体实施计划.md` 和实际代码为准；智慧档案 V1 的实现与验证以 `docs/implementation/智慧档案V1实施计划.md`、handoff 和实际代码为准。历史测试或单问题真实模型结果不得冒充当前版本或完整质量结论。
+智慧档案 V1 与 FR-042 的实现和验证以 `docs/implementation/智慧档案V1实施计划.md`、`docs/implementation/FR042-项目档案助手MVP实施计划.md`、handoff 和实际代码为准。制度 Agent 资料位于 `docs/archive/legacy-policy-agent/`，只作历史追溯；历史测试或单问题真实模型结果不得冒充当前版本或正式能力。
 
-详细需求、数据与接口分别以 `docs/design/需求说明.md`、`docs/design/数据库设计.md` 和 `docs/design/接口设计.md` 为准；正式企业知识库 Agent 位于 `app/agents/admin/`。
+详细需求、数据与接口分别以 `docs/design/需求说明.md`、`docs/design/数据库设计.md` 和 `docs/design/接口设计.md` 为准；正式 Agent 能力仅指项目档案助手及 FR-039 档案问答。
 
 ## 文档驱动顺序
 

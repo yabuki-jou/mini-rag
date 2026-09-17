@@ -139,7 +139,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 决策：当前评测统一在 `evals/` 下按业务域组织；制度 Agent 使用 `evals/policy_agent/`，智慧档案使用 `evals/archive/`。`pixie_qa/` 只保留本地工具状态与忽略的结果，不再保存评测源码；已删除请假领域的旧运行器、数据集和追踪不保留。
 - 约束：注入检索结果的模型评测只证明回答层，不得表述为真实 Chroma 检索通过；真实检索、跨轮状态和故障恢复必须使用独立评测并分别报告。评测不得读取真实业务数据或把 Ground Truth 注入生产请求。
 - 替代/复查条件：评测工具的根目录规则发生变化，或新增独立业务域评测时复查。
-- 依据文件：[`evals/policy_agent/docs/project-analysis.md`](../evals/policy_agent/docs/project-analysis.md)、[`evals/archive/README.md`](../evals/archive/README.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+- 依据文件：[`docs/archive/legacy-policy-agent/README.md`](archive/legacy-policy-agent/README.md)、[`evals/archive/README.md`](../evals/archive/README.md)、[`docs/stage/handoff.md`](stage/handoff.md)
 
 ## DEC-012：旧制度 Collection 与当前 768 维 Embedding 对齐
 
@@ -149,7 +149,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 决策：仅在制度 Collection 条目数和 PostgreSQL 待重建文档聚合计数均为 0 时，保留原名与 cosine 度量执行空库重建，以 768 维三字段 canary 锁定并验证新维度，随后精确清理 canary。任何非空状态都必须停止，不能自动删除或覆盖。
 - 影响：制度 Collection 现与共享的 bge-base/768 配置一致；一次虚构制度文档真实链路已通过。该单题只证明链路恢复，不替代 `evals/policy_agent/` 的回答质量评测，也不证明多轮或故障恢复质量。
 - 替代/复查条件：Embedding 再次更换、制度 Collection 出现待迁移数据，或制度与智慧档案改为独立 Embedding 配置时复查。
-- 依据文件：[`docs/implementation/制度Agent-Collection维度迁移实施计划.md`](implementation/制度Agent-Collection维度迁移实施计划.md)、[`scripts/policy_collection_embedding_rebuild.py`](../scripts/policy_collection_embedding_rebuild.py)、[`docs/stage/handoff.md`](stage/handoff.md)
+- 依据文件：[`docs/archive/legacy-policy-agent/制度Agent-Collection维度迁移实施计划.md`](archive/legacy-policy-agent/制度Agent-Collection维度迁移实施计划.md)、历史重建脚本（已随旧运行入口下线）、[`docs/stage/handoff.md`](stage/handoff.md)
 
 ## DEC-013：制度 Agent 应用服务按会话、消息、审计和执行分层
 
@@ -159,7 +159,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 决策：`sessions.py` 只负责会话创建和知识库范围校验；`messages.py` 负责 Checkpoint 与用户可见消息转换；`audit.py` 负责工具调用脱敏和审计持久化；`execution.py` 负责 Graph 调用、错误映射、提交边界和响应构造。Router 直接依赖各职责模块，不保留聚合转发入口。
 - 约束：执行成功与失败路径的审计、提交和错误转换顺序保持不变；不改变 HTTP API、Prompt、Graph、数据库 Schema、Checkpoint、工具参数或日志脱敏规则。跨模块只导入公开函数。
 - 替代/复查条件：Agent 新增写工具、人工中断恢复或不同事务边界，并经用户确认新的应用服务划分时复查。
-- 依据文件：[`app/services/agent/`](../app/services/agent/)、[`docs/implementation/智能体逻辑导览.md`](implementation/智能体逻辑导览.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+- 依据文件：[`docs/archive/legacy-policy-agent/智能体逻辑导览.md`](archive/legacy-policy-agent/智能体逻辑导览.md)、[`docs/stage/handoff.md`](stage/handoff.md)
 
 ## DEC-014：文件日志按本地日期分层
 
@@ -180,7 +180,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 安全与回答约束：模型只能提交查询词或受控目录筛选条件；`user_id`、`project_id`、`kb_id`、正式文档范围及最终引用对象均由服务端注入或映射。原文事实性回答必须引用 `CONFIRMED` 且未被可见性阻断的档案原文；无充分证据时必须拒答。目录工具仅用于正式档案导航，不得把人工无证据字段包装为原文依据。助手不提供写工具、自动确认、自动清单关联、跨项目检索或自动合规结论。
 - 影响：LangGraph 仅负责单个项目档案助手的“范围校验 → 模型判断 → 工具调用 → 模型回答”循环，不引入运行时多 Agent 编排。`archive-questions` 继续作为简单事实问答的默认、确定性路径；档案助手通过独立项目 API 暴露，后续必须先完成 FR-042 的需求、架构、数据库/API 设计、实施计划和 TDD，再开始迁移与实现。
 - 替代/复查条件：用户确认不再需要跨轮项目档案追问、工具审计或 Checkpoint 恢复时，可评估降级为无状态调用；需要写入档案、清单或外部业务系统时，必须另行决策，不得由本决策自动授权。
-- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/接口设计.md`](design/接口设计.md)、[`app/agents/admin/graph.py`](../app/agents/admin/graph.py)、[`app/services/archive/catalog.py`](../app/services/archive/catalog.py)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)
+- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/接口设计.md`](design/接口设计.md)、[`app/agents/archive/graph.py`](../app/agents/archive/graph.py)、[`app/services/archive/catalog.py`](../app/services/archive/catalog.py)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)
 
 ## DEC-016：FR-042 需求评审问题裁决（部分已废弃）
 
@@ -212,7 +212,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 其他边界：模型上下文不回放历史 ToolMessage，只投影已完成的用户/助手消息和本轮工具结果；现有制度入口固定只接受制度会话，项目入口固定只接受档案会话。目录字段的 `has_source_evidence` 是根据字段标记和当前证据关系计算的对外派生值。当前项目解释器已静态确认 `SqliteSaver.delete_thread(thread_id)` 存在，且在内存 SQLite 上连续删除不存在的线程保持幂等；真实文件、真实线程和项目删除联动仍须通过集成测试。
 - 影响：数据库设计必须承接 `agent_type/project_id/status`、Agent 轮次元数据及必要的历史引用映射；API 设计必须区分完整失败轮次与未完成基础设施失败。架构主审问题闭环不替代仍待补的需求独立二次复审，也不授权迁移或代码实现。
 - 替代/复查条件：改为无锁租约、允许截断执行部分并行工具、把工具标识写入 Checkpoint、改变 60 秒硬上限、统一失败 HTTP 语义或恢复 Reranker 统一拒答阈值时，必须另行确认。
-- 依据文件：[`docs/review/FR-042-项目档案助手/架构评审.md`](review/FR-042-项目档案助手/架构评审.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)、[`app/services/archive/questions.py`](../app/services/archive/questions.py)、[`app/agents/admin/observability.py`](../app/agents/admin/observability.py)
+- 依据文件：[`docs/review/FR-042-项目档案助手/架构评审.md`](review/FR-042-项目档案助手/架构评审.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`app/services/archive/retrieval.py`](../app/services/archive/retrieval.py)、[`app/services/archive/questions.py`](../app/services/archive/questions.py)、[`app/agents/archive/graph.py`](../app/agents/archive/graph.py)
 
 ## DEC-019：FR-042 收敛为最小可演示闭环
 
@@ -234,7 +234,7 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 错误与证据：合法客户端请求触发的多个 Tool Call、未注册工具或累计第三次调用属于服务端依赖的模型输出违反契约，不归因于客户端，返回 `503 ARCHIVE_AGENT_MODEL_OUTPUT_INVALID`；真实模型/工具连接、超时、Checkpoint 或 PostgreSQL 最终失败返回 `503 ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE`。模型没有调用本轮目录工具时不得陈述目录结果，没有调用本轮证据工具或证据不足时不得陈述档案原文事实，统一走无依据拒答。
 - 历史与超时：历史接口和后续模型输入使用同一完整轮次投影，忽略中间 ToolMessage 和任何没有最终 AIMessage 的孤立轮次。MVP 不设置独立上下文轮数或码点上限，该限制只适合短会话演示。实施时必须为当前 `get_chat_model()` 增加固定、可配置的请求超时，但不引入跨 DeepSeek、Chroma 和数据库传播的动态总预算。
 - 影响：需求与技术架构中的 C1～C7 已获得唯一口径；数据库/API 设计必须新增档案助手专用创建/响应 Schema，创建请求不复用要求客户端提交 `kb_id` 的 `AgentSessionCreate`，项目范围只来自路径和服务端 ProjectContext。该决策不授权代码实现，仍须先完成数据库设计、API 设计和 Implementation Plan。
-- 依据文件：[`docs/review/FR-042-项目档案助手/需求评审.md`](review/FR-042-项目档案助手/需求评审.md)、[`docs/review/FR-042-项目档案助手/架构评审.md`](review/FR-042-项目档案助手/架构评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`app/schemas/archive_retrieval.py`](../app/schemas/archive_retrieval.py)、[`app/schemas/archive_question.py`](../app/schemas/archive_question.py)、[`app/schemas/agent.py`](../app/schemas/agent.py)
+- 依据文件：[`docs/review/FR-042-项目档案助手/需求评审.md`](review/FR-042-项目档案助手/需求评审.md)、[`docs/review/FR-042-项目档案助手/架构评审.md`](review/FR-042-项目档案助手/架构评审.md)、[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/技术架构.md`](design/技术架构.md)、[`app/schemas/archive_retrieval.py`](../app/schemas/archive_retrieval.py)、[`app/schemas/archive_question.py`](../app/schemas/archive_question.py)、[`app/schemas/archive_agent.py`](../app/schemas/archive_agent.py)
 
 ## DEC-021：证据候选携带已确认文档标题用于身份绑定
 
