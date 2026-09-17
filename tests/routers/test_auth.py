@@ -170,6 +170,36 @@ def test_login_refresh_and_bearer_protection(auth_api: tuple[TestClient, Engine]
     assert client.get("/knowledge-bases", headers=bearer(token_pair["refresh_token"])).status_code == 401
 
 
+def test_auth_me_returns_current_user_without_password_fields(
+    auth_api: tuple[TestClient, Engine],
+) -> None:
+    """当前用户接口应返回 UserRead，且只接受 Access Token。"""
+    client, _ = auth_api
+    registered = register(client)
+    token_pair = login(client)
+
+    response = client.get("/auth/me", headers=bearer(token_pair["access_token"]))
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result == registered
+    assert "password" not in result
+    assert "password_hash" not in result
+
+
+def test_auth_me_rejects_missing_and_refresh_tokens(
+    auth_api: tuple[TestClient, Engine],
+) -> None:
+    """当前用户接口缺少认证或使用 Refresh Token 时均应返回 401。"""
+    client, _ = auth_api
+    register(client)
+    token_pair = login(client)
+
+    assert client.get("/auth/me").status_code == 401
+    refresh_response = client.get("/auth/me", headers=bearer(token_pair["refresh_token"]))
+    assert refresh_response.status_code == 401
+
+
 def test_logout_revokes_access_and_refresh_tokens(auth_api: tuple[TestClient, Engine]) -> None:
     """注销当前会话后，原 Access 与 Refresh Token 均不能再使用。"""
     client, _ = auth_api

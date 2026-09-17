@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Response, status
 
-from app.dependencies import CurrentAuthenticationDep, SessionDep
+from app.dependencies import CurrentAuthenticationDep, CurrentUserDep, SessionDep
 from app.models import User
 from app.schemas import (
     AuthAccessTokenRead,
@@ -23,6 +23,11 @@ def register_endpoint(payload: AuthRegisterRequest, session: SessionDep) -> User
     """公开注册一个账号密码用户，不返回密码或密码哈希。"""
     return register_user(payload=payload, session=session)
 
+
+@router.get("/me", response_model=UserRead)
+def me_endpoint(current_user: CurrentUserDep) -> User:
+    """返回当前 Access Token 对应的用户信息，不暴露密码字段。"""
+    return current_user
 
 @router.post("/login", response_model=AuthTokenPairRead)
 def login_endpoint(payload: AuthLoginRequest, session: SessionDep) -> AuthTokenPairRead:
