@@ -225,7 +225,6 @@ def test_retrieval_uses_formal_scope_and_filters_result_documents(
     monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
     monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
     monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
 
     with Session(engine) as session:
         project = session.get(Project, project_id)
@@ -372,7 +371,6 @@ def test_retrieval_records_eval_scope_and_final_items(
     monkeypatch.setattr(archive_retrieval_service, "eval_wrap", capture)
     monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
     monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
 
     with Session(engine) as session:
         project = session.get(Project, project_id)
@@ -459,7 +457,6 @@ def test_retrieval_reranks_only_validated_top_thirty_candidates(
         fake_score,
         raising=False,
     )
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
 
     with Session(engine) as session:
         project = session.get(Project, project_id)
@@ -520,7 +517,6 @@ def test_retrieval_passes_all_top_thirty_candidates_to_reranker(
         fake_score,
         raising=False,
     )
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", None)
     monkeypatch.setattr(settings, "archive_reranker_score_threshold", None, raising=False)
 
     with Session(engine) as session:
@@ -587,7 +583,6 @@ def test_retrieval_does_not_apply_legacy_distance_threshold_before_reranking(
         fake_score,
         raising=False,
     )
-    monkeypatch.setattr(settings, "retrieval_distance_threshold", 0.2)
     monkeypatch.setattr(settings, "archive_reranker_score_threshold", None, raising=False)
 
     with Session(engine) as session:

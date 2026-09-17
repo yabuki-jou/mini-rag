@@ -26,8 +26,16 @@ def test_settings_default_to_project_chroma_namespace() -> None:
 
     assert settings.chroma_tenant == "mini_rag_tenant"
     assert settings.chroma_database == "mini_rag_chroma"
-    assert settings.chroma_collection == "mini_rag_knowledge_chunks_v1"
     assert settings.chroma_final_collection == "archive_final_chunks"
+    for retired_name in (
+        "chroma_collection",
+        "chunk_size",
+        "chunk_overlap",
+        "retrieval_top_k",
+        "retrieval_top_n",
+        "retrieval_distance_threshold",
+    ):
+        assert not hasattr(settings, retired_name)
 
 
 def test_settings_default_to_formal_bge_base_embedding() -> None:

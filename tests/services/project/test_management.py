@@ -11,7 +11,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.agents.admin.runtime import build_admin_runtime
 from app.agents.archive.runtime import build_archive_runtime
 from app.agents.checkpoint import build_thread_config, open_checkpoint_store
 from app.core.errors import AppError
@@ -174,15 +173,22 @@ def _seed_checkpoints(checkpoint_path, scope) -> None:
             },
             thread_id=scope.other_thread,
         )
-    with build_admin_runtime(
+    with build_archive_runtime(
+        user_id=scope.user_id,
+        project_id=scope.target_project_id,
+        kb_id=scope.target_kb_id,
+        session_factory=lambda: nullcontext(SimpleNamespace()),
         model=ZeroToolModel("制度回答"),
+        judge_model=ZeroToolModel("未调用"),
         checkpoint_path=checkpoint_path,
     ) as runtime:
         runtime.invoke(
             {
                 "messages": [HumanMessage(content="制度问题")],
                 "user_id": str(scope.user_id),
+                "project_id": str(scope.target_project_id),
                 "kb_id": str(scope.target_kb_id),
+                "tool_call_count": 0,
             },
             thread_id=scope.policy_thread,
         )

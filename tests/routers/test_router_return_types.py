@@ -10,26 +10,18 @@ from fastapi import APIRouter
 from fastapi.routing import APIRoute
 
 from app.models import Project, User
-from app.routers.agent import router as agent_router
+from app.routers.archive_agent import router as archive_agent_router
 from app.routers.auth import router as auth_router
-from app.routers.chat import router as chat_router
-from app.routers.documents import router as documents_router
 from app.routers.health import router as health_router
-from app.routers.knowledge_bases import router as knowledge_bases_router
 from app.routers.projects import router as projects_router
-from app.routers.retrieval import router as retrieval_router
 from app.schemas import ProjectRead, UserRead
 
 
 ALL_ROUTERS: tuple[tuple[str, APIRouter], ...] = (
-    ("agent", agent_router),
+    ("archive_agent", archive_agent_router),
     ("auth", auth_router),
-    ("chat", chat_router),
-    ("documents", documents_router),
     ("health", health_router),
-    ("knowledge_bases", knowledge_bases_router),
     ("projects", projects_router),
-    ("retrieval", retrieval_router),
 )
 
 

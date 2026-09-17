@@ -6,26 +6,7 @@ from app.schemas.account import (
     AuthRefreshRequest,
     AuthRegisterRequest,
     AuthTokenPairRead,
-    KnowledgeBaseCreate,
-    KnowledgeBaseRead,
     UserRead,
-)
-from app.schemas.agent import (
-    AgentExecutionStatus,
-    AgentMessageCreate,
-    AgentMessageRead,
-    AgentResponse,
-    AgentSessionCreate,
-    AgentSessionRead,
-    AgentToolCallLogRead,
-)
-from app.schemas.chat import (
-    ChatAnswerResponse,
-    ChatMessageRead,
-    ChatQuestionRequest,
-    ChatSessionCreate,
-    ChatSessionRead,
-    SourceRead,
 )
 from app.schemas.checklist import (
     ChecklistFulfillmentStatus,
@@ -60,12 +41,14 @@ from app.schemas.archive_question import (
     ArchiveQuestionResponse,
 )
 from app.schemas.archive_agent import (
+    AgentToolCallLogRead,
     ArchiveAgentCitationRead,
     ArchiveAgentMessageCreate,
     ArchiveAgentMessageRead,
     ArchiveAgentResponse,
     ArchiveAgentSessionCreate,
     ArchiveAgentSessionRead,
+    MessageRole,
 )
 from app.schemas.archive_catalog import (
     ArchiveAuditOperationType,
@@ -83,20 +66,9 @@ from app.schemas.archive_catalog import (
 )
 from app.schemas.health import HealthComponent, HealthResponse
 from app.schemas.project import ProjectCreate, ProjectPageRead, ProjectRead, ProjectUpdate
-from app.schemas.retrieval import (
-    RetrievalResultRead,
-    RetrievalTestRequest,
-    RetrievalTestResponse,
-)
 
 
 __all__ = [
-    "AgentExecutionStatus",
-    "AgentMessageCreate",
-    "AgentMessageRead",
-    "AgentResponse",
-    "AgentSessionCreate",
-    "AgentSessionRead",
     "AgentToolCallLogRead",
     "ArchiveDraftRead",
     "ArchiveAuditOperationType",
@@ -128,11 +100,6 @@ __all__ = [
     "AuthRefreshRequest",
     "AuthRegisterRequest",
     "AuthTokenPairRead",
-    "ChatAnswerResponse",
-    "ChatMessageRead",
-    "ChatQuestionRequest",
-    "ChatSessionCreate",
-    "ChatSessionRead",
     "ChecklistFulfillmentStatus",
     "ChecklistItemCreate",
     "ChecklistItemCreateResponse",
@@ -151,8 +118,6 @@ __all__ = [
     "FieldEvidenceRead",
     "HealthComponent",
     "HealthResponse",
-    "KnowledgeBaseCreate",
-    "KnowledgeBaseRead",
     "LastErrorRead",
     "ProcessDocumentRead",
     "ProcessDocumentPageRead",
@@ -161,9 +126,6 @@ __all__ = [
     "ProjectRead",
     "ProjectUpdate",
     "ParsedSnapshotRead",
-    "RetrievalResultRead",
-    "RetrievalTestRequest",
-    "RetrievalTestResponse",
-    "SourceRead",
+    "MessageRole",
     "UserRead",
 ]

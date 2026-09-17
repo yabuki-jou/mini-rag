@@ -47,8 +47,9 @@ def test_every_business_table_and_column_has_a_comment_specification() -> None:
         for table_name, table in SQLModel.metadata.tables.items()
         if table_name != "alembic_version"
     }
-    assert set(table_comments) == set(business_tables)
-    assert set(column_comments) == set(business_tables)
+    retired_compatibility_tables = {"chat_sessions", "chat_messages"}
+    assert set(table_comments) == set(business_tables) | retired_compatibility_tables
+    assert set(column_comments) == set(business_tables) | retired_compatibility_tables
     for table_name, table in business_tables.items():
         assert set(column_comments[table_name]) == {
             column.name for column in table.columns

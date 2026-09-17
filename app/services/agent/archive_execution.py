@@ -23,13 +23,13 @@ from app.models import (
     AgentSession,
     AgentToolCallLog,
     AgentToolCallStatus,
-    MessageRole,
     utc_now,
 )
 from app.schemas import (
     AgentToolCallLogRead,
     ArchiveAgentMessageRead,
     ArchiveAgentResponse,
+    MessageRole,
 )
 
 

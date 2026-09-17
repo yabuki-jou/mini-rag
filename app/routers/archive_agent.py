@@ -38,6 +38,7 @@ router = APIRouter(
 
 @router.post("", response_model=ArchiveAgentSessionRead, status_code=status.HTTP_201_CREATED)
 def create_archive_agent_session_endpoint(
+    project_id: UUID,
     payload: ArchiveAgentSessionCreate,
     project_context: ProjectContextDep,
     session: SessionDep,
@@ -52,7 +53,7 @@ def create_archive_agent_session_endpoint(
     Returns:
         已保存的项目档案助手会话。
     """
-    _ = payload
+    _ = payload, project_id
     return create_archive_agent_session(
         user_id=project_context.user_id,
         project_id=project_context.project_id,
@@ -126,12 +127,14 @@ def _archive_runtime_scope(
 
 @router.post("/{session_id}/messages", response_model=ArchiveAgentResponse)
 def send_archive_agent_message_endpoint(
+    project_id: UUID,
     session_id: UUID,
     payload: ArchiveAgentMessageCreate,
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ArchiveAgentResponse:
     """在请求体校验后查找会话并执行一轮受控 Graph。"""
+    _ = project_id
     agent_session = find_archive_agent_session(
         session_id=session_id,
         user_id=project_context.user_id,
@@ -150,22 +153,24 @@ def send_archive_agent_message_endpoint(
 
 @router.get("/{session_id}/messages", response_model=list[ArchiveAgentMessageRead])
 def read_archive_agent_messages_endpoint(
+    project_id: UUID,
     session_id: UUID,
     agent_session: ArchiveAgentSessionDep,
     session: SessionDep,
 ) -> list[ArchiveAgentMessageRead]:
     """返回同一投影规则生成的完整可见轮次。"""
-    _ = session_id
+    _ = project_id, session_id
     with _archive_runtime_scope(agent_session, session) as runtime:
         return read_archive_agent_messages(agent_session, runtime)
 
 
 @router.get("/{session_id}/tool-calls", response_model=list[AgentToolCallLogRead])
 def read_archive_agent_tool_calls_endpoint(
+    project_id: UUID,
     session_id: UUID,
     agent_session: ArchiveAgentSessionDep,
     session: SessionDep,
 ) -> list[AgentToolCallLogRead]:
     """按创建时间返回当前档案会话的脱敏工具日志。"""
-    _ = session_id
+    _ = project_id, session_id
     return read_archive_agent_tool_calls(agent_session, session)
