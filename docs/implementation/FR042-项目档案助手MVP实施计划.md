@@ -520,7 +520,7 @@ evals/archive/
 
 - `README.md`：本地启动、四端点、Vue 演示路径、已知限制；
 - `docs/implementation/智能体演示步骤.md`：增加项目档案助手演示，但保留制度 Agent；
-- `docs/implementation/验收报告.md`：区分 Mock/SQLite/PostgreSQL/Checkpoint/Chroma/DeepSeek/Vue 证据；
+- `docs/review/验收报告.md`：区分 Mock/SQLite/PostgreSQL/Checkpoint/Chroma/DeepSeek/Vue 证据；
 - `docs/review/验证冻结清单.md`：只登记用户确认后的新门槛与真实结果；
 - `docs/design/需求说明.md`、`技术架构.md`、`数据库设计.md`、`接口设计.md`：只同步实际实施状态，
   不借实现修改已冻结契约；

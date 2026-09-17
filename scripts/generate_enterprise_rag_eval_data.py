@@ -98,19 +98,19 @@ SOURCE_GROUPS: dict[str, tuple[str, ...]] = {
     "A-06": ("docs/design/数据库设计.md",),
     "A-07": ("docs/implementation/智慧档案V1实施计划.md",),
     "A-11": ("docs/codebase/架构概览.md",),
-    "A-12": ("docs/review/接口设计评审.md",),
+    "A-12": ("docs/archive/review/接口设计评审.md",),
     "B-01": (
         "docs/implementation/智慧档案V1实施计划.md",
         "docs/design/智慧档案V1解析器设计.md",
     ),
-    "B-02": ("docs/implementation/验收报告.md",),
+    "B-02": ("docs/review/验收报告.md",),
     "B-03": (
         "docs/design/数据库设计.md",
         "docs/design/Chroma迁移决策.md",
     ),
     "B-04": ("docs/design/接口设计.md",),
     "B-05": ("docs/stage/handoff.md",),
-    "B-11": ("docs/review/接口设计补丁.md",),
+    "B-11": ("docs/archive/review/接口设计补丁.md",),
     "B-12": ("docs/implementation/既有检索与智能体实施计划.md",),
 }
 

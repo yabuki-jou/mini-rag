@@ -160,7 +160,7 @@
                       "__dict__": {
                         "chunk_id": "3333333333333333333333333333333333333333333333333333333333333333",
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000004"},
-                        "filename": "handoff.md",
+                        "filename": "handoff-2026-09-17.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
                         "location_start": 62,
                         "location_end": 63,
@@ -176,7 +176,7 @@
                       "__dict__": {
                         "chunk_id": "3434343434343434343434343434343434343434343434343434343434343434",
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000004"},
-                        "filename": "handoff.md",
+                        "filename": "handoff-2026-09-17.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
                         "location_start": 60,
                         "location_end": 61,
@@ -201,7 +201,7 @@
         "retrieval_latency_ms": 0,
         "expected_answer": "Q-01 第一候选已含准确日期但仍错误拒答",
         "expected_evidence": {
-          "relative_path": "docs/stage/handoff.md",
+          "relative_path": "docs/archive/stage/handoff-2026-09-17.md",
           "items": [
             {
               "location_type": "TEXT_LINE_RANGE",
@@ -212,7 +212,7 @@
           ]
         },
         "difficulty": "challenging",
-        "source_document": "docs/stage/handoff.md"
+        "source_document": "docs/archive/stage/handoff-2026-09-17.md"
       }
     },
     {
