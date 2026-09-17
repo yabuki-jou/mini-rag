@@ -6,6 +6,9 @@
 .vscode/
 __pycache__/
 .pytest_cache/
+# 仓库根目录下的临时 pytest 工作区不得进入版本控制。
+/tmp_pytest_work/
+/.tmp_pytest_run/
 *.py[cod]
 *.db
 *.sqlite
