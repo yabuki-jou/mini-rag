@@ -103,8 +103,8 @@
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000003"},
                         "filename": "AGENTS.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
-                        "location_start": 91,
-                        "location_end": 91,
+                        "location_start": 86,
+                        "location_end": 86,
                         "excerpt": "- Tool 保持薄层；检索和外部访问规则由 Service 负责。",
                         "score": 0.78,
                         "reranker_score": 0.61
@@ -236,8 +236,8 @@
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000005"},
                         "filename": "接口设计.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
-                        "location_start": 642,
-                        "location_end": 650,
+                        "location_start": 647,
+                        "location_end": 655,
                         "excerpt": "删除可从任一稳定用户可见文档状态发起。服务先创建内部\n`DELETE + RUNNING + visibility_blocking = true`，使档案立即退出正式目录、检索和问答，\n随后依次清理 Final Chunk、原文件、快照、字段、证据和清单关联。\n\n- 全部成功：返回 `204 No Content`，保留脱敏删除审计。\n- 解析、建议、确认或另一删除操作运行中：返回 `409 DOCUMENT_OPERATION_IN_PROGRESS`。\n- 外部清理失败：返回 `503 DOCUMENT_DELETE_INCOMPLETE`，文档保持正式范围外；再次调用\n  同一 `DELETE` 恢复未完成删除，不创建重复文件、记录、向量或成功审计。",
                         "score": 0.94,
                         "reranker_score": 0.92
@@ -263,20 +263,20 @@
           "items": [
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 642,
-              "location_end": 644,
+              "location_start": 647,
+              "location_end": 649,
               "excerpt": "使档案立即退出正式目录、检索和问答"
             },
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 646,
-              "location_end": 646,
+              "location_start": 651,
+              "location_end": 651,
               "excerpt": "- 全部成功：返回 `204 No Content`，保留脱敏删除审计。"
             },
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 648,
-              "location_end": 649,
+              "location_start": 653,
+              "location_end": 654,
               "excerpt": "- 外部清理失败：返回 `503 DOCUMENT_DELETE_INCOMPLETE`，文档保持正式范围外；再次调用\n  同一 `DELETE` 恢复未完成删除，不创建重复文件、记录、向量或成功审计。"
             }
           ]
