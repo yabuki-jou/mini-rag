@@ -14,10 +14,11 @@ def test_services_root_contains_only_package_initializer() -> None:
     assert [path.name for path in SERVICES_ROOT.glob("*.py")] == ["__init__.py"]
 
 
-def test_agent_and_identity_service_tests_are_mirrored() -> None:
-    """Agent 与身份服务的行为测试应同步位于对应业务域目录。"""
+def test_archive_agent_and_identity_service_tests_are_mirrored() -> None:
+    """档案助手与身份服务的行为测试应同步位于对应业务域目录。"""
     tests_root = SERVICES_ROOT.parents[1] / "tests" / "services"
-    assert (tests_root / "agent" / "test_sessions.py").is_file()
+    assert (tests_root / "agent" / "test_archive_sessions.py").is_file()
+    assert (tests_root / "agent" / "test_archive_execution.py").is_file()
     assert (tests_root / "identity" / "test_authentication.py").is_file()
 
 
@@ -42,22 +43,10 @@ def test_services_domain_modules_exist() -> None:
         "archive/questions.py",
         "archive/reranker.py",
         "archive/evidence_matching.py",
-        "rag/documents.py",
-        "rag/parser.py",
-        "rag/chunks.py",
-        "rag/embeddings.py",
-        "rag/vector_store.py",
-        "rag/retrieval.py",
-        "rag/chat.py",
-        "rag/prompting.py",
         "project/management.py",
         "project/checklists.py",
-        "agent/sessions.py",
         "agent/archive_sessions.py",
         "agent/archive_execution.py",
-        "agent/messages.py",
-        "agent/audit.py",
-        "agent/execution.py",
         "identity/authentication.py",
         "infrastructure/ai_models.py",
         "infrastructure/files.py",
@@ -73,12 +62,11 @@ def test_services_domain_modules_exist() -> None:
 
 
 def test_services_packages_and_modules_are_importable() -> None:
-    """六个业务域包及其全部目标模块都必须可以导入。"""
+    """五个业务域包及其全部目标模块都必须可以导入。"""
 
     packages = {
         "archive",
         "project",
-        "rag",
         "agent",
         "identity",
         "infrastructure",
@@ -159,6 +147,67 @@ def test_repository_sources_do_not_import_old_service_paths() -> None:
                     ):
                         offenders.append(f"{path}:{node.lineno}")
     assert sorted(set(offenders)) == []
+
+
+def test_retired_runtime_paths_are_absent() -> None:
+    """旧通用 RAG、Chat 和制度 Agent 的运行代码及正向测试必须下线。"""
+    root = SERVICES_ROOT.parents[1]
+    retired_paths = {
+        "app/routers/agent.py",
+        "app/routers/chat.py",
+        "app/routers/documents.py",
+        "app/routers/knowledge_bases.py",
+        "app/routers/retrieval.py",
+        "app/agents/admin",
+        "app/agents/tools/policy_tools.py",
+        "app/agents/tools/context.py",
+        "app/dependencies/agent.py",
+        "app/dependencies/resources.py",
+        "app/services/rag",
+        "app/services/agent/sessions.py",
+        "app/services/agent/execution.py",
+        "app/services/agent/messages.py",
+        "app/services/agent/audit.py",
+        "app/schemas/agent.py",
+        "app/schemas/chat.py",
+        "app/schemas/retrieval.py",
+        "app/models/chat.py",
+        "evals/policy_agent",
+        "scripts/policy_collection_embedding_rebuild.py",
+        "scripts/generate_enterprise_rag_eval_data.py",
+        "tests/agents/admin",
+        "tests/agents/tools/test_policy_tools.py",
+        "tests/evals/policy_agent",
+        "tests/scripts/test_policy_collection_embedding_rebuild.py",
+        "tests/scripts/test_generate_enterprise_rag_eval_data.py",
+        "tests/services/rag",
+        "tests/services/agent/test_sessions.py",
+        "tests/services/agent/test_execution.py",
+        "tests/services/agent/test_messages.py",
+        "tests/services/agent/test_audit.py",
+        "tests/routers/test_agent.py",
+        "tests/routers/test_chat.py",
+        "tests/routers/test_documents.py",
+        "tests/routers/test_retrieval.py",
+    }
+    present = []
+    for path in retired_paths:
+        candidate = root / path
+        if candidate.is_file():
+            present.append(path)
+        elif candidate.is_dir() and any(
+            child.is_file()
+            and "__pycache__" not in child.parts
+            and (
+                child.suffix in {".py", ".md"}
+                or child.name == "policy-agent-golden.json"
+                or child.name.startswith("input-")
+            )
+            for child in candidate.rglob("*")
+        ):
+            present.append(path)
+    present.sort()
+    assert present == []
 
 
 def test_services_do_not_import_private_symbols_from_other_service_modules() -> None:

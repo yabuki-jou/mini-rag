@@ -1,6 +1,6 @@
 # 后端文档导航
 
-本目录维护 Mini RAG 后端的产品、架构、数据、接口、实施、评测和验收资料。实际代码与 Git
+本目录维护智慧档案单主线后端的产品、架构、数据、接口、实施、评测和验收资料。实际代码与 Git
 状态优先于状态文档；稳定决策以 `decisions.md` 为准，当前执行状态以 `stage/handoff.md` 为准。
 
 ## 当前事实源
@@ -17,7 +17,7 @@
 
 - [智慧档案 V1 实施计划](implementation/智慧档案V1实施计划.md)
 - [项目档案助手 MVP 实施计划](implementation/FR042-项目档案助手MVP实施计划.md)
-- [既有检索与智能体实施计划](implementation/既有检索与智能体实施计划.md)
+- [制度 Agent 历史资料](archive/legacy-policy-agent/既有检索与智能体实施计划.md)
 - [P14 检索质量改进](review/P14-rag检索质量改进/检索质量问题分析与改进策略.md)
 - [FR-042 真实模型质量评测](review/FR-042-项目档案助手/真实模型质量评测/评测复盘.md)
 - [FR-042 本地后端闭环验收](review/FR-042-项目档案助手/本地后端闭环验收/验收复盘.md)
@@ -25,11 +25,12 @@
 ## 目录职责
 
 - `design/`：当前需求、架构、数据库和 API 契约。
-- `implementation/`：后端实施计划与代码导览。
+- `implementation/`：智慧档案与 FR-042 后端实施计划。
 - `review/`：当前评审、质量评测和验收结论。
 - `stage/handoff.md`：短小的当前状态快照。
 - `releases/`：版本发布说明。
 - `archive/`：历史 stage 和历史评审资料，只用于追溯，不作为当前实现依据。
+- `archive/legacy-policy-agent/`：已下线制度 Agent 的实施、导览、演示和 Collection 迁移资料，只用于追溯。
 - `codebase/`：代码结构说明，涉及现状时仍须核对实际代码。
 
 Vue 专属实施与验收资料已迁至

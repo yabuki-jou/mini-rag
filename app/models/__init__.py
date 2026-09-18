@@ -16,7 +16,6 @@ from app.models.archive import (
 )
 from app.models.archive_audit import ArchiveAuditLog, ArchiveOperation, ArchiveOperationStatus, ArchiveOperationType
 from app.models.agent import AgentSession, AgentToolCallLog, AgentToolCallStatus, AgentType
-from app.models.chat import ChatMessage, ChatSession, MessageRole
 from app.models.checklist import ChecklistItem, ChecklistLink, ChecklistLinkStatus
 from app.models.common import utc_now
 from app.models.document import Document, DocumentStatus
@@ -29,8 +28,6 @@ __all__ = [
     "AgentToolCallStatus",
     "AgentType",
     "AuthSession",
-    "ChatMessage",
-    "ChatSession",
     "Document",
     "DocumentStatus",
     "ArchiveAuditLog",
@@ -53,7 +50,6 @@ __all__ = [
     "ParsedSnapshot",
     "Project",
     "ProjectStage",
-    "MessageRole",
     "User",
     "utc_now",
 ]

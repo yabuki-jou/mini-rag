@@ -161,13 +161,13 @@ def test_login_refresh_and_bearer_protection(auth_api: tuple[TestClient, Engine]
     assert set(refreshed) == {"access_token", "token_type", "access_expires_in"}
     assert refreshed["access_token"] != token_pair["access_token"]
 
-    assert client.get("/knowledge-bases", headers=bearer(token_pair["access_token"])).status_code == 200
-    assert client.get("/knowledge-bases").status_code == 401
+    assert client.get("/projects", headers=bearer(token_pair["access_token"])).status_code == 200
+    assert client.get("/projects").status_code == 401
     assert client.get(
-        "/knowledge-bases",
+        "/projects",
         headers={"X-User-ID": "00000000-0000-0000-0000-000000000001"},
     ).status_code == 401
-    assert client.get("/knowledge-bases", headers=bearer(token_pair["refresh_token"])).status_code == 401
+    assert client.get("/projects", headers=bearer(token_pair["refresh_token"])).status_code == 401
 
 
 def test_auth_me_returns_current_user_without_password_fields(
@@ -208,7 +208,7 @@ def test_logout_revokes_access_and_refresh_tokens(auth_api: tuple[TestClient, En
 
     logout_response = client.post("/auth/logout", headers=bearer(token_pair["access_token"]))
     assert logout_response.status_code == 204
-    assert client.get("/knowledge-bases", headers=bearer(token_pair["access_token"])).status_code == 401
+    assert client.get("/projects", headers=bearer(token_pair["access_token"])).status_code == 401
     refresh_response = client.post("/auth/refresh", json={"refresh_token": token_pair["refresh_token"]})
     assert refresh_response.status_code == 401
     assert refresh_response.json()["error"]["code"] == "INVALID_TOKEN"
@@ -246,8 +246,8 @@ def test_protected_route_rejects_forged_and_expired_access_tokens(
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
 
-    assert client.get("/knowledge-bases", headers=bearer("forged-token")).status_code == 401
-    expired_response = client.get("/knowledge-bases", headers=bearer(expired_token))
+    assert client.get("/projects", headers=bearer("forged-token")).status_code == 401
+    expired_response = client.get("/projects", headers=bearer(expired_token))
     assert expired_response.status_code == 401
     assert expired_response.json()["error"]["code"] == "TOKEN_EXPIRED"
 

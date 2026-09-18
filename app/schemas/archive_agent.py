@@ -1,14 +1,21 @@
 """定义 FR-042 项目档案助手的独立 HTTP 契约。"""
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models import EvidenceLocationType, MessageRole
+from app.models import AgentToolCallStatus, EvidenceLocationType
 from app.schemas.archive_question import ArchiveAnswerStatus
 
+
+class MessageRole(str, Enum):
+    """表示档案助手历史消息的发送角色。"""
+
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
 
 class ArchiveAgentSessionCreate(BaseModel):
     """创建项目档案助手会话时只接受空 JSON 对象。"""
@@ -82,3 +89,18 @@ class ArchiveAgentResponse(BaseModel):
     answer: str = Field(min_length=1)
     citations: list[ArchiveAgentCitationRead] = Field(default_factory=list)
     request_id: UUID
+
+
+class AgentToolCallLogRead(BaseModel):
+    """返回给会话所有者的脱敏档案工具调用记录。"""
+
+    id: UUID
+    tool_call_id: str
+    tool_name: str
+    status: AgentToolCallStatus
+    arguments_summary: dict[str, Any] | None
+    result_summary: dict[str, Any] | None
+    duration_ms: float | None
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime

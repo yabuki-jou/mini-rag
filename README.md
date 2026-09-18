@@ -1,6 +1,6 @@
 # Mini RAG Handwrite
 
-从空目录手写的企业知识库 RAG 与只读 Agent 后端练习项目。当前运行时代码使用
+从空目录手写的智慧档案与企业文档智能后端练习项目。当前正式能力为智慧档案 V1、FR-039 档案问答和 FR-042 项目档案助手；旧通用知识库、普通 Chat 和制度 Agent API 已下线，不保留兼容入口。当前运行时代码使用
 FastAPI、SQLModel、PostgreSQL、Alembic、LangChain/LangGraph、Chroma、本地 BGE 与
 DeepSeek。Swagger 用于 API 契约诊断；AV1-P14 已将相邻 `mini-rag-milvus-vue` 作为本地工作台，完成上传、解析、检索、引用问答、物理删除和脱敏审计的分阶段真实代理链路验收。
 全部向量能力已迁移到 Chroma HTTP 客户端与单机服务配置。当前运行和开发基线是本地环境：
@@ -8,7 +8,7 @@ Chroma 的本机命名空间、范围过滤、精确删除，以及 Docker API�
 历史联合健康验证曾通过；当前最近 health 为 `200`，API、database、Chroma 与 Embedding 全部正常，Embedding 实际维度为 768。使用者已私下修正运行时 Reranker 路径并重启服务，随后完成 16 份资料、88 个 Final Chunk 和 20 题的真实 Top-8 检索与 DeepSeek 问答复测。项目 `.env` 未读取或修改。一次云主机 Chroma 独立实验仅保留为历史可行性证据；是否部署云端、采用何种
 拓扑及资源规格均未确认；V1 本地功能验收完成不表示已经完成云端部署。
 
-下一阶段唯一业务方向是“智慧档案与企业文档智能”。需求、架构、数据库、API 与实施计划
+当前唯一业务方向是“智慧档案与企业文档智能”。需求、架构、数据库、API 与实施计划
 基线已确认；AV1-P01～P08、P09 确认—INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、
 P12 证据问答和 P13 物理删除的实现切片已完成。P09 已完成真实确认—INDEX 路由纵向链路、
 真实 Chroma/BGE canary 与取消确认清理；P11 已完成真实单文档 canary（512 维 cosine、命中 1 条、
@@ -36,13 +36,12 @@ flowchart LR
     Graph --> Chroma
 ```
 
-- PostgreSQL：用户、知识库、文档、聊天、Agent 会话与审计。
+- PostgreSQL：用户、项目、知识库/文档底座、档案、Agent 会话与审计；历史 Chat 表仅由迁移保留。
 - Chroma：存储可重建的 Chunk、向量和 `user_id + kb_id` 隔离字段。Compose 中的 API 使用内部
   `chroma:8000`；本机直接运行 Python 时可经回环地址 `127.0.0.1:8001` 访问，局域网和公网不可访问。
-  当前命名空间为 `mini_rag_tenant / mini_rag_chroma`，既有制度检索 Collection 为
-  `mini_rag_knowledge_chunks_v1`。该 Collection 已在确认空库后从历史 512 维原名重建为 768 维，
-  与当前 BGE 配置一致；一次虚构制度文档的真实上传、处理、Agent 问答与引用链路已通过并完成
-  PostgreSQL/Chroma 临时范围清理，该单题不替代完整制度质量评测。
+  当前命名空间为 `mini_rag_tenant / mini_rag_chroma`；历史制度检索 Collection
+  `mini_rag_knowledge_chunks_v1` 仅作数据兼容保留。正式档案使用独立 Final Collection，
+  与当前 BGE 配置一致；历史制度链路结果不作为当前能力或发布门。
 - 文件系统：上传原文件。
 - SQLite：仅保存 LangGraph Checkpoint，不再作为业务数据库。
 
@@ -63,24 +62,22 @@ flowchart LR
 - [P14-C2 检索质量优化方案](docs/review/P14-rag检索质量改进/P14-C2-检索质量优化方案.md)
 - [Chroma 迁移决策](docs/design/Chroma迁移决策.md)
 - [Parser 冻结规则](docs/design/智慧档案V1解析器设计.md)
-- [既有 Agent 实施计划](docs/implementation/既有检索与智能体实施计划.md)
-- [Agent 逻辑导览](docs/implementation/智能体逻辑导览.md)
-- [Agent 演示步骤](docs/implementation/智能体演示步骤.md)
-- [V1 候选发布说明](docs/releases/V1发布说明.md)
+- [制度 Agent 历史资料](docs/archive/legacy-policy-agent/既有检索与智能体实施计划.md)
+- [智慧档案单主线发布说明](docs/releases/智慧档案单主线发布说明.md)
 
 以 `LEARNING_PLAN.md`、`docs/stage/handoff.md`、`docs/decisions.md` 和 V1 候选发布说明为当前状态来源；P14
 检索质量的 C2～D6 方案保留为历史实验与决策证据，不再作为当前待执行任务。
 `docs/review/` 保留当前评审、质量门和验收证据；仅供追溯的旧评审与阶段材料位于
-`docs/archive/`，不作为当前实现状态的来源。当前制度 Agent 与智慧档案评测分别位于 `evals/policy_agent/` 和
-`evals/archive/`；`pixie_qa/` 只保留本地 Pixie 状态及忽略的运行结果。
+`docs/archive/`，不作为当前实现状态的来源。当前正式评测只服务智慧档案；制度 Agent 的评测与实现资料位于
+`docs/archive/legacy-policy-agent/`，不作为当前发布门。`pixie_qa/` 只保留本地 Pixie 状态及忽略的运行结果。
 
 ## 主要能力
 
 - TXT、Markdown、PDF、DOCX 上传与解析。
 - 档案问答在空候选时短路拒答；非空候选使用一次结构化 DeepSeek 决策，服务端校验 1-based 引用编号并映射为既有引用对象。
-- BGE Embedding、向量入库、Top-K/Top-N 检索；C4-A/C4-B 历史阶段曾以固定 Chroma Top-30 做本地 Reranker 重排，公开响应仍最多返回 10 条；D6-B 当前正式固定集为有据 `7/8`、无据 `2/2`、隔离 `2/2`，达到已确认质量门。后续确认索引/RAG 真实 E2E 当前只受运行时 Embedding 路径覆盖错误阻塞。
-- 无依据拒答，带文档名、页码、摘录和分数的结构化引用。
-- Agent 会话所有权、LangGraph 多轮消息恢复、制度检索 Tool Calling。
+- BGE Embedding、正式档案向量入库、固定候选检索与证据问答；历史 Reranker/Top-K 实验仅作为评测记录，不是当前公开契约。
+- 无依据拒答，带文档名、定位和摘录的脱敏结构化引用。
+- 项目档案助手会话所有权、LangGraph 多轮消息恢复、档案目录与证据工具调用。
 - 工具参数/结果脱敏、耗时和稳定错误码审计。
 - Alembic 管理 PostgreSQL Schema；当前本地 Compose 提供 PostgreSQL 与内部 Chroma 服务。云端部署策略和资源验收暂定，待 V1 完成后再评估。
 - 智慧档案 V1 已具备 Parser 规则、虚构验收集、项目授权上下文、数据库/模型基础、项目 CRUD API、清单项 CRUD/派生状态 API、项目内上传/重复校验/容量控制、首次解析/受控失败记录/专用解析重试/四格式路由、P07 手工草稿和字段检查、P08 AI 建议/失败重试/安全 regenerate，以及 P09 确认/INDEX/取消确认、P10 清单关联/目录/审计、P11 正式检索、P12 证据问答和 P13 物理删除切片；真实确认—INDEX、Chroma/BGE canary、取消确认清理、单文档 P95 基线和 P13 故障恢复已通过。P14-D6-B 固定 12 题达到质量门，正式 Embedding 配置与 Collection 已切换并完成空库重建。相邻 Vue 工作台已接入认证、项目 CRUD 和 FR-031～FR-041 的 DTO、API、Store 与页面；FR-034/035～FR-041 的真实链路验收已经完成。
@@ -150,18 +147,12 @@ API 默认地址为 `http://127.0.0.1:8000`，Swagger 为 `/docs`。
 ## 核心接口
 
 1. `POST /auth/register`、`POST /auth/login`、`POST /auth/refresh`、`POST /auth/logout`
-2. `POST/GET /knowledge-bases`
-3. `POST/GET /knowledge-bases/{kb_id}/documents`
-4. `POST /knowledge-bases/{kb_id}/documents/{document_id}/parse`
-5. `POST /knowledge-bases/{kb_id}/retrieval-test`
-6. `POST /chat-sessions` 与聊天消息/历史接口
-7. `POST /agent-sessions`
-8. `POST /agent-sessions/{session_id}/messages`
-9. `GET /agent-sessions/{session_id}/messages`
-10. `GET /agent-sessions/{session_id}/tool-calls`
-11. `GET /projects/{project_id}/documents`、`GET /projects/{project_id}/archives`
-12. `POST /projects/{project_id}/archive-retrieval`、`POST /projects/{project_id}/archive-questions`
-13. `DELETE /projects/{project_id}/documents/{document_id}`、`GET /projects/{project_id}/audit-logs`
+2. 项目、清单、项目文档和正式档案目录接口
+3. `POST /projects/{project_id}/archive-retrieval`、`POST /projects/{project_id}/archive-questions`
+4. `POST /projects/{project_id}/agent-sessions` 及其消息、历史和工具日志接口
+5. `DELETE /projects/{project_id}/documents/{document_id}`、`GET /projects/{project_id}/audit-logs`
+
+旧 `/knowledge-bases`、`/chat-sessions`、`/agent-sessions` 及其子路径已从 OpenAPI 移除，访问时返回默认 `404`。
 
 除注册、登录、刷新和健康检查外，受保护接口必须使用
 `Authorization: Bearer <Access Token>`。`X-User-ID` 不再被接受。首次运行认证前，
@@ -173,7 +164,7 @@ API 默认地址为 `http://127.0.0.1:8000`，Swagger 为 `/docs`。
 1. 在 Swagger 调用 `POST /auth/register` 创建新用户；`username` 是全局唯一的小写登录标识，
    `name` 仅作显示。
 2. 调用 `POST /auth/login` 获得 Access Token（30 分钟）和 Refresh Token（7 天）。在 Swagger 的
-   `Authorize` 中填写 Access Token 后，再调用知识库、项目、聊天或 Agent 等受保护接口。
+   `Authorize` 中填写 Access Token 后，再调用项目、档案问答或项目档案助手等受保护接口。
 3. Access Token 到期时，调用 `POST /auth/refresh` 并提交 Refresh Token；该接口只返回新的
    Access Token，不轮换 Refresh Token。
 4. 调用 `POST /auth/logout` 撤销当前会话；之后该会话的 Access Token 与 Refresh Token 均不可继续使用。

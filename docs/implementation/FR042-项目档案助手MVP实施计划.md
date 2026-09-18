@@ -12,6 +12,9 @@
 | 文档状态 | 已由用户确认；FR042-P00～P07、真实固定集、真实后端闭环和 Vue 确定性实现均已完成；完整 Vue 业务代理联调仍受 Chroma 未运行阻塞 |
 | 更新日期 | 2026-09-17 |
 
+> DEC-022 已将制度 Agent 运行入口下线。本计划中记录的“双向隔离”、制度 Graph 与旧 Router
+> 只描述 FR-042 当时的实施基线；当前契约收敛为项目档案助手单向拒绝历史 `POLICY` 会话。
+
 ## 2. 目标、边界与完成定义
 
 本计划只实现一个可在本地 Vue 工作台与 Swagger 演示的项目档案助手闭环：
@@ -30,7 +33,7 @@
 本期必须保持：
 
 - 只读取当前用户、当前项目、当前知识库中可见的 `CONFIRMED` 档案；
-- 制度 Agent 与项目档案助手双向隔离；
+- 项目档案助手按 ARCHIVE 五要素校验，并拒绝历史 `POLICY` 会话；
 - FR-039 与 FR-042 共用同一个“无统一阈值 Top-8 候选 → D5/D6 判定 → 服务端引用映射”入口；
 - 原始 `document_id/chunk_id/score/reranker_score` 只存在于当前请求内存；
 - 当前 HTTP `answer` 与 Checkpoint 最终 AIMessage 正文完全相同；
@@ -65,7 +68,7 @@
 - `agent_tool_call_logs.agent_session_id` 的旧外键在 `0003_agent_api.py` 中匿名创建；
 - `get_chat_model()` 是无参缓存单例，当前未显式配置请求超时；
 - FR-039 的候选获取和 D5/D6 判定仍位于 `app/services/archive/retrieval.py`、`questions.py`；
-- 制度 Agent 的 Graph、工具、消息投影和重试规则都是 POLICY 专用实现，不能直接改名复用；
+- 当时存在的制度 Agent Graph、工具、消息投影和重试规则没有被改名复用，现已按 DEC-022 下线；
 - 现有 SQLite Checkpoint 已使用关闭 pickle fallback 的 `JsonPlusSerializer`；
 - 相邻 Vue 工作台已有 FR-034～FR-041，但当前仓库处于 `feature/ui-feedback-and-layout` 且有未提交改动。
 
@@ -353,7 +356,7 @@ RED：
 - 完成消息、历史、工具日志三个 Router；
 - 对已知业务错误使用 `AppError`，数据库失败先 rollback，未知异常只记服务端安全日志。
 
-REFACTOR 与验证：四端点 API 测试、服务测试、制度 Agent 回归、全量测试、`compileall`。
+REFACTOR 与验证：四端点 API 测试、服务测试、历史 POLICY 会话拒绝、全量测试、`compileall`。
 
 ### FR042-P07 项目删除联动（已完成，2026-09-16）
 
@@ -519,7 +522,7 @@ evals/archive/
 实现完成后再按实际证据更新：
 
 - `README.md`：本地启动、四端点、Vue 演示路径、已知限制；
-- `docs/implementation/智能体演示步骤.md`：增加项目档案助手演示，但保留制度 Agent；
+- `docs/archive/legacy-policy-agent/智能体演示步骤.md`：历史制度 Agent 演示资料；当前演示以项目档案助手为准；
 - `docs/review/验收报告.md`：区分 Mock/SQLite/PostgreSQL/Checkpoint/Chroma/DeepSeek/Vue 证据；
 - `docs/review/验证冻结清单.md`：只登记用户确认后的新门槛与真实结果；
 - `docs/design/需求说明.md`、`技术架构.md`、`数据库设计.md`、`接口设计.md`：只同步实际实施状态，

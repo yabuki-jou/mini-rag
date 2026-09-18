@@ -2,10 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal
 
 from psycopg import postgres
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,7 +30,6 @@ class Settings(BaseSettings):
         chroma_port: Chroma HTTP 服务端口。
         chroma_tenant: Chroma 服务端租户名称。
         chroma_database: Chroma 租户内数据库名称。
-        chroma_collection: 保存既有知识库 Chunk 的 Chroma Collection 名称。
         chroma_final_collection: 保存智慧档案正式 Chunk 的独立 Chroma Collection 名称。
         embedding_model_path: 本地 BGE 模型目录。
         embedding_device: Embedding 运行设备。
@@ -41,8 +40,6 @@ class Settings(BaseSettings):
         archive_reranker_candidate_k: 每次交给 Reranker 的固定 Chroma 候选数量。
         archive_reranker_query_mode: Reranker 查询表达实验模式；默认使用 C4-A 基线。
         archive_reranker_score_threshold: 可选的最低 Reranker 分数；未标定时为 ``None``。
-        chunk_size: 每个 Chunk 的目标字符数。
-        chunk_overlap: 相邻 Chunk 重复保留的字符数。
         deepseek_api_key: DeepSeek API 密钥。
         deepseek_base_url: DeepSeek 的 OpenAI 兼容接口地址。
         deepseek_model: 生成回答所使用的模型名称。
@@ -50,9 +47,6 @@ class Settings(BaseSettings):
         auth_jwt_secret: 签发和验证 JWT 的本地机密；为空时认证接口安全地拒绝服务。
         auth_access_token_minutes: Access Token 有效期，单位为分钟。
         auth_refresh_token_days: Refresh Token 与认证会话有效期，单位为天。
-        retrieval_top_k: Chroma 第一轮最多召回的候选 Chunk 数量。
-        retrieval_top_n: 通过阈值后最多返回的 Chunk 数量。
-        retrieval_distance_threshold: 可选的最大 Chroma cosine 距离；未标定时为 ``None``。
     """
 
     # 从项目根目录读取 .env；忽略暂未使用的变量，且变量名不区分大小写。
@@ -85,7 +79,6 @@ class Settings(BaseSettings):
     chroma_port: int = Field(default=8001, ge=1, le=65535)
     chroma_tenant: str = "mini_rag_tenant"
     chroma_database: str = "mini_rag_chroma"
-    chroma_collection: str = "mini_rag_knowledge_chunks_v1"
     chroma_final_collection: str = "archive_final_chunks"
 
     # 本地 Embedding 模型及其输出维度配置。
@@ -105,10 +98,6 @@ class Settings(BaseSettings):
     archive_reranker_query_mode: Literal["c4_a", "c4_b"] = "c4_a"
     archive_reranker_score_threshold: float | None = None
 
-    # 递归字符切分器使用的目标大小和重叠字符数。
-    chunk_size: int = Field(default=800, gt=0)
-    chunk_overlap: int = Field(default=150, ge=0)
-
     # 阶段五调用 DeepSeek 时使用的生成模型配置。
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com/v1"
@@ -119,11 +108,6 @@ class Settings(BaseSettings):
     auth_jwt_secret: SecretStr | None = None
     auth_access_token_minutes: int = Field(default=30, gt=0, le=24 * 60)
     auth_refresh_token_days: int = Field(default=7, gt=0, le=31)
-
-    # 检索时先召回 Top-K 个候选；距离阈值须经固定验收集标定后才启用。
-    retrieval_top_k: int = Field(default=10, gt=0)
-    retrieval_top_n: int = Field(default=3, gt=0)
-    retrieval_distance_threshold: float | None = Field(default=None, ge=0.0)
 
     @field_validator("database_url")
     @classmethod
@@ -136,25 +120,6 @@ class Settings(BaseSettings):
                 "请按 .env.example 更新本地 .env。"
             )
         return normalized
-
-    @model_validator(mode="after")
-    def validate_retrieval_limits(self) -> Self:
-        """确保最终返回数量不超过第一轮候选数量。
-
-        Returns:
-            校验通过的配置对象。
-
-        Raises:
-            ValueError: 当 ``retrieval_top_n`` 大于
-                ``retrieval_top_k`` 时抛出。
-        """
-        # Top-N 来自 Top-K 候选，因此不能比候选数量更大。
-        if self.retrieval_top_n > self.retrieval_top_k:
-            raise ValueError(
-                "RETRIEVAL_TOP_N 不能大于 RETRIEVAL_TOP_K。"
-            )
-
-        return self
 
     def resolve_path(self, path: Path) -> Path:
         """将配置路径解析为不依赖当前工作目录的绝对路径。
