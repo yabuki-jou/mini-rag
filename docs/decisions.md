@@ -257,3 +257,14 @@ D6-A、D6-B 和正式 Embedding/Collection 切换均已授权并完成。是否�
 - 质量边界：保留 FR-039/FR-042 的 D5/D6、Top-8、引用、拒答、范围隔离和固定集基线。制度 Agent 评测与实现资料迁入历史归档，不再作为当前发布门；本决策不授权清理旧数据，也不把历史链路验证表述为当前能力。
 - 替代关系：本决策替代 DEC-001、DEC-011、DEC-012 和 DEC-013 的当前产品口径；DEC-012 仍可作为旧 Collection 曾执行过的历史迁移记录阅读。DEC-015～DEC-021 中涉及 FR-042 项目档案助手的约束继续有效，其中“制度/档案双向入口隔离”收敛为“档案入口拒绝历史 POLICY 会话”。
 - 依据文件：[`docs/implementation/智慧档案单主线拆除实施计划.md`](implementation/智慧档案单主线拆除实施计划.md)、[`docs/stage/handoff.md`](stage/handoff.md)
+
+## DEC-023：FR-042 MVP 恢复当前项目最近会话
+
+- 状态：已确认
+- 首次纳入台账：2026-09-18
+- 背景：FR-042 已把会话范围保存在 PostgreSQL、把消息保存在 SQLite Checkpoint、把脱敏工具记录保存在 PostgreSQL，但 Vue 只在内存中保存当前 `session_id`。浏览器刷新后旧会话仍存在，普通用户却无法重新发现，只能继续新建并累积会话。
+- 决策：FR-042 MVP 增加当前项目最近会话恢复，不另立 FR-043。新增 `GET /projects/{project_id}/agent-sessions/latest`，在服务端已验证的 `user_id + project_id + kb_id + ARCHIVE` 范围内按 `updated_at DESC → created_at DESC → id DESC` 返回最多一个现有会话；无会话返回 `200 null`，不自动创建。Vue 进入档案助手页面后自动恢复该会话，并调用既有端点加载完整可见历史和脱敏工具记录。
+- 边界：不持久化客户端 `session_id`，不提供通用会话列表、任意旧会话选择、重命名或用户删除；不恢复历史引用，不展示不完整轮次；不新增数据库字段、索引或迁移，不修改 Prompt、Graph、检索、D5/D6、模型或工具语义。
+- 影响：`docs/implementation/FR042-项目档案助手MVP实施计划.md` 增加 P08；需求、数据库和接口设计同步增加 AC-FR-042-20 与最近会话契约。确定性测试证明发现、授权、排序和 Vue 恢复行为，不替代既有真实模型质量证据。
+- 替代/复查条件：需要任意会话列表、会话选择、标题、分页、删除、历史引用恢复，或项目内会话量产生可测排序性能问题时，必须重新设计并确认。
+- 依据文件：[`docs/design/需求说明.md`](design/需求说明.md)、[`docs/design/接口设计.md`](design/接口设计.md)、[`docs/design/数据库设计.md`](design/数据库设计.md)、[`docs/implementation/FR042-项目档案助手MVP实施计划.md`](implementation/FR042-项目档案助手MVP实施计划.md)

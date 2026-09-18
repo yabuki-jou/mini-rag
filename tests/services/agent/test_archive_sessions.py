@@ -1,7 +1,8 @@
 """验证 FR-042 档案助手会话创建和五要素查找边界。"""
 
 from collections.abc import Generator
-from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -155,3 +156,146 @@ def test_find_archive_session_requires_all_scope_factors(db_session: Session) ->
         assert exc_info.value.code == "ARCHIVE_AGENT_SESSION_NOT_FOUND"
 
     assert project.id == context.project_id
+
+
+def test_find_latest_archive_session_returns_none_when_project_has_no_session(
+    db_session: Session,
+) -> None:
+    """没有项目档案助手会话时，最近会话查询返回空值而不是创建会话。"""
+    context, _, _ = _project_context(db_session)
+
+    latest = archive_session_service.find_latest_archive_agent_session(
+        project_context=context,
+        session=db_session,
+    )
+
+    assert latest is None
+
+
+def test_find_latest_archive_session_uses_stable_scope_and_ordering(
+    db_session: Session,
+) -> None:
+    """最近会话只看完整服务端范围，并按三层排序稳定返回一条。"""
+    context, owner, project = _project_context(db_session)
+    other_kb = KnowledgeBase(owner_id=owner.id, name="other-kb")
+    db_session.add(other_kb)
+    db_session.commit()
+    other_project = Project(
+        owner_id=owner.id,
+        kb_id=other_kb.id,
+        name="other-project",
+    )
+    db_session.add(other_project)
+    db_session.commit()
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    target = AgentSession(
+        id=UUID(int=1),
+        user_id=owner.id,
+        project_id=project.id,
+        kb_id=project.kb_id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=1),
+        updated_at=base + timedelta(days=3),
+    )
+    tie_breaker = AgentSession(
+        id=UUID(int=2),
+        user_id=owner.id,
+        project_id=project.id,
+        kb_id=project.kb_id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=1),
+        updated_at=base + timedelta(days=3),
+    )
+    older_update = AgentSession(
+        id=UUID(int=3),
+        user_id=owner.id,
+        project_id=project.id,
+        kb_id=project.kb_id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=9),
+        updated_at=base + timedelta(days=2),
+    )
+    other_project_session = AgentSession(
+        id=UUID(int=4),
+        user_id=owner.id,
+        project_id=other_project.id,
+        kb_id=other_project.kb_id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=20),
+        updated_at=base + timedelta(days=20),
+    )
+    policy_session = AgentSession(
+        id=UUID(int=5),
+        user_id=owner.id,
+        project_id=None,
+        kb_id=project.kb_id,
+        agent_type=AgentType.POLICY,
+        created_at=base + timedelta(days=21),
+        updated_at=base + timedelta(days=21),
+    )
+    wrong_user = User(name="wrong-scope-user")
+    wrong_kb = KnowledgeBase(owner_id=owner.id, name="wrong-scope-kb")
+    db_session.add_all([wrong_user, wrong_kb])
+    db_session.commit()
+    wrong_user_same_project = AgentSession(
+        id=UUID(int=6),
+        user_id=wrong_user.id,
+        project_id=project.id,
+        kb_id=project.kb_id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=30),
+        updated_at=base + timedelta(days=30),
+    )
+    wrong_kb_same_project = AgentSession(
+        id=UUID(int=7),
+        user_id=owner.id,
+        project_id=project.id,
+        kb_id=wrong_kb.id,
+        agent_type=AgentType.ARCHIVE,
+        created_at=base + timedelta(days=31),
+        updated_at=base + timedelta(days=31),
+    )
+    db_session.add_all(
+        [
+            target,
+            tie_breaker,
+            older_update,
+            other_project_session,
+            policy_session,
+            wrong_user_same_project,
+            wrong_kb_same_project,
+        ]
+    )
+    db_session.commit()
+
+    latest = archive_session_service.find_latest_archive_agent_session(
+        project_context=context,
+        session=db_session,
+    )
+
+    assert latest is not None
+    assert latest.id == tie_breaker.id
+
+
+def test_find_latest_archive_session_maps_database_failure_to_stable_error(
+    db_session: Session,
+) -> None:
+    """最近会话查询的数据库异常必须映射为冻结的依赖错误。"""
+    context, _, _ = _project_context(db_session)
+
+    class BrokenSession:
+        """模拟 PostgreSQL 查询失败且不暴露内部异常细节。"""
+
+        def exec(self, _statement: object) -> None:
+            raise RuntimeError("database secret")
+
+    with pytest.raises(AppError) as exc_info:
+        archive_session_service.find_latest_archive_agent_session(
+            project_context=context,
+            session=BrokenSession(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE"
+    assert "database secret" not in str(exc_info.value)

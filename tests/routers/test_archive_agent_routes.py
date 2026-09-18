@@ -1,4 +1,4 @@
-"""验证 FR-042 项目档案助手四个公开端点。"""
+"""验证 FR-042 项目档案助手五个公开端点。"""
 
 from collections.abc import Generator
 from contextlib import contextmanager, nullcontext
@@ -179,8 +179,71 @@ def test_create_archive_agent_session_preserves_project_404_and_403(
     assert forbidden.json()["error"]["code"] == "PROJECT_FORBIDDEN"
 
 
-def test_p03_openapi_contains_only_archive_session_creation() -> None:
-    """P06 应将四端点及其请求响应 Schema 全部写入 OpenAPI。"""
+def test_latest_archive_agent_session_returns_null_when_project_has_no_session(
+    archive_agent_api: tuple[TestClient, Engine],
+) -> None:
+    """已认证项目没有会话时，最近会话接口返回 JSON null。"""
+    client, engine = archive_agent_api
+    user_id, project = _create_user_and_project(engine, name="latest-empty-owner")
+
+    response = client.get(
+        f"/projects/{project.id}/agent-sessions/latest",
+        headers=auth_headers(engine, user_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_latest_archive_agent_session_returns_minimal_read_model(
+    archive_agent_api: tuple[TestClient, Engine],
+) -> None:
+    """最近会话接口返回既有最小会话 Schema，不泄露范围字段。"""
+    client, engine = archive_agent_api
+    user_id, project = _create_user_and_project(engine, name="latest-owner")
+    created = client.post(
+        f"/projects/{project.id}/agent-sessions",
+        headers=auth_headers(engine, user_id),
+        json={},
+    ).json()
+
+    response = client.get(
+        f"/projects/{project.id}/agent-sessions/latest",
+        headers=auth_headers(engine, user_id),
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"id", "project_id", "created_at", "updated_at"}
+    assert response.json()["id"] == created["id"]
+    assert response.json()["project_id"] == str(project.id)
+
+
+def test_latest_archive_agent_session_preserves_authentication_and_project_scope(
+    archive_agent_api: tuple[TestClient, Engine],
+) -> None:
+    """最近会话接口必须先认证并复用项目不存在与越权的稳定错误。"""
+    client, engine = archive_agent_api
+    owner_id, project = _create_user_and_project(engine, name="latest-scope-owner")
+    other_id, _ = _create_user_and_project(engine, name="latest-scope-other")
+    path = f"/projects/{project.id}/agent-sessions/latest"
+
+    missing_auth = client.get(path)
+    missing_project = client.get(
+        f"/projects/{uuid4()}/agent-sessions/latest",
+        headers=auth_headers(engine, owner_id),
+    )
+    forbidden = client.get(path, headers=auth_headers(engine, other_id))
+
+    assert missing_auth.status_code == 401
+    assert missing_auth.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+    assert missing_project.status_code == 404
+    assert missing_project.json()["error"]["code"] == "PROJECT_NOT_FOUND"
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "PROJECT_FORBIDDEN"
+
+
+def test_p08_openapi_contains_archive_session_creation_and_latest_lookup() -> None:
+    """P08 应将最近会话端点和既有档案助手端点写入 OpenAPI。"""
     openapi = app.openapi()
     create_path = "/projects/{project_id}/agent-sessions"
     assert set(openapi["paths"][create_path]) == {"post"}
@@ -192,6 +255,13 @@ def test_p03_openapi_contains_only_archive_session_creation() -> None:
         "$ref": "#/components/schemas/ArchiveAgentSessionRead"
     }
     assert "422" in operation["responses"]
+    latest_operation = openapi["paths"][f"{create_path}/latest"]["get"]
+    assert latest_operation["responses"]["200"]["content"]["application/json"]["schema"][
+        "anyOf"
+    ] == [
+        {"$ref": "#/components/schemas/ArchiveAgentSessionRead"},
+        {"type": "null"},
+    ]
     messages_path = f"{create_path}/{{session_id}}/messages"
     tool_calls_path = f"{create_path}/{{session_id}}/tool-calls"
     assert set(openapi["paths"][messages_path]) == {"post", "get"}
