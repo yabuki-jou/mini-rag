@@ -27,6 +27,7 @@ from app.services.agent.archive_execution import (
 from app.services.agent.archive_sessions import (
     create_archive_agent_session,
     find_archive_agent_session,
+    find_latest_archive_agent_session,
 )
 
 
@@ -58,6 +59,20 @@ def create_archive_agent_session_endpoint(
         user_id=project_context.user_id,
         project_id=project_context.project_id,
         kb_id=project_context.kb_id,
+        session=session,
+    )
+
+
+@router.get("/latest", response_model=ArchiveAgentSessionRead | None)
+def find_latest_archive_agent_session_endpoint(
+    project_id: UUID,
+    project_context: ProjectContextDep,
+    session: SessionDep,
+) -> AgentSession | None:
+    """返回当前项目最近的档案助手会话，或在不存在时返回空值。"""
+    _ = project_id
+    return find_latest_archive_agent_session(
+        project_context=project_context,
         session=session,
     )
 

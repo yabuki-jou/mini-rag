@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.core.errors import AppError
+from app.dependencies.project_context import ProjectContext
 from app.models import AgentSession, AgentType, utc_now
 
 
@@ -91,3 +92,44 @@ def find_archive_agent_session(
             "项目档案助手会话不存在。",
         )
     return agent_session
+
+
+def find_latest_archive_agent_session(
+    *,
+    project_context: ProjectContext,
+    session: Session,
+) -> AgentSession | None:
+    """在已验证项目范围内按稳定顺序查找最近的 ARCHIVE 会话。
+
+    Args:
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求使用的业务数据库会话。
+
+    Returns:
+        当前项目最近的档案助手会话；没有会话时返回 ``None``。
+
+    Raises:
+        AppError: PostgreSQL 查询失败。
+    """
+    try:
+        return session.exec(
+            select(AgentSession)
+            .where(
+                AgentSession.user_id == project_context.user_id,
+                AgentSession.project_id == project_context.project_id,
+                AgentSession.kb_id == project_context.kb_id,
+                AgentSession.agent_type == AgentType.ARCHIVE,
+            )
+            .order_by(
+                AgentSession.updated_at.desc(),
+                AgentSession.created_at.desc(),
+                AgentSession.id.desc(),
+            )
+            .limit(1)
+        ).first()
+    except Exception as exc:
+        raise AppError(
+            503,
+            "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE",
+            "项目档案助手暂不可用。",
+        ) from exc

@@ -9,8 +9,8 @@
 | 设计基线 | `docs/design/需求说明.md`、`docs/design/技术架构.md`、`docs/design/数据库设计.md`、`docs/design/接口设计.md` |
 | 后端分支 | `codex/fr-042-archive-agent-mvp`（已存在） |
 | 相邻 Vue 仓库 | `../mini-rag-milvus-vue`；分支 `codex/fr-042-archive-agent-mvp` 已完成最小接入 |
-| 文档状态 | 已由用户确认；FR042-P00～P07、真实固定集、真实后端闭环和 Vue 确定性实现均已完成；完整 Vue 业务代理联调仍受 Chroma 未运行阻塞 |
-| 更新日期 | 2026-09-17 |
+| 文档状态 | 已由用户确认；FR042-P00～P08 已完成；P08 真实刷新恢复联动已通过 |
+| 更新日期 | 2026-09-18 |
 
 > DEC-022 已将制度 Agent 运行入口下线。本计划中记录的“双向隔离”、制度 Graph 与旧 Router
 > 只描述 FR-042 当时的实施基线；当前契约收敛为项目档案助手单向拒绝历史 `POLICY` 会话。
@@ -42,7 +42,7 @@
 本期明确不做：
 
 - `AgentTurn`、`AgentTurnCitation`、历史引用恢复；
-- 会话列表、详情、重命名、用户删除；
+- 通用会话列表、任意旧会话详情或选择、重命名、用户删除；P08 只恢复最近一个会话；
 - `DELETING` 会话状态、消息并发保证、跨存储原子事务；
 - 流式响应、WebSocket、批量消息、跨项目会话迁移；
 - 写工具、自动确认、自动清单关联、运行时多 Agent 编排；
@@ -548,20 +548,66 @@ evals/archive/
 
 回退只撤销本切片新增内容，不使用 `git reset --hard`、`git checkout --` 或删除用户已有改动。
 
+### FR042-P08 最近档案助手会话恢复（已完成确定性实现）
+
+目标：补齐 PostgreSQL 已保存会话在 Vue 刷新后无法重新发现的最小用户闭环，不改变 Graph、
+Checkpoint 消息格式、工具审计、D5/D6 判定或历史引用边界。
+
+冻结契约：
+
+1. 新增 `GET /projects/{project_id}/agent-sessions/latest`，使用现有 `ProjectContext` 后只查询
+   当前 `user_id + project_id + kb_id + agent_type=ARCHIVE` 范围。
+2. 排序固定为 `updated_at DESC → created_at DESC → id DESC`，最多返回一个
+   `ArchiveAgentSessionRead`；无会话返回 `200 null`，不自动创建。
+3. 复用现有 `ix_agent_sessions_project_id` 收窄单项目范围，不新增字段、索引或迁移。
+4. Vue 进入已授权项目的档案助手页面时自动恢复最近会话；找到后自动并行读取完整可见历史和
+   脱敏工具记录。项目切换、新建会话和延迟响应继续通过项目 ID、会话 ID 与请求序号隔离。
+5. 不把 `session_id` 写入 localStorage；不增加通用列表、选择、重命名或删除；历史
+   `citations=[]` 和不完整轮次隐藏规则保持不变。
+
+TDD 顺序：
+
+1. 后端 Service RED：无会话、稳定排序、五要素隔离、数据库异常脱敏；随后最小 GREEN。
+2. 后端 Router RED：Bearer/项目授权、返回最近会话、`200 null`、旧 POLICY 与跨项目不可见；
+   随后最小 GREEN。
+3. Vue API RED：固定 URL、GET 方法和可空响应；随后最小 GREEN。
+4. Vue Store RED：自动恢复后加载历史与工具记录、无会话空状态、项目切换/新建会话使延迟响应
+   失效；随后最小 GREEN。
+5. Vue View/Panel RED：进入档案助手路由自动触发恢复，并在恢复期间禁用新建；随后最小 GREEN。
+6. 主 Agent 审查公开 API、无迁移边界、错误语义、测试覆盖和两个仓库 Diff；运行后端相关测试、
+   后端全量、`compileall`、Vue 全量、`typecheck`、`build` 和 `git diff --check`。
+7. 自动化完成后另行执行真实 PostgreSQL + Checkpoint + Vite 刷新恢复验收；该验收不调用
+   DeepSeek，不改变现有真实模型固定集结论。
+
+完成证据：后端 RED 为 `7 failed, 21 passed`，GREEN 为相关 `28 passed`；全量回归为
+`492 passed, 2 skipped`。Vue RED 为 `6 failed, 91 passed`，GREEN 为相关 `97 passed`；主审补充
+登录后认证状态变化竞态测试，RED 为 `1 failed, 16 passed`，GREEN 为 `17 passed`，最终全量为
+`136 passed`。后端 `compileall`、Vue `typecheck`/`build` 和两仓库差异检查通过。上述证据是
+SQLite/HTTP 契约与前端自动化证据。
+
+真实刷新恢复验收使用固定命名的隔离 PostgreSQL Schema、独立 SQLite Checkpoint 和真实
+`5173/api → 8000` 代理。经代理创建临时账号、项目和档案助手会话后，使用真实 Archive Graph 与
+固定本地模型写入一轮完整 Checkpoint，并写入一条符合白名单的脱敏工具记录；该步骤不调用 DeepSeek，
+也不改变语义质量结论。浏览器进入档案助手页面后自动显示该轮历史和工具记录，整页刷新后仍自动恢复
+同一内容。刷新前存储核对为会话、工具记录、Checkpoint 各 1；经正式项目删除接口清理后均为 0。
+随后隔离 Schema 和临时 SQLite 文件均已删除，FastAPI 与 Vite 临时进程已停止。
+
 ## 13. 当前下一步
 
-本计划已由用户确认，`FR042-P00`～`FR042-P07` 已完成。DEC-021 标题身份修正完成后，第四轮真实
+本计划已由用户确认，`FR042-P00`～`FR042-P08` 已完成。P08 最近会话端点与 Vue 自动恢复已通过
+隔离 PostgreSQL + SQLite Checkpoint + Vite + 浏览器整页刷新的真实联动验收。该验收使用固定本地
+模型写入受控历史，没有调用 DeepSeek，因此只证明会话发现与恢复链路，不新增模型质量证据。DEC-021 标题身份修正完成后，第四轮真实
 DeepSeek 固定集严格通过 17/17：有据单轮 8/8、无据 2/2、隔离 2/2、目录 2/2、多轮 2/2、隐私
 17/17、受控失败 1/1；32 条人工评审无 pending，官方 Step 6 校验通过。FR-042 固定集真实模型质量门
 本轮通过，但该证据使用注入的虚构、去标识化外部世界，不代表真实 PostgreSQL/Chroma/文件端到端。
 Swagger/HTTP 真实后端闭环已通过：随机隔离 PostgreSQL Schema 迁移至 `0011`，并完成真实
 Chroma/BGE/Reranker/文件/Checkpoint/DeepSeek 的建档、目录问答、有据问答、无据拒答、历史、脱敏审计
-与跨存储清理。相邻 Vue 已在 `codex/fr-042-archive-agent-mvp` 完成独立入口、四端点客户端、Store、
-会话面板和项目切换隔离，前端回归 `130 passed`，类型检查与构建通过。随后已用随机隔离 PostgreSQL
+与跨存储清理。相邻 Vue 已在 `codex/fr-042-archive-agent-mvp` 完成独立入口、五端点客户端、Store、
+会话面板、最近会话自动恢复和项目切换隔离，前端回归 `136 passed`，类型检查与构建通过。此前已用随机隔离 PostgreSQL
 Schema、临时 Chroma Collection、文件与 Checkpoint，通过 Vite `5173/api` 完成真实注册登录、建档、
 确认索引、目录题、有据题、无据题、三轮历史和脱敏工具日志，最终状态与引用均符合冻结契约；清理后
-隔离持久化资源为零。当前仍没有新的浏览器 DOM 点击证据。下一步审查两个仓库的提交范围；第五轮固定
+隔离持久化资源为零。P08 随后已新增浏览器 DOM 刷新恢复证据并完成隔离清理。下一步是审查两个仓库的提交范围并等待提交/推送授权；第五轮固定
 集真实模型调用须重新授权。提交前审查发现的后端 Runtime 构造错误码泄漏与 Vue 旧工具名已按 TDD
-修复；后端全量 `601 passed, 2 skipped`，Vue 全量 `130 passed`，类型检查、构建与编译检查通过。
+修复；P08 当前后端全量 `492 passed, 2 skipped`，Vue 全量 `136 passed`，类型检查、构建与编译检查通过。
 最终提交范围审查已完成；后端按当前用户资料、FR-042 功能、评测资产和文档四类独立提交，两个无关的
 制度 Collection 迁移脚本文件保持未暂存。下一步完成 Vue 独立提交并推送两个仓库的功能分支。
