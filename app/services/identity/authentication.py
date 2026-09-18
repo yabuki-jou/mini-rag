@@ -29,14 +29,24 @@ from app.schemas.account import (
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedPrincipal:
-    """受保护请求已验证的用户和可撤销认证会话。"""
+    """受保护请求已验证的用户和可撤销认证会话。
+
+    Attributes:
+        user: 已通过 Access Token 身份校验的用户记录。
+        session: 与当前 Access Token 对应的可撤销认证会话。
+    """
 
     user: User
     session: AuthSession
 
 
 def register_user(*, payload: AuthRegisterRequest, session: Session) -> User:
-    """注册拥有完整账号密码凭据的新用户。"""
+    """注册拥有完整账号密码凭据的新用户。
+
+    Args:
+        payload: 包含用户名、显示名和密码的注册请求。
+        session: 当前数据库会话。
+    """
     user = User(
         username=payload.username,
         name=payload.name,
@@ -56,7 +66,12 @@ def register_user(*, payload: AuthRegisterRequest, session: Session) -> User:
 
 
 def login(*, payload: AuthLoginRequest, session: Session) -> AuthTokenPairRead:
-    """验证账号密码并创建一个新的可撤销认证会话。"""
+    """验证账号密码并创建一个新的可撤销认证会话。
+
+    Args:
+        payload: 包含用户名和密码的登录请求。
+        session: 当前数据库会话。
+    """
     user = session.exec(select(User).where(User.username == payload.username)).first()
     if user is None or user.password_hash is None:
         raise _invalid_credentials()
@@ -104,7 +119,12 @@ def login(*, payload: AuthLoginRequest, session: Session) -> AuthTokenPairRead:
 
 
 def refresh_access_token(*, payload: AuthRefreshRequest, session: Session) -> AuthAccessTokenRead:
-    """使用有效且未撤销的 Refresh Token 签发新的 Access Token，不轮换 Refresh Token。"""
+    """使用有效且未撤销的 Refresh Token 签发新的 Access Token，不轮换 Refresh Token。
+
+    Args:
+        payload: 包含 Refresh Token 的刷新请求。
+        session: 当前数据库会话。
+    """
     token_payload = decode_token(token=payload.refresh_token, expected_type="refresh")
     auth_session = _get_usable_session(
         token_payload=token_payload,
@@ -133,7 +153,12 @@ def refresh_access_token(*, payload: AuthRefreshRequest, session: Session) -> Au
 
 
 def authenticate_access_token(*, token: str, session: Session) -> AuthenticatedPrincipal:
-    """验证 Access Token，并检查用户和其认证会话当前仍可使用。"""
+    """验证 Access Token，并检查用户和其认证会话当前仍可使用。
+
+    Args:
+        token: 请求携带的 Access Token 原文。
+        session: 当前数据库会话。
+    """
     token_payload = decode_token(token=token, expected_type="access")
     auth_session = _get_usable_session(token_payload=token_payload, token_hash=None, session=session)
     user = session.get(User, token_payload.user_id)
@@ -143,7 +168,12 @@ def authenticate_access_token(*, token: str, session: Session) -> AuthenticatedP
 
 
 def logout(*, principal: AuthenticatedPrincipal, session: Session) -> None:
-    """撤销当前认证会话；重复注销保持幂等。"""
+    """撤销当前认证会话；重复注销保持幂等。
+
+    Args:
+        principal: 已完成身份校验的用户和认证会话。
+        session: 当前数据库会话。
+    """
     if principal.session.revoked_at is not None:
         return
     principal.session.revoked_at = utc_now()
@@ -163,7 +193,14 @@ def set_existing_user_password(
     password: str,
     session: Session,
 ) -> None:
-    """为指定历史用户初始化登录凭据，不提供 HTTP 后门。"""
+    """为指定历史用户初始化登录凭据，不提供 HTTP 后门。
+
+    Args:
+        user_id: 待初始化凭据的用户 UUID 字符串。
+        username: 用户要使用的登录名。
+        password: 用户要设置的明文密码，仅用于即时计算哈希。
+        session: 当前数据库会话。
+    """
     from uuid import UUID
 
     user = session.get(User, UUID(user_id))
@@ -194,7 +231,13 @@ def _get_usable_session(
     token_hash: str | None,
     session: Session,
 ) -> AuthSession:
-    """校验 JWT 声明对应会话、撤销状态和 Refresh Token 摘要。"""
+    """校验 JWT 声明对应会话、撤销状态和 Refresh Token 摘要。
+
+    Args:
+        token_payload: 已解码并校验类型的 JWT 载荷。
+        token_hash: 待核对的 Refresh Token 单向摘要；Access Token 校验时为空。
+        session: 当前数据库会话。
+    """
     auth_session = session.get(AuthSession, token_payload.session_id)
     if (
         auth_session is None
@@ -208,7 +251,11 @@ def _get_usable_session(
 
 
 def _is_expired(value: datetime) -> bool:
-    """兼容 SQLite 无时区返回值，按 UTC 判断会话是否到期。"""
+    """兼容 SQLite 无时区返回值，按 UTC 判断会话是否到期。
+
+    Args:
+        value: 待判断的会话过期时间。
+    """
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value <= datetime.now(timezone.utc)

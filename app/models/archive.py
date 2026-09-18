@@ -109,6 +109,8 @@ class ArchiveDocument(SQLModel, table=True):
     __tablename__ = "archive_documents"
     __table_args__ = (
         CheckConstraint("final_chunk_count >= 0", name="ck_archive_documents_final_chunk_count"),
+        # CONFIRMED 是正式可见状态，必须同时具备确认人、确认时间、快照和索引哈希，
+        # 防止业务层漏写任一项后文档仍被当作可检索资料。
         CheckConstraint(
             "status != 'CONFIRMED' OR (confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL "
             "AND current_snapshot_id IS NOT NULL AND length(final_index_snapshot_hash) = 64)",
@@ -151,6 +153,7 @@ class ParsedSnapshot(SQLModel, table=True):
 
     __tablename__ = "parsed_snapshots"
     __table_args__ = (
+        # 快照必须含有可索引文本和可定位片段；document_id 唯一表示当前文档只有一个正式快照。
         CheckConstraint("text_character_count > 0", name="ck_parsed_snapshots_text_count"),
         CheckConstraint("fragment_count > 0", name="ck_parsed_snapshots_fragment_count"),
         ForeignKeyConstraint(["document_id"], ["archive_documents.document_id"], ondelete="CASCADE"),
@@ -188,6 +191,8 @@ class ArchiveFieldValue(SQLModel, table=True):
     __tablename__ = "archive_field_values"
     __table_args__ = (
         UniqueConstraint("document_id", "field_name", name="uq_archive_field_values_document_field"),
+        # 七个固定字段共用三种值列；该约束把字段名与允许使用的列绑定，避免同一记录
+        # 同时写入互相矛盾的 text/date/json 值。
         CheckConstraint(
             "(field_name = 'DOCUMENT_DATE' AND text_value IS NULL AND json_value IS NULL) OR "
             "(field_name = 'KEYWORDS' AND text_value IS NULL AND date_value IS NULL) OR "
@@ -195,7 +200,9 @@ class ArchiveFieldValue(SQLModel, table=True):
             name="ck_archive_field_values_value_column_by_name",
         ),
         ForeignKeyConstraint(["document_id"], ["archive_documents.document_id"], ondelete="CASCADE"),
+        # EMPTY_ACCEPTED 表示人工确认字段确实为空，因此三种值列都必须是 SQL NULL。
         CheckConstraint("review_status != 'EMPTY_ACCEPTED' OR (text_value IS NULL AND date_value IS NULL AND json_value IS NULL)", name="ck_archive_field_values_empty_accepted"),
+        # VALUE_CONFIRMED 只允许对应字段类型的值列非空，并拒绝空白文本冒充有效值。
         CheckConstraint(
             "review_status != 'VALUE_CONFIRMED' OR "
             "(field_name = 'DOCUMENT_DATE' AND date_value IS NOT NULL) OR "
@@ -235,10 +242,12 @@ class FieldEvidence(SQLModel, table=True):
 
     __tablename__ = "field_evidences"
     __table_args__ = (
+        # 点定位只能指向一个位置，只有文本行范围允许 start 与 end 不同。
         CheckConstraint("location_start >= 1", name="ck_field_evidences_location_start"),
         CheckConstraint("location_end >= location_start", name="ck_field_evidences_location_range"),
         CheckConstraint("location_type = 'TEXT_LINE_RANGE' OR location_start = location_end", name="ck_field_evidences_point_location"),
         ForeignKeyConstraint(["field_value_id"], ["archive_field_values.id"], ondelete="CASCADE"),
+        # 快照被证据引用时禁止删除，保证历史证据仍能回溯到原始定位上下文。
         ForeignKeyConstraint(["snapshot_id"], ["parsed_snapshots.id"], ondelete="RESTRICT"),
     )
 

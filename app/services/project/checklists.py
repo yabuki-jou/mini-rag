@@ -46,6 +46,12 @@ def create_checklist_item(
 
     项目版本更新带有 ``expected_project_version`` 条件。只有该条件命中时，才会在
     同一事务中继续新增清单项和审计记录，从而阻止陈旧页面产生重复创建结果。
+
+    Args:
+        project_id: 已验证的项目身份。
+        actor_id: 已认证执行创建的用户身份。
+        payload: 清单项创建请求。
+        session: 当前数据库会话。
     """
     checklist_item = ChecklistItem(
         project_id=project_id,
@@ -105,6 +111,10 @@ def list_checklist_items(*, project_id: UUID, session: Session) -> ChecklistItem
 
     只有同项目中同时处于 ``CONFIRMED`` 的归档文档和人工确认关联才能计数。
     因此，资料类型、项目阶段、待确认档案或失效关联均不会被误判为满足。
+
+    Args:
+        project_id: 已验证的项目身份。
+        session: 当前数据库会话。
     """
     confirmed_document_counts = (
         select(
@@ -152,7 +162,15 @@ def update_checklist_item(
     payload: ChecklistItemUpdate,
     session: Session,
 ) -> ChecklistItemRead:
-    """以清单项乐观锁更新字段，并在匹配条件变化时使关联失效。"""
+    """以清单项乐观锁更新字段，并在匹配条件变化时使关联失效。
+
+    Args:
+        project_id: 已验证的项目身份。
+        actor_id: 已认证执行更新的用户身份。
+        item_id: 待更新的清单项身份。
+        payload: 包含预期版本和新字段值的更新请求。
+        session: 当前数据库会话。
+    """
     checklist_item = _read_project_checklist_item(
         project_id=project_id,
         item_id=item_id,
@@ -239,7 +257,14 @@ def delete_checklist_item(
     item_id: UUID,
     session: Session,
 ) -> None:
-    """删除项目清单项及其关联，并保留不依赖该项存在的删除审计。"""
+    """删除项目清单项及其关联，并保留不依赖该项存在的删除审计。
+
+    Args:
+        project_id: 已验证的项目身份。
+        actor_id: 已认证执行删除的用户身份。
+        item_id: 待删除的清单项身份。
+        session: 当前数据库会话。
+    """
     checklist_item = _read_project_checklist_item(
         project_id=project_id,
         item_id=item_id,
@@ -273,7 +298,13 @@ def _read_project_checklist_item(
     item_id: UUID,
     session: Session,
 ) -> ChecklistItem:
-    """读取已验证项目范围内的清单项，避免跨项目资源泄露。"""
+    """读取已验证项目范围内的清单项，避免跨项目资源泄露。
+
+    Args:
+        project_id: 已验证的项目身份。
+        item_id: 待读取的清单项身份。
+        session: 当前数据库会话。
+    """
     checklist_item = session.get(ChecklistItem, item_id)
     if checklist_item is None or checklist_item.project_id != project_id:
         raise AppError(404, "CHECKLIST_ITEM_NOT_FOUND", "清单项不存在或不属于当前项目。")
@@ -286,7 +317,13 @@ def _read_confirmed_document_count(
     item_id: UUID,
     session: Session,
 ) -> int:
-    """计算一个清单项当前仍有效的已确认档案数量。"""
+    """计算一个清单项当前仍有效的已确认档案数量。
+
+    Args:
+        project_id: 已验证的项目身份。
+        item_id: 要统计关联的清单项身份。
+        session: 当前数据库会话。
+    """
     statement = (
         select(func.count(func.distinct(ChecklistLink.document_id)))
         .join(ArchiveDocument, ArchiveDocument.document_id == ChecklistLink.document_id)
@@ -306,7 +343,12 @@ def _build_checklist_item_read(
     item: ChecklistItem,
     confirmed_document_count: int,
 ) -> ChecklistItemRead:
-    """将数据库行和实时计数转换为稳定 HTTP 响应。"""
+    """将数据库行和实时计数转换为稳定 HTTP 响应。
+
+    Args:
+        item: 数据库中的清单项记录。
+        confirmed_document_count: 当前仍有效的已确认档案数量。
+    """
     if confirmed_document_count > 0:
         fulfillment_status = ChecklistFulfillmentStatus.SATISFIED
     elif item.is_required:

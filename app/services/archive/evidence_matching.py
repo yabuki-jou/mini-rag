@@ -7,7 +7,7 @@ from collections.abc import Mapping
 def _normalized_text(value: object) -> str:
     """以稳定的空白与大小写规则规范化证据文本。
 
-    参数:
+    Args:
         value: 候选摘录或标准证据摘录。
     """
     return re.sub(r"\s+", "", str(value)).casefold()
@@ -18,7 +18,7 @@ def item_contains_expected_evidence(
 ) -> bool:
     """判断候选是否覆盖标准证据的文件、定位范围和全部摘录。
 
-    参数:
+    Args:
         item: 已通过正式检索范围校验的候选字段。
         expected_evidence: 固定评测集中的标准证据标注。
 

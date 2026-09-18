@@ -34,12 +34,22 @@ from app.services.archive.reads import (
 
 
 def _field_map(document_id: UUID, session: Session) -> dict[ArchiveFieldName, ArchiveFieldValue]:
-    """把七个字段按固定名称索引，供目录筛选和摘要构建复用。"""
+    """把七个字段按固定名称索引，供目录筛选和摘要构建复用。
+
+    Args:
+        document_id: 要读取字段值的文档身份。
+        session: 当前数据库会话。
+    """
     return {field.field_name: field for field in list_archive_field_values(document_id, session)}
 
 
 def _enum_value(field: ArchiveFieldValue | None, enum_type):
-    """把数据库文本字段安全转换为固定字典值。"""
+    """把数据库文本字段安全转换为固定字典值。
+
+    Args:
+        field: 待转换的档案字段值，可以为空。
+        enum_type: 目标枚举类型。
+    """
     if field is None or archive_field_value(field) is None:
         return None
     try:
@@ -54,7 +64,13 @@ def _build_archive_summary(
     archive_document: ArchiveDocument,
     fields: dict[ArchiveFieldName, ArchiveFieldValue],
 ) -> ArchiveSummaryRead:
-    """组合正式目录中的结构化档案摘要，不返回原文正文。"""
+    """组合正式目录中的结构化档案摘要，不返回原文正文。
+
+    Args:
+        document: 原始文档记录。
+        archive_document: 文档对应的档案生命周期记录。
+        fields: 按字段名索引的当前字段值。
+    """
     title = archive_field_value(fields.get(ArchiveFieldName.TITLE))
     organization = archive_field_value(fields.get(ArchiveFieldName.AUTHORING_ORGANIZATION))
     document_date = archive_field_value(fields.get(ArchiveFieldName.DOCUMENT_DATE))
@@ -80,7 +96,18 @@ def list_process_documents(
     status: ArchiveDocumentStatus | None,
     session: Session,
 ) -> ProcessDocumentPageRead:
-    """分页返回项目内全部仍存在的归档文档处理状态。"""
+    """分页返回项目内全部仍存在的归档文档处理状态。
+
+    Args:
+        project_id: 已由路由依赖确认的项目身份。
+        page: 从 1 开始的页码。
+        page_size: 单页数量。
+        status: 可选的档案生命周期状态筛选。
+        session: 当前数据库会话。
+
+    Returns:
+        按更新时间和文档 ID 稳定排序的处理状态分页投影。
+    """
     statement = (
         select(Document, ArchiveDocument)
         .join(ArchiveDocument, ArchiveDocument.document_id == Document.id)
@@ -90,6 +117,8 @@ def list_process_documents(
     if status is not None:
         statement = statement.where(ArchiveDocument.status == status)
     rows = list(session.exec(statement).all())
+    # 先得到同一查询结果的总数再切片，保证 total 与当前页来自同一组项目范围数据；
+    # 这里的分页是服务层投影分页，不把客户端提交的偏移条件直接交给数据库。
     total = len(rows)
     start = (page - 1) * page_size
     page_rows = rows[start : start + page_size]
@@ -121,7 +150,26 @@ def list_formal_archives(
     authoring_organization: str | None,
     session: Session,
 ) -> ArchivePageRead:
-    """只返回 CONFIRMED 且没有可见性阻断的正式档案，并执行结构化筛选。"""
+    """只返回 CONFIRMED 且没有可见性阻断的正式档案，并执行结构化筛选。
+
+    Args:
+        project_id: 已由服务端绑定的项目身份。
+        page: 从 1 开始的页码。
+        page_size: 单页数量。
+        document_type: 可选的资料类型筛选。
+        project_stage: 可选的项目阶段筛选。
+        document_date_from: 可选的文档日期下界。
+        document_date_to: 可选的文档日期上界。
+        document_date_is_null: 是否只返回未登记文档日期的档案。
+        authoring_organization: 可选的编制单位筛选。
+        session: 当前数据库会话。
+
+    Returns:
+        包含契约声明的文档标识和登记字段、但不含原文正文的正式目录分页投影。
+
+    Raises:
+        AppError: 日期筛选组合不合法。
+    """
     if document_date_is_null and (document_date_from is not None or document_date_to is not None):
         raise AppError(422, "VALIDATION_ERROR", "日期为空筛选不能与日期区间同时使用。")
     if document_date_from is not None and document_date_to is not None and document_date_from > document_date_to:
@@ -162,7 +210,20 @@ def _formal_archive_rows(
     authoring_organization: str | None,
     session: Session,
 ) -> list[tuple[Document, ArchiveDocument, dict[ArchiveFieldName, ArchiveFieldValue]]]:
-    """共享正式目录的范围、阻断、筛选和稳定排序谓词。"""
+    """共享正式目录的范围、阻断、筛选和稳定排序谓词。
+
+    Args:
+        project_id: 当前项目身份。
+        document_type: 可选的资料类型筛选。
+        project_stage: 可选的项目阶段筛选。
+        document_date_from: 可选的文档日期下界。
+        document_date_to: 可选的文档日期上界。
+        document_date_is_null: 是否只保留未登记文档日期的档案。
+        authoring_organization: 可选的编制单位筛选。
+        session: 当前数据库会话。
+    """
+    # 可见性阻断先按项目整体取出，再与 CONFIRMED 查询结果交集；这样目录、助手
+    # 和详情入口共享同一“删除/失败操作期间不可见”的业务口径。
     blocked_ids = list_visibility_blocked_document_ids(project_id, session)
     rows = session.exec(
         select(Document, ArchiveDocument)
@@ -246,7 +307,14 @@ _AGENT_CATALOG_FIELDS: tuple[ArchiveFieldName, ...] = (
 
 @dataclass(frozen=True)
 class AgentCatalogPage:
-    """保存不含持久化标识的目录工具安全投影。"""
+    """保存不含持久化标识的目录工具安全投影。
+
+    Attributes:
+        page: 当前目录页码。
+        page_size: 当前目录页大小。
+        total: 当前项目可见正式档案总数。
+        items: 经过脱敏处理的目录条目列表。
+    """
 
     page: int
     page_size: int
@@ -269,7 +337,13 @@ def _safe_field_value(
     current_snapshot_id: UUID | None,
     session: Session,
 ) -> dict[str, object]:
-    """投影目录字段值、来源和当前快照证据标记。"""
+    """投影目录字段值、来源和当前快照证据标记。
+
+    Args:
+        field: 待投影的档案字段值，可以为空。
+        current_snapshot_id: 当前正式解析快照身份。
+        session: 当前数据库会话。
+    """
     value = archive_field_value(field)
     if isinstance(value, Enum):
         value = value.value
@@ -277,6 +351,7 @@ def _safe_field_value(
         value = value.isoformat()
     has_source_evidence = False
     if field is not None and current_snapshot_id is not None and not field.no_source_evidence:
+        # evidence 必须属于当前快照；旧快照证据不能证明当前正式版本的字段来源。
         has_source_evidence = session.exec(
             select(FieldEvidence.id)
             .where(
@@ -305,7 +380,26 @@ def list_agent_formal_archives(
     authoring_organization: str | None,
     session: Session,
 ) -> AgentCatalogPage:
-    """返回档案助手专用的正式目录脱敏投影。"""
+    """返回档案助手专用的正式目录脱敏投影。
+
+    Args:
+        project_id: 已由服务端绑定的项目身份，不能由模型覆盖。
+        page: 从 1 开始的目录页码。
+        page_size: 单页数量，受工具白名单限制为 1 到 20。
+        document_type: 可选的资料类型筛选。
+        project_stage: 可选的项目阶段筛选。
+        document_date_from: 可选的文档日期下界。
+        document_date_to: 可选的文档日期上界。
+        document_date_is_null: 是否只返回未登记文档日期的档案。
+        authoring_organization: 可选的编制单位筛选。
+        session: 当前数据库会话。
+
+    Returns:
+        只含五个登记字段、文件名和临时 ``document_ref`` 的安全目录投影。
+
+    Raises:
+        AppError: 工具分页或日期筛选参数不合法。
+    """
     if page < 1:
         raise AppError(422, "ARCHIVE_AGENT_TOOL_ARGUMENT_INVALID", "页码必须为正整数。")
     if page_size < 1 or page_size > 20:
@@ -327,6 +421,8 @@ def list_agent_formal_archives(
     total = len(rows)
     start = (page - 1) * page_size
     items: list[dict[str, object]] = []
+    # document_ref 只在本次目录响应中按页内顺序生成，不暴露 Document UUID，也不
+    # 允许后续证据工具把它当成持久化查询标识。
     for document, archive_document, fields in rows[start : start + page_size]:
         items.append(
             {
@@ -349,7 +445,14 @@ def list_agent_formal_archives(
 
 
 def render_agent_catalog_text(page: AgentCatalogPage) -> str:
-    """按固定分页和五字段模板生成目录正文。"""
+    """按固定分页和五字段模板生成目录正文。
+
+    Args:
+        page: 已完成范围过滤和脱敏投影的目录页。
+
+    Returns:
+        可写入 ToolMessage 的稳定目录文本，不包含持久化内部标识。
+    """
     if not page.items:
         return "当前项目没有可见的正式档案。"
     field_labels = (
@@ -376,7 +479,18 @@ def render_agent_catalog_text(page: AgentCatalogPage) -> str:
 
 
 def read_formal_archive(*, document: Document, session: Session) -> ArchiveDetailRead:
-    """读取单份正式档案详情；非正式或被阻断文档统一隐藏。"""
+    """读取单份正式档案详情；非正式或被阻断文档统一隐藏。
+
+    Args:
+        document: 已通过项目依赖确认归属的文档记录。
+        session: 当前数据库会话。
+
+    Returns:
+        当前正式档案的结构化字段和快照证据详情，不返回原文件正文。
+
+    Raises:
+        AppError: 文档不在正式可见范围。
+    """
     archive_document = session.get(ArchiveDocument, document.id)
     if archive_document is None or archive_document.status != ArchiveDocumentStatus.CONFIRMED:
         raise AppError(404, "ARCHIVE_NOT_FORMAL", "该档案当前不在正式范围。")

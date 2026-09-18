@@ -4,7 +4,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ArchiveSuggestionRegenerateRequest(BaseModel):
-    """请求对尚未人工编辑的 AI 草稿执行安全重新生成。"""
+    """请求对尚未人工编辑的 AI 草稿执行安全重新生成。
+
+    Attributes:
+        expected_version: 客户端读取到的草稿版本，用于乐观锁校验。
+    """
 
     model_config = ConfigDict(extra="forbid")
 

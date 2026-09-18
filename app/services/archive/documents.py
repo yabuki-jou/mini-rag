@@ -55,7 +55,14 @@ async def create_project_uploaded_document(
     kb_id: UUID,
     session: Session,
 ) -> ProcessDocumentRead:
-    """保存项目原文件，并创建尚未解析的归档文档。"""
+    """保存项目原文件，并创建尚未解析的归档文档。
+
+    Args:
+        upload: FastAPI 接收到的项目上传文件。
+        project_id: 已验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        session: 当前数据库会话。
+    """
     # 文件类型和大小属于无状态预检；先完成它们，避免无效上传占用项目写锁。
     # 流式读取同时得到查重哈希，并在成功后把上传流复位到开头。
     file_hash = await calculate_upload_file_hash(upload)
@@ -145,7 +152,12 @@ def _build_initial_process_document_read(
     document: Document,
     archive_document: ArchiveDocument,
 ) -> ProcessDocumentRead:
-    """将原文件和归档状态组合为项目接口的受控响应。"""
+    """将原文件和归档状态组合为项目接口的受控响应。
+
+    Args:
+        document: 原始文档记录。
+        archive_document: 文档对应的档案生命周期记录。
+    """
     return ProcessDocumentRead(
         id=document.id,
         filename=document.filename,
@@ -172,7 +184,15 @@ def _parse_project_document(
     action_name: str,
     actor_id: UUID | None = None,
 ) -> ProcessDocumentRead:
-    """按允许的来源状态解析项目原文件并持久化快照。"""
+    """按允许的来源状态解析项目原文件并持久化快照。
+
+    Args:
+        document: 待解析且已通过项目范围校验的文档。
+        session: 当前数据库会话。
+        expected_status: 允许开始本次解析的原档案状态。
+        action_name: 写入审计和操作记录的动作名称。
+        actor_id: 已认证执行解析的用户身份，可为空。
+    """
     archive_document = session.get(ArchiveDocument, document.id)
     if archive_document is None:
         raise AppError(500, "ARCHIVE_DOCUMENT_NOT_FOUND", "归档文档记录不存在。")
@@ -279,7 +299,12 @@ def parse_project_document(
     document: Document,
     session: Session,
 ) -> ProcessDocumentRead:
-    """从 ``UPLOADED`` 解析项目原文件并进入 ``PARSED``。"""
+    """从 ``UPLOADED`` 解析项目原文件并进入 ``PARSED``。
+
+    Args:
+        document: 待解析且已通过项目范围校验的文档。
+        session: 当前数据库会话。
+    """
     return _parse_project_document(
         document=document,
         session=session,
@@ -294,7 +319,13 @@ def retry_parse_project_document(
     actor_id: UUID,
     session: Session,
 ) -> ProcessDocumentRead:
-    """从 ``PARSE_FAILED`` 重新解析原文件并进入 ``PARSED``。"""
+    """从 ``PARSE_FAILED`` 重新解析原文件并进入 ``PARSED``。
+
+    Args:
+        document: 解析失败且已通过项目范围校验的文档。
+        actor_id: 已认证执行重试的用户身份。
+        session: 当前数据库会话。
+    """
     return _parse_project_document(
         document=document,
         session=session,

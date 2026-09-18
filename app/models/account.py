@@ -23,6 +23,8 @@ class User(SQLModel, table=True):
 
     __tablename__ = "users"
     __table_args__ = (
+        # username 对历史账号允许为空；SQL 的 NULL 不参与唯一值冲突，因而不会阻止
+        # 多个尚未初始化登录凭据的历史用户共存。
         UniqueConstraint("username", name="uq_users_username"),
     )
 

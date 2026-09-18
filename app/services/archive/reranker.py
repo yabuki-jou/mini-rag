@@ -34,7 +34,12 @@ def get_archive_reranker() -> CrossEncoder:
 
 
 def score_archive_candidates(*, query: str, contents: list[str]) -> list[float]:
-    """批量计算查询与已校验原始 Chunk 的本地重排分数。"""
+    """批量计算查询与已校验原始 Chunk 的本地重排分数。
+
+    Args:
+        query: 用于比较的检索问题。
+        contents: 已通过范围校验的候选原文片段列表。
+    """
     if not contents:
         return []
 

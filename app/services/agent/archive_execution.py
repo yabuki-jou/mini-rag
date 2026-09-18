@@ -56,7 +56,11 @@ _CATALOG_FILTER_NAMES = {
 
 
 def _normalize_message(message: str) -> str:
-    """按 HTTP 契约再次规范化应用服务入口。"""
+    """按 HTTP 契约再次规范化应用服务入口。
+
+    Args:
+        message: 用户提交的本轮消息。
+    """
     normalized = message.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized or len(normalized) > 2000:
         raise AppError(422, "VALIDATION_ERROR", "请求参数校验失败。")
@@ -67,7 +71,12 @@ def _validate_arguments_summary(
     tool_name: str,
     summary: dict[str, object] | None,
 ) -> dict[str, object] | None:
-    """只接受冻结的两类参数摘要。"""
+    """只接受冻结的两类参数摘要。
+
+    Args:
+        tool_name: 产生摘要的档案工具名称。
+        summary: 待校验的脱敏参数摘要。
+    """
     if summary is None:
         return None
     expected_keys = (
@@ -108,7 +117,11 @@ def _validate_arguments_summary(
 def _validate_result_summary(
     summary: dict[str, object] | None,
 ) -> dict[str, object] | None:
-    """只接受是否命中与结果数量两个字段。"""
+    """只接受是否命中与结果数量两个字段。
+
+    Args:
+        summary: 待校验的脱敏结果摘要。
+    """
     if summary is None:
         return None
     found = summary.get("found")
@@ -128,7 +141,11 @@ def _validate_result_summary(
 def _validated_event(
     event: ArchiveToolEvent,
 ) -> tuple[AgentToolCallStatus, dict[str, object] | None, dict[str, object] | None]:
-    """确认 Graph 事件只含冻结工具、状态和摘要。"""
+    """确认 Graph 事件只含冻结工具、状态和摘要。
+
+    Args:
+        event: Graph 生成的单次工具观测事件。
+    """
     if event.tool_name not in _ARCHIVE_TOOL_NAMES:
         raise ValueError("archive tool name is invalid")
     status = AgentToolCallStatus(event.status)
@@ -149,8 +166,19 @@ def record_archive_tool_events(
     events: Iterable[ArchiveToolEvent],
     session: Session,
 ) -> None:
-    """按会话和 Tool Call ID 幂等保存当前轮安全事件。"""
+    """按会话和 Tool Call ID 幂等保存当前轮安全事件。
+
+    Args:
+        agent_session: 已通过服务端项目范围校验的档案助手会话。
+        events: Graph 本轮产生的工具观测事件；事件内容仍需经过白名单复核。
+        session: 当前请求使用的 PostgreSQL 会话。
+
+    Raises:
+        ValueError: 工具、状态或脱敏摘要不符合冻结契约。
+    """
     for tool_event in events:
+        # Checkpoint 或应用层重试可能再次提交同一 tool_call_id；先查重再校验和写入，
+        # 使重复事件不会膨胀审计记录，同时仍拒绝新出现的非法事件。
         existing = session.exec(
             select(AgentToolCallLog).where(
                 AgentToolCallLog.agent_session_id == agent_session.id,
@@ -188,7 +216,16 @@ def _commit_archive_records(
     session: Session,
     update_session: bool,
 ) -> None:
-    """提交当前轮日志，仅完整成功轮次更新会话时间。"""
+    """提交当前轮日志，仅完整成功轮次更新会话时间。
+
+    Args:
+        agent_session: 当前档案助手会话。
+        session: 当前请求使用的 PostgreSQL 会话。
+        update_session: 是否把会话更新时间推进到当前完整轮次。
+
+    ``update_session=False`` 专门用于模型或工具失败后的安全审计：失败事件可以
+    落库，但不能用一次未完成请求把“最近会话”时间推进到不完整轮次。
+    """
     if update_session:
         agent_session.updated_at = utc_now()
         session.add(agent_session)
@@ -204,7 +241,11 @@ def _commit_archive_records(
 
 
 def _raise_archive_execution_error(error: Exception) -> None:
-    """将 Graph 或 Checkpoint 失败投影为两个冻结 HTTP 错误码。"""
+    """将 Graph 或 Checkpoint 失败投影为两个冻结 HTTP 错误码。
+
+    Args:
+        error: Graph 或 Checkpoint 抛出的原始异常。
+    """
     if isinstance(error, ArchiveAgentModelOutputError):
         raise AppError(
             503,
@@ -225,8 +266,23 @@ def send_archive_agent_message(
     runtime: ArchiveAgentRuntime,
     session: Session,
 ) -> ArchiveAgentResponse:
-    """执行一轮档案 Graph，持久安全审计并返回可信投影。"""
+    """执行一轮档案 Graph，持久安全审计并返回可信投影。
+
+    Args:
+        agent_session: 已验证范围的档案助手会话，身份字段不由模型或客户端覆盖。
+        message: 用户本轮输入。
+        runtime: 负责 Checkpoint 读写和 Graph 执行的运行时适配器。
+        session: 保存 PostgreSQL 工具审计和会话时间的数据库会话。
+
+    Returns:
+        只包含允许公开的回答状态、引用和请求标识的响应投影。
+
+    Raises:
+        AppError: 输入无效、Graph/Checkpoint 失败或安全审计无法提交。
+    """
     normalized_message = _normalize_message(message)
+    # Graph 可能已经写入 Checkpoint，但 PostgreSQL 审计仍需单独补偿；先保存失败
+    # 事件并提交，再把底层异常映射为稳定错误，避免把部分工具结果交给客户端。
     try:
         runtime_result = runtime.invoke(
             {
@@ -259,6 +315,8 @@ def send_archive_agent_message(
         _raise_archive_execution_error(exc)
 
     try:
+        # 先提交工具审计和会话状态，再构造公开响应；这样返回成功时，持久化的
+        # 观察结果已经存在，响应投影失败也不会伪装成一次未记录的成功轮次。
         record_archive_tool_events(
             agent_session=agent_session,
             events=runtime_result.turn.tool_events,
@@ -289,7 +347,12 @@ def _observe_archive_agent_turn(
     turn: Any,
     response: ArchiveAgentResponse,
 ) -> None:
-    """记录评测需要的脱敏工具路径、路由结果和用户可见响应。"""
+    """记录评测需要的脱敏工具路径、路由结果和用户可见响应。
+
+    Args:
+        turn: 当前 Graph 轮次及其工具观测结果。
+        response: 已构造的用户可见响应投影。
+    """
     safe_tool_calls = [
         {
             "tool_name": event.tool_name,
@@ -336,7 +399,12 @@ def _checkpoint_archive_messages(
     agent_session: AgentSession,
     runtime: ArchiveAgentRuntime,
 ) -> list[BaseMessage]:
-    """读取并验证 ARCHIVE 线程中的消息列表。"""
+    """读取并验证 ARCHIVE 线程中的消息列表。
+
+    Args:
+        agent_session: 用于确定 Checkpoint 线程的档案助手会话。
+        runtime: 负责读取 Checkpoint 状态的运行时适配器。
+    """
     try:
         snapshot = runtime.get_state(thread_id=agent_session.thread_id)
         messages = snapshot.values.get("messages", [])
@@ -353,7 +421,20 @@ def read_archive_agent_messages(
     agent_session: AgentSession,
     runtime: ArchiveAgentRuntime,
 ) -> list[ArchiveAgentMessageRead]:
-    """返回只含完整用户/助手轮次的可见历史。"""
+    """返回只含完整用户/助手轮次的可见历史。
+
+    Args:
+        agent_session: 已通过全部范围字段查找到的档案助手会话。
+        runtime: 读取对应 Checkpoint 线程状态的运行时适配器。
+
+    Returns:
+        忽略中间 ToolMessage 和未形成最终助手消息的孤立轮次后的历史投影。
+
+    Raises:
+        AppError: Checkpoint 不可读或消息结构不符合档案线程契约。
+    """
+    # ToolMessage 只服务当前 Graph 执行；历史接口使用稳定的用户/助手投影，避免
+    # 把内部工具参数、原始候选或未完成轮次误展示给普通用户。
     messages = project_complete_archive_messages(
         _checkpoint_archive_messages(agent_session, runtime)
     )
@@ -374,7 +455,13 @@ def _decode_archive_summary(
     tool_name: str,
     result: bool,
 ) -> dict[str, object] | None:
-    """解析并再校验持久化的工具摘要。"""
+    """解析并再校验持久化的工具摘要。
+
+    Args:
+        raw_value: 数据库中保存的 JSON 摘要文本。
+        tool_name: 产生摘要的档案工具名称。
+        result: 是否按结果摘要而不是参数摘要解析。
+    """
     if raw_value is None:
         return None
     value = json.loads(raw_value)
@@ -391,7 +478,20 @@ def read_archive_agent_tool_calls(
     agent_session: AgentSession,
     session: Session,
 ) -> list[AgentToolCallLogRead]:
-    """按创建时间正序返回经白名单复核的脱敏工具日志。"""
+    """按创建时间正序返回经白名单复核的脱敏工具日志。
+
+    Args:
+        agent_session: 已通过全部范围字段查找到的档案助手会话。
+        session: 当前请求使用的 PostgreSQL 会话。
+
+    Returns:
+        按创建顺序排列、且重新经过工具名、状态和摘要校验的日志投影。
+
+    Raises:
+        AppError: 数据库不可用或已持久化的脱敏日志不符合契约。
+    """
+    # 记录虽然已经脱敏，读取时仍重新执行白名单校验；旧数据或手工篡改不能借由
+    # 历史接口绕过当前的公开工具边界。
     try:
         records = session.exec(
             select(AgentToolCallLog)

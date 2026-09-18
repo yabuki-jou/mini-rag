@@ -40,7 +40,11 @@ class ChecklistItemCreate(BaseModel):
     @field_validator("name")
     @classmethod
     def normalize_name(cls, value: str) -> str:
-        """拒绝仅含空白的名称，避免产生无法辨认的清单项。"""
+        """拒绝仅含空白的名称，避免产生无法辨认的清单项。
+
+        Args:
+            value: 待规范化的清单项名称。
+        """
         normalized_name = value.strip()
         if not normalized_name:
             raise ValueError("清单项名称不能为空。")
@@ -71,7 +75,11 @@ class ChecklistItemUpdate(BaseModel):
     @field_validator("name")
     @classmethod
     def normalize_optional_name(cls, value: str | None) -> str | None:
-        """规范化显式提交的新名称；未提交则由 ``None`` 表示不修改。"""
+        """规范化显式提交的新名称；未提交则由 ``None`` 表示不修改。
+
+        Args:
+            value: 待规范化的新名称；未提交时为 ``None``。
+        """
         if value is None:
             return None
         normalized_name = value.strip()
@@ -92,6 +100,8 @@ class ChecklistItemUpdate(BaseModel):
         if not (mutable_fields & self.model_fields_set):
             raise ValueError("至少提交一个可修改的清单项字段。")
         non_nullable_fields = {"name", "document_type", "is_required", "project_stage"}
+        # model_fields_set 区分“未提交”和“显式提交 None/False”，否则无法表达清空说明
+        # 或把布尔值改为 False 这类合法更新。
         for field_name in non_nullable_fields & self.model_fields_set:
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} 不能为 null。")
@@ -125,13 +135,22 @@ class ChecklistItemRead(BaseModel):
 
 
 class ChecklistItemListRead(BaseModel):
-    """返回当前项目的全部清单项；项目没有清单时 ``items`` 为空数组。"""
+    """返回当前项目的全部清单项；项目没有清单时 ``items`` 为空数组。
+
+    Attributes:
+        items: 当前项目的清单项列表。
+    """
 
     items: list[ChecklistItemRead]
 
 
 class ChecklistItemCreateResponse(BaseModel):
-    """返回创建结果以及已原子递增后的项目版本。"""
+    """返回创建结果以及已原子递增后的项目版本。
+
+    Attributes:
+        item: 新创建的清单项。
+        project_version: 创建操作完成后的项目版本。
+    """
 
     item: ChecklistItemRead
     project_version: int = Field(ge=1)

@@ -45,7 +45,13 @@ def _mark_delete_failed(
     operation_id: UUID | None,
     session: Session,
 ) -> None:
-    """将跨存储失败记录为保守隐藏、可重试的状态。"""
+    """将跨存储失败记录为保守隐藏、可重试的状态。
+
+    Args:
+        document_id: 删除失败的档案文档身份。
+        operation_id: 本次删除操作的身份。
+        session: 当前数据库会话。
+    """
     session.rollback()
     document = session.get(Document, document_id)
     archive_document = session.get(ArchiveDocument, document_id)
@@ -86,7 +92,13 @@ def _mark_delete_failed(
 
 
 def delete_archive_document(*, document: Document, actor_id: UUID, session: Session) -> None:
-    """物理删除项目文档，并在外部失败时保留可重入操作记录。"""
+    """物理删除项目文档，并在外部失败时保留可重入操作记录。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        actor_id: 已认证执行删除的用户身份。
+        session: 当前数据库会话。
+    """
     document_id = document.id
     # 注释 1：行锁只能串行化删除准备，无法让 Chroma 和文件系统具备事务性；
     # 操作记录负责跨越后续外部调用保存恢复状态。

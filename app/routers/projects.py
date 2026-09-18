@@ -115,7 +115,13 @@ def create_project_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> Project:
-    """创建当前用户的项目和服务端管理的独立知识库范围。"""
+    """创建当前用户的项目和服务端管理的独立知识库范围。
+
+    Args:
+        payload: 经过 Schema 校验的项目名称和说明。
+        current_user: 已通过认证的当前用户，作为项目所有者。
+        session: 当前请求的业务数据库会话。
+    """
     return create_project(current_user=current_user, payload=payload, session=session)
 
 
@@ -126,7 +132,14 @@ def list_projects_endpoint(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> ProjectPageRead:
-    """按稳定分页顺序列出当前用户项目。"""
+    """按稳定分页顺序列出当前用户项目。
+
+    Args:
+        current_user: 已通过认证的当前用户，只能读取其项目。
+        session: 当前请求的业务数据库会话。
+        page: 从 1 开始计数的页码。
+        page_size: 每页返回的项目数量。
+    """
     return list_projects(
         current_user=current_user,
         page=page,
@@ -146,7 +159,14 @@ async def create_project_document_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
-    """上传项目内原文件；本阶段不自动解析、调用模型或写 Chroma。"""
+    """上传项目内原文件；本阶段不自动解析、调用模型或写 Chroma。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        file: 待保存的 PDF、DOCX、TXT 或 Markdown 原文件。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     return await create_project_uploaded_document(
         upload=file,
@@ -167,7 +187,15 @@ def delete_project_document_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> Response:
-    """物理删除项目文档及其档案、文件、向量和关联。"""
+    """物理删除项目文档及其档案、文件、向量和关联。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待删除的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的删除操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 2：ProjectDocumentDep 在删除前同时解析所有权和项目成员关系，
     # 因而客户端不能选择其他项目的文档。
@@ -188,7 +216,16 @@ def list_project_documents_endpoint(
     page_size: int = Query(default=20, ge=1, le=100),
     document_status: ArchiveDocumentStatus | None = Query(default=None, alias="status"),
 ) -> ProcessDocumentPageRead:
-    """分页读取项目文档处理状态，包含未确认和失败文档。"""
+    """分页读取项目文档处理状态，包含未确认和失败文档。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+        page: 从 1 开始计数的页码。
+        page_size: 每页返回的文档数量。
+        document_status: 可选的文档处理状态过滤条件。
+    """
     _ = project_id
     return list_process_documents(
         project_id=project_context.project_id,
@@ -213,7 +250,21 @@ def list_project_archives_endpoint(
     document_date_is_null: bool = False,
     authoring_organization: str | None = None,
 ) -> ArchivePageRead:
-    """分页读取没有删除阻断的正式档案目录。"""
+    """分页读取没有删除阻断的正式档案目录。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+        page: 从 1 开始计数的页码。
+        page_size: 每页返回的档案数量。
+        document_type: 可选的档案资料类型过滤条件。
+        project_stage: 可选的项目阶段过滤条件。
+        document_date_from: 文档日期起始值，包含当天。
+        document_date_to: 文档日期结束值，包含当天。
+        document_date_is_null: 是否只筛选文档日期为空的档案。
+        authoring_organization: 可选的编制单位过滤条件。
+    """
     _ = project_id
     # 注释 3：由 Service 而非本路由应用 CONFIRMED 与可见性阻断规则，
     # 使所有目录调用方共用同一闸门。
@@ -238,7 +289,14 @@ def get_project_archive_endpoint(
     document: ProjectDocumentDep,
     session: SessionDep,
 ) -> ArchiveDetailRead:
-    """读取正式档案详情和七个字段证据；非正式档案统一隐藏。"""
+    """读取正式档案详情和七个字段证据；非正式档案统一隐藏。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待读取的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return read_formal_archive(document=document, session=session)
 
@@ -252,7 +310,16 @@ def list_project_audit_logs_endpoint(
     page_size: int = Query(default=50, ge=1, le=100),
     operation_type: ArchiveAuditOperationType | None = None,
 ) -> AuditLogPageRead:
-    """分页读取当前项目的脱敏业务审计记录。"""
+    """分页读取当前项目的脱敏业务审计记录。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+        page: 从 1 开始计数的页码。
+        page_size: 每页返回的审计记录数量。
+        operation_type: 可选的档案操作类型过滤条件。
+    """
     _ = project_id
     return list_audit_logs(
         project_id=project_context.project_id,
@@ -273,7 +340,14 @@ def retrieve_project_archive_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ArchiveRetrievalResponse:
-    """仅在当前项目正式档案范围内检索可追溯原文证据。"""
+    """仅在当前项目正式档案范围内检索可追溯原文证据。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        payload: 经过 Schema 校验的检索词和返回数量。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     # 注释 4：范围值来自已验证依赖而非请求体，使向量检索始终与 Bearer 授权一致。
     return retrieve_archive_chunks(
@@ -297,7 +371,14 @@ def retrieve_project_archive_diagnostic_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ArchiveRetrievalDiagnosticResponse:
-    """仅在开发环境返回固定集所需的 Top-30 双排序脱敏诊断。"""
+    """仅在开发环境返回固定集所需的 Top-30 双排序脱敏诊断。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        payload: 经过 Schema 校验的诊断查询词和期望证据。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     if settings.app_env != "development":
         raise AppError(404, "NOT_FOUND", "资源不存在。")
@@ -321,7 +402,14 @@ def ask_project_archive_question_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ArchiveQuestionResponse:
-    """基于当前项目正式证据生成带引用回答；无依据时直接拒答。"""
+    """基于当前项目正式证据生成带引用回答；无依据时直接拒答。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        payload: 经过 Schema 校验的档案问题。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     # 注释 5：问题文本是唯一面向模型的客户端输入；身份和知识库范围始终由服务端控制。
     return answer_archive_question(
@@ -343,7 +431,14 @@ def parse_project_document_endpoint(
     document: ProjectDocumentDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
-    """解析项目文档并保存位置感知快照，不生成字段草稿或向量。"""
+    """解析项目文档并保存位置感知快照，不生成字段草稿或向量。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待解析的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return parse_project_document(document=document, session=session)
 
@@ -359,7 +454,15 @@ def retry_parse_project_document_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
-    """仅对 PARSE_FAILED 文档重试解析，不重新上传原文件。"""
+    """仅对 PARSE_FAILED 文档重试解析，不重新上传原文件。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待重试的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的重试操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return retry_parse_project_document(
         document=document,
@@ -379,7 +482,15 @@ def create_manual_draft_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """为已解析项目文档创建七字段空白人工草稿。"""
+    """为已解析项目文档创建七字段空白人工草稿。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待创建草稿的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的草稿创建操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 6：创建草稿需要已认证操作者，因为 Service 会记录人工归属的状态转换，
     # 与纯读取路由不同。
@@ -400,7 +511,14 @@ def read_document_draft_endpoint(
     document: ProjectDocumentDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """读取项目文档的人工字段草稿、快照元数据和下一步动作。"""
+    """读取项目文档的人工字段草稿、快照元数据和下一步动作。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待读取草稿的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return read_document_draft(document=document, session=session)
 
@@ -418,7 +536,17 @@ def update_document_field_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """保存单个归档字段、人工检查状态和当前快照证据。"""
+    """保存单个归档字段、人工检查状态和当前快照证据。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待更新的文档标识。
+        field_name: 待更新的归档字段枚举值。
+        payload: 经过 Schema 校验的字段值和人工检查信息。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的字段更新操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 7：请求体只携带字段内容；文档归属和字段名分别由可信路径依赖与枚举校验确定。
     return update_field(
@@ -441,7 +569,15 @@ def create_document_suggestions_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """基于当前解析快照生成首次 AI 字段建议。"""
+    """基于当前解析快照生成首次 AI 字段建议。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待生成建议的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的建议生成操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 8：Service 自行读取当前快照，避免客户端提交任意文本或过期快照标识。
     return create_suggestions(
@@ -462,7 +598,15 @@ def retry_document_suggestions_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """仅对建议失败文档重试 AI 字段建议。"""
+    """仅对建议失败文档重试 AI 字段建议。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待重试建议的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的建议重试操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return retry_suggestions(
         document_id=document.id,
@@ -483,7 +627,16 @@ def regenerate_document_suggestions_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ArchiveDraftRead:
-    """仅在无人工编辑且版本匹配时安全重新生成 AI 建议。"""
+    """仅在无人工编辑且版本匹配时安全重新生成 AI 建议。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待重新生成建议的文档标识。
+        payload: 经过 Schema 校验的期望草稿版本号。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的建议重新生成操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return regenerate_suggestions(
         document_id=document.id,
@@ -505,7 +658,16 @@ def confirm_project_document_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
-    """校验人工确认前置条件、转为 CONFIRMED 并触发内部 INDEX。"""
+    """校验人工确认前置条件、转为 CONFIRMED 并触发内部 INDEX。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待确认的文档标识。
+        payload: 经过 Schema 校验的期望文档版本号和确认信息。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的人工确认操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 9：确认属于业务状态转换，因此透传 expected_version 以保护人工检查
     # 不受并发修改影响。
@@ -529,7 +691,16 @@ def cancel_project_document_confirmation_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ProcessDocumentRead:
-    """取消确认、退出正式范围并清理 Final Chunk。"""
+    """取消确认、退出正式范围并清理 Final Chunk。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待取消确认的文档标识。
+        payload: 经过 Schema 校验的期望文档版本号和取消信息。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的取消确认操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 10：取消确认会立即将文档移出正式范围；随后向量清理遵循 Service 中的
     # 保守恢复规则。
@@ -551,7 +722,14 @@ def list_document_checklist_link_suggestions_endpoint(
     document: ProjectDocumentDep,
     session: SessionDep,
 ) -> ChecklistLinkSuggestionListRead:
-    """按人工确认的类型和阶段返回清单关联建议。"""
+    """按人工确认的类型和阶段返回清单关联建议。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待获取关联建议的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return list_link_suggestions(document=document, session=session)
 
@@ -566,7 +744,14 @@ def list_document_checklist_links_endpoint(
     document: ProjectDocumentDep,
     session: SessionDep,
 ) -> ChecklistLinkListRead:
-    """读取档案已有的确认或失效清单关联。"""
+    """读取档案已有的确认或失效清单关联。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待读取关联的文档标识。
+        document: 已验证属于当前用户和项目的文档。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     return list_document_links(document=document, session=session)
 
@@ -584,7 +769,16 @@ def create_document_checklist_link_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ChecklistLinkRead:
-    """以文档和清单项版本号为前提人工确认档案关联。"""
+    """以文档和清单项版本号为前提人工确认档案关联。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中待建立关联的文档标识。
+        payload: 经过 Schema 校验的清单项标识和双方版本号。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的关联确认操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     # 注释 11：Service 会检查两类资源版本，因为关联会改变派生清单状态，
     # 不能与文档更新竞争。
@@ -608,7 +802,16 @@ def delete_document_checklist_link_endpoint(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> Response:
-    """删除档案清单关联并写入脱敏审计。"""
+    """删除档案清单关联并写入脱敏审计。
+
+    Args:
+        project_id: URL 中的项目标识；由文档依赖校验项目归属。
+        document_id: URL 中关联所属的文档标识。
+        link_id: URL 中待删除的清单关联标识。
+        document: 已验证属于当前用户和项目的文档。
+        current_user: 已通过认证的关联删除操作人。
+        session: 当前请求的业务数据库会话。
+    """
     _ = (project_id, document_id)
     delete_document_link(
         document=document,
@@ -625,7 +828,13 @@ def list_checklist_items_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ChecklistItemListRead:
-    """读取当前用户项目的清单及实时派生状态。"""
+    """读取当前用户项目的清单及实时派生状态。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     return list_checklist_items(project_id=project_context.project_id, session=session)
 
@@ -641,7 +850,14 @@ def create_checklist_item_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ChecklistItemCreateResponse:
-    """创建当前用户项目独有的清单项，并以项目版本保护该写入。"""
+    """创建当前用户项目独有的清单项，并以项目版本保护该写入。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        payload: 经过 Schema 校验的清单项内容和项目版本号。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     return create_checklist_item(
         project_id=project_context.project_id,
@@ -662,7 +878,15 @@ def update_checklist_item_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> ChecklistItemRead:
-    """以清单项版本为前提修改项目独有清单项。"""
+    """以清单项版本为前提修改项目独有清单项。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        item_id: URL 中待更新的清单项标识。
+        payload: 经过 Schema 校验的清单项修改内容和版本号。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     return update_checklist_item(
         project_id=project_context.project_id,
@@ -683,7 +907,14 @@ def delete_checklist_item_endpoint(
     project_context: ProjectContextDep,
     session: SessionDep,
 ) -> Response:
-    """删除项目清单项及其关联，并保留脱敏审计。"""
+    """删除项目清单项及其关联，并保留脱敏审计。
+
+    Args:
+        project_id: URL 中的项目标识；实际范围由 project_context 校验。
+        item_id: URL 中待删除的清单项标识。
+        project_context: 已验证的用户、项目和知识库范围。
+        session: 当前请求的业务数据库会话。
+    """
     _ = project_id
     # 注释 12：该接口按契约不返回正文；所有派生状态处理都在响应发送前由 Service
     # 在事务内完成。
@@ -702,7 +933,13 @@ def get_project_endpoint(
     _: ProjectContextDep,
     session: SessionDep,
 ) -> Project:
-    """读取已通过项目所有权校验的项目详情。"""
+    """读取已通过项目所有权校验的项目详情。
+
+    Args:
+        project_id: URL 中待读取的项目标识。
+        _: 已验证项目归属的上下文依赖，仅用于授权检查。
+        session: 当前请求的业务数据库会话。
+    """
     return read_project(project_id=project_id, session=session)
 
 
@@ -713,7 +950,14 @@ def update_project_endpoint(
     _: ProjectContextDep,
     session: SessionDep,
 ) -> Project:
-    """以客户端版本号为前提修改项目名称或说明。"""
+    """以客户端版本号为前提修改项目名称或说明。
+
+    Args:
+        project_id: URL 中待修改的项目标识。
+        payload: 经过 Schema 校验的项目修改内容和版本号。
+        _: 已验证项目归属的上下文依赖，仅用于授权检查。
+        session: 当前请求的业务数据库会话。
+    """
     return update_project(project_id=project_id, payload=payload, session=session)
 
 
@@ -723,6 +967,12 @@ def delete_project_endpoint(
     _: ProjectContextDep,
     session: SessionDep,
 ) -> Response:
-    """删除无文档项目及项目级清单，保留其内部知识库记录。"""
+    """删除无文档项目及项目级清单，保留其内部知识库记录。
+
+    Args:
+        project_id: URL 中待删除的项目标识。
+        _: 已验证项目归属的上下文依赖，仅用于授权检查。
+        session: 当前请求的业务数据库会话。
+    """
     delete_empty_project(project_id=project_id, session=session)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -54,7 +54,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
-        """将预期业务异常转换为稳定且可安全展示的响应。"""
+        """将预期业务异常转换为稳定且可安全展示的响应。
+
+        Args:
+            _: 当前 HTTP 请求对象；处理器只使用其异常处理上下文。
+            exc: 已知的、允许向客户端公开的业务异常。
+
+        Returns:
+            包含稳定错误代码、消息和可选详情的 JSON 响应。
+        """
         # 业务异常的状态码、错误代码和消息都由抛出位置明确指定。
         logger.warning(
             "application_error status=%s code=%s",
@@ -74,7 +82,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         _: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
-        """将 FastAPI 参数校验异常转换为统一的 422 响应。"""
+        """将 FastAPI 参数校验异常转换为统一的 422 响应。
+
+        Args:
+            _: 触发校验错误的 HTTP 请求对象。
+            exc: FastAPI 收集的请求参数校验异常。
+
+        Returns:
+            包含标准校验错误代码和字段详情的 422 JSON 响应。
+        """
         # jsonable_encoder 将 Pydantic 错误中的特殊对象转换为 JSON 数据。
         return JSONResponse(
             status_code=422,
@@ -89,7 +105,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def exception(_: Request, exc: Exception) -> JSONResponse:
-        """记录未知异常的完整堆栈，并向客户端隐藏内部细节。"""
+        """记录未知异常的完整堆栈，并向客户端隐藏内部细节。
+
+        Args:
+            _: 触发未知异常的 HTTP 请求对象。
+            exc: 未被业务异常处理器识别的原始异常。
+
+        Returns:
+            不包含内部异常正文的 500 JSON 响应。
+        """
         # 完整细节只进入服务端日志，响应中不暴露数据库或密钥等信息。
         logger.exception("unhandled_application_error", exc_info=exc)
         return JSONResponse(

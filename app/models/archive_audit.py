@@ -55,7 +55,9 @@ class ArchiveOperation(SQLModel, table=True):
         ForeignKeyConstraint(["document_id"], ["archive_documents.document_id"], ondelete="CASCADE"),
         Index("ix_archive_operations_status_updated", "operation_status", "updated_at"),
         Index("ix_archive_operations_document_type_created", "document_id", "operation_type", "created_at"),
+        # 部分唯一索引允许同一文档保留历史记录，但同一时刻只能有一个运行中操作。
         Index("uq_archive_operations_document_running", "document_id", unique=True, postgresql_where=text("operation_status = 'RUNNING'"), sqlite_where=text("operation_status = 'RUNNING'")),
+        # 每份文档只保留一个未完成删除操作，供服务层执行可见性阻断和失败重试。
         Index("uq_archive_operations_delete_unfinished", "document_id", unique=True, postgresql_where=text("operation_type = 'DELETE' AND operation_status IN ('RUNNING', 'FAILED')"), sqlite_where=text("operation_type = 'DELETE' AND operation_status IN ('RUNNING', 'FAILED')")),
     )
 
@@ -85,7 +87,7 @@ class ArchiveAuditLog(SQLModel, table=True):
         resource_type: 被操作资源的类型，例如项目、清单项或归档文档。
         resource_id: 被操作资源的 ID；资源删除后仍保留此标识。
         operation_id: 可选内部操作 ID，用于避免同一成功操作重复写审计。
-        redacted_summary: 不含原文、提示词和敏感字段的操作摘要。
+        redacted_summary: 不含原文、提示词和敏感字段的 JSON 操作摘要。
         created_at: 审计记录创建的 UTC 时间。
     """
 

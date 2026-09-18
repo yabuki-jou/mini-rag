@@ -28,8 +28,11 @@ class Project(SQLModel, table=True):
     __tablename__ = "projects"
     __table_args__ = (
         UniqueConstraint("owner_id", "name", name="uq_projects_owner_name"),
+        # 复合唯一键是 documents、agent_sessions 等跨表复合外键的稳定目标。
         UniqueConstraint("id", "kb_id", name="uq_projects_id_kb_id"),
+        # 一个知识库只能属于一个项目，保证项目是档案资源的唯一隔离边界。
         UniqueConstraint("kb_id", name="uq_projects_kb_id"),
+        # 名称和容量约束放在数据库层，避免绕过 API 的写入破坏项目计数与唯一性语义。
         CheckConstraint("name = trim(name) AND length(name) > 0", name="ck_projects_name_trimmed"),
         CheckConstraint("active_document_count BETWEEN 0 AND 100", name="ck_projects_active_document_count"),
         Index("ix_projects_owner_updated_id", "owner_id", "updated_at", "id"),

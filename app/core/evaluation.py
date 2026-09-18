@@ -24,7 +24,14 @@ def evaluation_name_scope() -> Iterator[None]:
 
 
 def _scoped_name(name: str) -> str:
-    """只在显式评测作用域内给重复名称追加稳定序号。"""
+    """只在显式评测作用域内给重复名称追加稳定序号。
+
+    Args:
+        name: 评测观测点的基础名称。
+
+    Returns:
+        当前作用域中可区分重复观测点的名称。
+    """
     counts = _EVAL_NAME_COUNTS.get()
     if counts is None:
         return name

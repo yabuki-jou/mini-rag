@@ -46,7 +46,15 @@ ARCHIVE_DOCUMENT_RESOURCE_TYPE = "ARCHIVE_DOCUMENT"
 
 @dataclass(frozen=True, slots=True)
 class SuggestedEvidence:
-    """模型建议的一条、尚未绑定数据库 ID 的证据。"""
+    """模型建议的一条、尚未绑定数据库 ID 的证据。
+
+    Attributes:
+        excerpt: 证据所在的原文摘录。
+        location_type: 证据定位类型。
+        location_start: 定位范围起点。
+        location_end: 定位范围终点。
+        normalized_anchor: 可选的归一化定位锚点。
+    """
 
     excerpt: str
     location_type: EvidenceLocationType
@@ -57,7 +65,15 @@ class SuggestedEvidence:
 
 @dataclass(frozen=True, slots=True)
 class SuggestedField:
-    """模型建议的一个规范化字段值和证据集合。"""
+    """模型建议的一个规范化字段值和证据集合。
+
+    Attributes:
+        field_name: 档案字段名称。
+        text_value: 文本字段值。
+        date_value: 日期字段值。
+        json_value: 关键词等结构化字符串列表。
+        evidences: 支持该字段值的证据集合。
+    """
 
     field_name: ArchiveFieldName
     text_value: str | None
@@ -76,12 +92,22 @@ _TEXT_FIELDS = {
 
 
 def _suggestion_error(code: str, message: str, status_code: int = 422) -> AppError:
-    """构造不暴露模型原始输出的稳定建议错误。"""
+    """构造不暴露模型原始输出的稳定建议错误。
+
+    Args:
+        code: 对外稳定的错误代码。
+        message: 对外安全的错误消息。
+        status_code: HTTP 状态码。
+    """
     return AppError(status_code, code, message)
 
 
 def _snapshot_payload(snapshot: ParsedSnapshot) -> dict[str, Any]:
-    """读取当前不可变快照，模型只接收快照内容而不是原文件路径。"""
+    """读取当前不可变快照，模型只接收快照内容而不是原文件路径。
+
+    Args:
+        snapshot: 当前解析快照记录。
+    """
     try:
         payload = json.loads(Path(snapshot.snapshot_storage_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -92,7 +118,11 @@ def _snapshot_payload(snapshot: ParsedSnapshot) -> dict[str, Any]:
 
 
 def _build_prompt(snapshot_payload: dict[str, Any]) -> str:
-    """构造固定、可审计的建议提示，不把模型调用上下文扩展到其他文档。"""
+    """构造固定、可审计的建议提示，不把模型调用上下文扩展到其他文档。
+
+    Args:
+        snapshot_payload: 当前解析快照的可序列化内容。
+    """
     schema = {
         "fields": {
             field_name: {
@@ -139,7 +169,11 @@ def _build_prompt(snapshot_payload: dict[str, Any]) -> str:
 
 
 def _response_content(response: Any) -> dict[str, Any]:
-    """把 ChatModel 响应转换为 JSON 对象。"""
+    """把 ChatModel 响应转换为 JSON 对象。
+
+    Args:
+        response: ChatModel 返回的消息或原始内容。
+    """
     content = getattr(response, "content", response)
     if isinstance(content, list):
         content = "".join(
@@ -164,7 +198,12 @@ def _validate_evidence(
     raw: Any,
     snapshot_payload: dict[str, Any],
 ) -> SuggestedEvidence:
-    """校验证据定位属于当前快照中的一个解析片段。"""
+    """校验证据定位属于当前快照中的一个解析片段。
+
+    Args:
+        raw: 模型生成的单条证据对象。
+        snapshot_payload: 当前解析快照的可序列化内容。
+    """
     if not isinstance(raw, dict):
         raise _suggestion_error("SUGGESTION_INVALID_OUTPUT", "模型证据结构无效。")
     try:
@@ -204,7 +243,12 @@ def _parse_suggested_fields(
     response: Any,
     snapshot_payload: dict[str, Any],
 ) -> list[SuggestedField]:
-    """将模型输出收敛为固定七字段，并验证非空 AI 值都有证据。"""
+    """将模型输出收敛为固定七字段，并验证非空 AI 值都有证据。
+
+    Args:
+        response: 模型返回的字段建议内容。
+        snapshot_payload: 当前解析快照的可序列化内容。
+    """
     raw_fields = _response_content(response).get("fields")
     if not isinstance(raw_fields, dict):
         raise _suggestion_error("SUGGESTION_INVALID_OUTPUT", "模型缺少 fields 对象。")
@@ -279,7 +323,13 @@ def _record_suggestion_failure(
     error: AppError,
     session: Session,
 ) -> None:
-    """首次建议失败时保留解析结果并记录受控失败状态。"""
+    """首次建议失败时保留解析结果并记录受控失败状态。
+
+    Args:
+        archive_document: 需要转为建议失败状态的档案记录。
+        error: 对外稳定的建议错误。
+        session: 当前数据库会话。
+    """
     session.rollback()
     archive_document = session.get(ArchiveDocument, archive_document.document_id)
     if archive_document is None:
@@ -293,7 +343,12 @@ def _record_suggestion_failure(
 
 
 def _invoke_model(*, prompt: str, document_id: UUID) -> Any:
-    """调用建议模型；只对连接和超时故障自动重试一次。"""
+    """调用建议模型；只对连接和超时故障自动重试一次。
+
+    Args:
+        prompt: 发给建议模型的固定提示。
+        document_id: 当前文档身份，用于日志定位。
+    """
     for attempt in range(2):
         try:
             model = get_chat_model().bind(response_format={"type": "json_object"})
@@ -317,7 +372,11 @@ def _invoke_model(*, prompt: str, document_id: UUID) -> Any:
 
 
 def _ensure_regenerate_allowed(field_values: list[ArchiveFieldValue]) -> None:
-    """确认七字段仍是未人工编辑的 AI 草稿，才允许覆盖重生成。"""
+    """确认七字段仍是未人工编辑的 AI 草稿，才允许覆盖重生成。
+
+    Args:
+        field_values: 当前文档的全部档案字段值。
+    """
     if len(field_values) != len(tuple(ArchiveFieldName)) or any(
         value.review_status != FieldReviewStatus.PENDING_CHECK
         or value.source == FieldSource.MANUAL
@@ -341,7 +400,17 @@ def _persist_suggestion_draft(
     session: Session,
     audit_log: ArchiveAuditLog | None = None,
 ) -> ArchiveDraftRead:
-    """在当前事务中替换 AI 字段、证据、版本和可选审计记录。"""
+    """在当前事务中替换 AI 字段、证据、版本和可选审计记录。
+
+    Args:
+        document_id: 当前档案文档身份。
+        actor_id: 执行建议写入的用户身份。
+        archive_document: 当前文档的档案生命周期记录。
+        existing_values: 数据库中原有的字段值。
+        suggestions: 模型生成并完成校验的字段建议。
+        session: 当前数据库会话。
+        audit_log: 可选的脱敏审计记录。
+    """
     now = utc_now()
     suggested_by_name = {suggestion.field_name: suggestion for suggestion in suggestions}
     if existing_values:
@@ -415,7 +484,14 @@ def _generate_suggestions(
     expected_status: ArchiveDocumentStatus,
     session: Session,
 ) -> ArchiveDraftRead:
-    """执行一次首次建议或失败重试，并在成功时替换 AI 草稿。"""
+    """执行一次首次建议或失败重试，并在成功时替换 AI 草稿。
+
+    Args:
+        document_id: 当前档案文档身份。
+        actor_id: 执行建议操作的用户身份。
+        expected_status: 允许开始本次建议的文档状态。
+        session: 当前数据库会话。
+    """
     archive_document = session.exec(
         select(ArchiveDocument)
         .where(ArchiveDocument.document_id == document_id)
@@ -500,7 +576,13 @@ def create_suggestions(
     actor_id: UUID,
     session: Session,
 ) -> ArchiveDraftRead:
-    """从当前解析快照生成首次 AI 草稿。"""
+    """从当前解析快照生成首次 AI 草稿。
+
+    Args:
+        document_id: 当前档案文档身份。
+        actor_id: 执行建议操作的用户身份。
+        session: 当前数据库会话。
+    """
     return _generate_suggestions(
         document_id=document_id,
         actor_id=actor_id,
@@ -515,7 +597,13 @@ def retry_suggestions(
     actor_id: UUID,
     session: Session,
 ) -> ArchiveDraftRead:
-    """仅从 ``SUGGESTION_FAILED`` 状态重试 AI 建议。"""
+    """仅从 ``SUGGESTION_FAILED`` 状态重试 AI 建议。
+
+    Args:
+        document_id: 当前档案文档身份。
+        actor_id: 执行重试操作的用户身份。
+        session: 当前数据库会话。
+    """
     return _generate_suggestions(
         document_id=document_id,
         actor_id=actor_id,
@@ -531,7 +619,14 @@ def regenerate_suggestions(
     expected_version: int,
     session: Session,
 ) -> ArchiveDraftRead:
-    """安全重新生成未人工编辑的 AI 草稿，并用版本条件原子替换。"""
+    """安全重新生成未人工编辑的 AI 草稿，并用版本条件原子替换。
+
+    Args:
+        document_id: 当前档案文档身份。
+        actor_id: 执行重新生成的用户身份。
+        expected_version: 客户端读取草稿时看到的文档版本。
+        session: 当前数据库会话。
+    """
     document = _document_for_response(document_id, session)
     archive_document = session.get(ArchiveDocument, document_id)
     if archive_document is None:
@@ -599,7 +694,12 @@ def regenerate_suggestions(
 
 
 def _document_for_response(document_id: UUID, session: Session) -> Document:
-    """读取建议响应所需的原文件记录。"""
+    """读取建议响应所需的原文件记录。
+
+    Args:
+        document_id: 当前档案文档身份。
+        session: 当前数据库会话。
+    """
     document = session.get(Document, document_id)
     if document is None:
         raise AppError(500, "DOCUMENT_NOT_FOUND", "原文件记录不存在。")

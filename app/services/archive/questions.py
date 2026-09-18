@@ -47,6 +47,12 @@ class ArchiveAnswerJudgmentError(Exception):
     """表示模型调用或严格判定失败，不携带任何 HTTP 错误语义。"""
 
     def __init__(self, message: str, *, retryable: bool = False) -> None:
+        """初始化不携带 HTTP 语义的档案回答判定异常。
+
+        Args:
+            message: 面向内部日志或调用方的失败说明。
+            retryable: 是否允许应用层按连接或超时规则重试。
+        """
         super().__init__(message)
         self.retryable = retryable
 
@@ -118,7 +124,11 @@ def _build_archive_prompt(
 def _reject_duplicate_json_keys(
     pairs: list[tuple[str, object]],
 ) -> dict[str, object]:
-    """将 JSON 对象键值对转换为字典并拒绝重复字段。"""
+    """将 JSON 对象键值对转换为字典并拒绝重复字段。
+
+    Args:
+        pairs: JSON 解码器产生的键值对序列。
+    """
     payload: dict[str, object] = {}
     for key, value in pairs:
         if key in payload:
