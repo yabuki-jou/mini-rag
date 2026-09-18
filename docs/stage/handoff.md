@@ -2,8 +2,8 @@
 
 ## 1. 当前分支与产品范围
 
-- 后端仓库：`mini-rag-handwrite`，当前分支 `codex/archive-only-scope`。
-- 相邻 Vue 仓库：`mini-rag-milvus-vue`，当前分支 `codex/archive-only-scope`。
+- 后端仓库：`mini-rag-handwrite`，`codex/archive-only-scope` 已合并到 `main`。
+- 相邻 Vue 仓库：`mini-rag-milvus-vue`，`codex/archive-only-scope` 已合并到 `main`。
 - 当前正式产品主线：智慧档案 V1、FR-039 档案问答、FR-042 项目档案助手。
 - 旧通用知识库、普通 Chat 和制度 Agent 的公开 API 与运行代码已下线；旧路径不在 OpenAPI 中并返回默认 `404`。
 - PostgreSQL 历史表/数据、SQLite Checkpoint、Chroma Collection、原文件、Alembic 历史与 `AgentType.POLICY` 保留，不执行破坏性清理。
@@ -18,6 +18,7 @@
 - P03：Vue 删除旧知识库、普通文档、检索、Chat API 方法、旧 localStorage 会话分区和未使用类型；智慧档案页面与 FR-042 交互未改变。
 - P04：当前 AGENTS、README、学习计划、设计与 codebase 文档已收敛到智慧档案单主线；制度 Agent 专属资料迁入 `docs/archive/legacy-policy-agent/`；新增当前发布说明。
 - 主审修复：文档变更造成固定评测来源行号漂移，已只更新定位行号，不改问题、答案、摘录或评分门槛。
+- 合并收口：前后端功能分支均在同步最新远端 `main` 后无冲突合并；合并文件树与已验收功能分支一致。
 
 ## 3. 验证证据
 
