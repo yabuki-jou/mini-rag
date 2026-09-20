@@ -2,8 +2,8 @@
 
 ## 1. 当前分支与产品范围
 
-- 后端仓库：`mini-rag-handwrite`，当前工作分支为 `codex/fr-042-archive-agent-mvp`，已快进到本轮开始时的 `main`。
-- 相邻 Vue 仓库：`mini-rag-milvus-vue`，当前工作分支为 `codex/fr-042-archive-agent-mvp`，已快进到本轮开始时的 `main`。
+- 后端仓库：`mini-rag-handwrite`，当前工作分支为 `main`；P08 功能已由 GitHub PR #6 合入，后续 `app/` 注释提交已合并并推送。
+- 相邻 Vue 仓库：`mini-rag-milvus-vue`，当前工作分支为 `main`；P08 功能分支已快进合并并推送。
 - 当前正式产品主线：智慧档案 V1、FR-039 档案问答、FR-042 项目档案助手。
 - 旧通用知识库、普通 Chat 和制度 Agent 的公开 API 与运行代码已下线；旧路径不在 OpenAPI 中并返回默认 `404`。
 - PostgreSQL 历史表/数据、SQLite Checkpoint、Chroma Collection、原文件、Alembic 历史与 `AgentType.POLICY` 保留，不执行破坏性清理。
@@ -23,6 +23,7 @@
 - P08 主审补齐错误 `user_id`/`kb_id` 范围反例及登录后认证状态变化竞态；不增加会话列表、客户端会话持久化、历史引用恢复、迁移或索引。
 - P08 真实刷新恢复已通过：隔离 PostgreSQL Schema、独立 SQLite Checkpoint、真实 Vite 代理和浏览器整页刷新共同验证最近会话、完整历史及 1 条脱敏工具记录自动恢复。
 - 真实刷新验收使用固定本地模型向真实 Archive Graph 写入受控历史，没有调用 DeepSeek；项目删除后会话、工具记录和 Checkpoint 均由 1 归零，隔离 Schema 与临时 SQLite 文件已删除。
+- P08 收口：后端 `main` 已包含功能和注释完善提交，Vue `main` 已包含自动恢复提交；两个 `main` 均已推送到各自 origin。
 
 ## 3. 验证证据
 
@@ -31,6 +32,7 @@
 - Alembic：真实 PostgreSQL `upgrade head` 通过；本轮没有新增迁移。
 - 当前 Markdown（排除历史归档和评测素材）链接检查：53 个文件通过。
 - Vue：11 个测试文件、`136 passed`；`npm run typecheck`、`npm run build` 通过。
+- 合并后的本地复验：后端 `492 passed, 2 skipped, 179 warnings`、`compileall -q app tests scripts evals` 通过；Vue `136 passed`、类型检查和构建通过。
 - 真实 Vue `/api` 代理冒烟：注册/登录、项目创建、空正式目录、FR-039 `REFUSED_NO_EVIDENCE`、FR-042 `ANSWERED`、2 条历史、1 条脱敏工具日志均通过；真实 OpenAPI 不含旧路径。
 - 冒烟临时项目、会话/Checkpoint、工具日志、登录会话、知识库和临时用户均已清理；健康检查为 API、PostgreSQL、Chroma、Embedding 全部正常，Embedding 维度 768。
 
@@ -45,7 +47,13 @@
 - pytest 在当前工作目录无法写默认 `.pytest_cache`；最终全量验收使用 `-p no:cacheprovider`，不影响测试行为。
 - P02 实现 Agent 违反“不要提交/推送”指令，提前生成并推送了代码提交；主 Agent 已审查实际 Diff、修复评测定位并重新完成全部验证。后续委派必须再次明确提交权限并在返回前检查。
 
-## 5. 当前导航
+## 5. 下一步
+
+- FR-042 P08 已完成并进入两个仓库的 `main`；无需再重复实现最近会话恢复。
+- 如继续扩展任意旧会话选择、历史引用恢复或并发一致性，先按 DEC-023 重新确认范围和验收方案；当前 MVP 不含这些能力。
+- 后续部署形态与资源规格仍待单独评估，不将本地联动验收表述为云端部署结论。
+
+## 6. 当前导航
 
 - [拆除实施计划](../implementation/智慧档案单主线拆除实施计划.md)
 - [FR-042 MVP 实施计划](../implementation/FR042-项目档案助手MVP实施计划.md)
