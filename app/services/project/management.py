@@ -112,7 +112,14 @@ def list_projects(
     page_size: int,
     session: Session,
 ) -> ProjectPageRead:
-    """分页列出当前用户拥有的项目，不暴露他人项目。"""
+    """分页列出当前用户拥有的项目，不暴露他人项目。
+
+    Args:
+        current_user: 当前已认证用户。
+        page: 从 1 开始的页码。
+        page_size: 单页项目数量。
+        session: 当前数据库会话。
+    """
     total = session.exec(
         select(func.count()).select_from(Project).where(Project.owner_id == current_user.id)
     ).one()
@@ -130,6 +137,10 @@ def list_projects(
 def read_project(*, project_id: UUID, session: Session) -> Project:
     """读取已由路由所有权依赖验证过的项目。
 
+    Args:
+        project_id: 已通过所有权校验的项目身份。
+        session: 当前数据库会话。
+
     并发删除可能发生在依赖校验之后，因此仍须处理项目不存在的情况。
     """
     project = session.get(Project, project_id)
@@ -144,7 +155,13 @@ def update_project(
     payload: ProjectUpdate,
     session: Session,
 ) -> Project:
-    """使用乐观锁更新项目名称或说明。"""
+    """使用乐观锁更新项目名称或说明。
+
+    Args:
+        project_id: 已通过所有权校验的项目身份。
+        payload: 包含预期版本和待更新项目字段的请求。
+        session: 当前数据库会话。
+    """
     project = read_project(project_id=project_id, session=session)
     _ensure_expected_version(
         actual_version=project.version,
@@ -188,6 +205,11 @@ def delete_empty_project(
     checkpoint_path: Path | None = None,
 ) -> None:
     """删除没有文档的项目及项目级数据，但保留内部知识库记录。
+
+    Args:
+        project_id: 待删除且必须没有文档的项目身份。
+        session: 当前数据库会话。
+        checkpoint_path: 受保护 Agent Checkpoint SQLite 文件路径。
 
     绑定知识库可能包含旧系统文档；项目删除不能通过清理知识库破坏既有 RAG/Agent 数据。
     """
@@ -275,7 +297,11 @@ def delete_empty_project(
 
 
 def _build_demo_checklist_items(*, project_id: UUID) -> list[ChecklistItem]:
-    """为新项目复制内置虚构清单，避免多个项目共用可变模板记录。"""
+    """为新项目复制内置虚构清单，避免多个项目共用可变模板记录。
+
+    Args:
+        project_id: 新项目身份。
+    """
     return [
         ChecklistItem(
             project_id=project_id,
@@ -290,14 +316,24 @@ def _build_demo_checklist_items(*, project_id: UUID) -> list[ChecklistItem]:
 
 
 def _read_project_checklist_items(*, session: Session, project_id: UUID) -> Sequence[ChecklistItem]:
-    """读取一个项目的清单项，供删除时显式清理 SQLite 测试数据。"""
+    """读取一个项目的清单项，供删除时显式清理 SQLite 测试数据。
+
+    Args:
+        session: 当前数据库会话。
+        project_id: 项目身份。
+    """
     return session.exec(
         select(ChecklistItem).where(ChecklistItem.project_id == project_id)
     ).all()
 
 
 def _read_project_audit_logs(*, session: Session, project_id: UUID) -> Sequence[ArchiveAuditLog]:
-    """读取项目审计，供删除时显式清理 SQLite 测试数据。"""
+    """读取项目审计，供删除时显式清理 SQLite 测试数据。
+
+    Args:
+        session: 当前数据库会话。
+        project_id: 项目身份。
+    """
     return session.exec(
         select(ArchiveAuditLog).where(ArchiveAuditLog.project_id == project_id)
     ).all()
@@ -308,7 +344,12 @@ def _read_agent_tool_logs(
     session: Session,
     agent_session_id: UUID,
 ) -> Sequence[AgentToolCallLog]:
-    """读取单个档案会话日志，供项目删除时显式清理。"""
+    """读取单个档案会话日志，供项目删除时显式清理。
+
+    Args:
+        session: 当前数据库会话。
+        agent_session_id: 档案助手会话身份。
+    """
     return session.exec(
         select(AgentToolCallLog).where(
             AgentToolCallLog.agent_session_id == agent_session_id
@@ -323,7 +364,14 @@ def _ensure_project_name_available(
     name: str,
     excluded_project_id: UUID | None = None,
 ) -> None:
-    """在应用层提前发现同用户重名，并为数据库唯一约束保留兜底。"""
+    """在应用层提前发现同用户重名，并为数据库唯一约束保留兜底。
+
+    Args:
+        session: 当前数据库会话。
+        owner_id: 项目所有者身份。
+        name: 待检查的项目名称。
+        excluded_project_id: 更新时需要排除的当前项目身份。
+    """
     statement = select(Project.id).where(
         Project.owner_id == owner_id,
         Project.name == name,
@@ -335,12 +383,21 @@ def _ensure_project_name_available(
 
 
 def _ensure_expected_version(*, actual_version: int, expected_version: int) -> None:
-    """拒绝陈旧写入，防止较早页面覆盖已保存的项目修改。"""
+    """拒绝陈旧写入，防止较早页面覆盖已保存的项目修改。
+
+    Args:
+        actual_version: 数据库中的当前项目版本。
+        expected_version: 客户端提交时读取的项目版本。
+    """
     if actual_version != expected_version:
         raise AppError(409, "VERSION_CONFLICT", "项目已被其他操作修改，请刷新后重试。")
 
 
 def _is_project_name_conflict(exc: IntegrityError) -> bool:
-    """识别 PostgreSQL/SQLite 对项目名称唯一约束的不同错误文本。"""
+    """识别 PostgreSQL/SQLite 对项目名称唯一约束的不同错误文本。
+
+    Args:
+        exc: 数据库唯一约束异常。
+    """
     detail = str(exc.orig).lower()
     return "uq_projects_owner_name" in detail or "projects.owner_id, projects.name" in detail

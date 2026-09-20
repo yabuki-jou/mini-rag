@@ -51,7 +51,14 @@ _EMBEDDING_FIELD_LABELS = {
 
 @dataclass(frozen=True, slots=True)
 class ArchiveIndexResult:
-    """表示一次成功或幂等复用的归档索引结果。"""
+    """表示一次成功或幂等复用的归档索引结果。
+
+    Attributes:
+        operation_id: 对应的 INDEX 操作身份。
+        snapshot_hash: 被索引解析快照的哈希。
+        chunk_count: 生成并写入的 Final Chunk 数量。
+        contextual_chunk_count: 带已确认字段上下文的 Chunk 数量。
+    """
 
     operation_id: UUID
     snapshot_hash: str
@@ -60,7 +67,11 @@ class ArchiveIndexResult:
 
 
 def _embedding_field_value(field: ArchiveFieldValue) -> str | None:
-    """将已确认字段转换为仅用于向量表示的简短上下文值。"""
+    """将已确认字段转换为仅用于向量表示的简短上下文值。
+
+    Args:
+        field: 已确认的档案字段值。
+    """
     if field.field_name == ArchiveFieldName.DOCUMENT_DATE:
         return field.date_value.isoformat() if field.date_value is not None else None
     if field.field_name == ArchiveFieldName.KEYWORDS:
@@ -74,7 +85,13 @@ def build_embedding_context(
     fields: list[ArchiveFieldValue],
     mode: str,
 ) -> str:
-    """按模式组合已确认元数据，且不改变最终返回的原文摘录。"""
+    """按模式组合已确认元数据，且不改变最终返回的原文摘录。
+
+    Args:
+        document: 当前档案文档记录。
+        fields: 当前文档的档案字段值。
+        mode: 已配置的向量上下文模式。
+    """
     # 注释 1：这里是索引阶段的实验边界；返回的引用仍指向原始快照 Chunk，
     # 绝不能指向仅为改善检索表示而追加的字段值。
     if mode == "none":
@@ -106,7 +123,12 @@ def _evidence_matches_chunk(
     evidence: FieldEvidence,
     chunk: ArchiveFinalChunk,
 ) -> bool:
-    """判断当前快照的一条字段证据能否安全归属到指定 Final Chunk。"""
+    """判断当前快照的一条字段证据能否安全归属到指定 Final Chunk。
+
+    Args:
+        evidence: 字段对应的快照证据记录。
+        chunk: 待匹配的 Final Chunk。
+    """
     evidence_location_type = getattr(
         evidence.location_type,
         "value",
@@ -133,7 +155,14 @@ def build_evidence_value_contexts(
     evidences: list[FieldEvidence],
     snapshot_id: UUID,
 ) -> dict[str, str]:
-    """仅把已确认且可定位的字段值分配给对应的 Final Chunk。"""
+    """仅把已确认且可定位的字段值分配给对应的 Final Chunk。
+
+    Args:
+        chunks: 当前解析快照生成的 Final Chunk 列表。
+        fields: 当前文档的已确认字段值。
+        evidences: 字段来源证据记录。
+        snapshot_id: 当前解析快照身份。
+    """
     fields_by_id = {field.id: field for field in fields}
     values_by_chunk: dict[str, dict[ArchiveFieldName, str]] = {}
     for evidence in evidences:
@@ -172,7 +201,14 @@ def _result(
     snapshot: ParsedSnapshot,
     contextual_chunk_count: int | None = None,
 ) -> ArchiveIndexResult:
-    """组合不包含原文正文的索引结果。"""
+    """组合不包含原文正文的索引结果。
+
+    Args:
+        operation: 当前 INDEX 操作记录。
+        archive_document: 文档对应的档案生命周期记录。
+        snapshot: 被索引的解析快照记录。
+        contextual_chunk_count: 带字段上下文的 Chunk 数量。
+    """
     return ArchiveIndexResult(
         operation_id=operation.id,
         snapshot_hash=snapshot.snapshot_hash,
@@ -188,7 +224,14 @@ def _mark_index_failed(
     error: AppError,
     session: Session,
 ) -> None:
-    """将外部失败安全落库，保留可重试的 INDEX 终态。"""
+    """将外部失败安全落库，保留可重试的 INDEX 终态。
+
+    Args:
+        operation_id: 失败的 INDEX 操作身份。
+        document_id: 失败操作对应的文档身份。
+        error: 外部依赖失败的原始异常。
+        session: 当前数据库会话。
+    """
     session.rollback()
     operation = session.get(ArchiveOperation, operation_id)
     archive_document = session.get(ArchiveDocument, document_id)
@@ -221,6 +264,10 @@ def index_confirmed_document(
 
     操作记录先提交为 ``RUNNING``，再执行快照构建、Embedding 和 Chroma upsert；
     外部失败会把同一操作标为 ``FAILED``，允许后续入口递增尝试次数重试。
+
+    Args:
+        document: 已通过项目范围校验且状态为 CONFIRMED 的档案文档。
+        session: 当前数据库会话。
     """
     archive_document = session.exec(
         select(ArchiveDocument)

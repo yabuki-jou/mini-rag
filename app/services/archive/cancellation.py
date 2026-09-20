@@ -32,7 +32,15 @@ def _record_cleanup_failure(
     error: AppError,
     session: Session,
 ) -> None:
-    """记录清理失败，但保留已提交的非正式状态。"""
+    """记录清理失败，但保留已提交的非正式状态。
+
+    Args:
+        document_id: 清理失败的档案文档身份。
+        error: 外部向量清理失败的原始异常。
+        session: 当前数据库会话。
+    """
+    # 确认取消已经提交后，Chroma 清理属于另一存储；失败时回滚当前会话中的脏状态，
+    # 再只写入可重试错误，避免把未完成清理误标成已完成。
     session.rollback()
     archive_document = session.get(ArchiveDocument, document_id)
     if archive_document is None:
@@ -54,7 +62,20 @@ def cancel_confirmation(
     payload: ArchiveConfirmationRequest,
     session: Session,
 ) -> ProcessDocumentRead:
-    """取消确认、退出正式范围并清理当前文档的 Final Chunk。"""
+    """取消确认、退出正式范围并清理当前文档的 Final Chunk。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        actor_id: 已认证执行取消确认的用户身份。
+        payload: 包含客户端预期文档版本的请求。
+        session: 当前数据库事务会话。
+
+    Returns:
+        已退出正式范围、并反映当前数据库状态的文档处理投影。
+
+    Raises:
+        AppError: 版本或状态不允许、数据库保存失败或向量清理失败。
+    """
     archive_document = session.exec(
         select(ArchiveDocument)
         .where(ArchiveDocument.document_id == document.id)
@@ -94,12 +115,16 @@ def cancel_confirmation(
         )
     )
     try:
+        # 先提交“非正式”状态，再删除 Chroma；这样清理期间 PostgreSQL 已成为可见性
+        # 闸门，向量即使暂时残留也不会继续进入正式目录或检索结果。
         session.commit()
     except Exception as exc:
         session.rollback()
         raise AppError(500, "CANCEL_CONFIRMATION_FAILED", "取消确认保存失败。") from exc
 
     try:
+        # Chroma 删除按完整 user/project/kb/document 范围执行；幂等删除使客户端在
+        # 记录清理失败后可以安全重试，而不会影响其他项目向量。
         delete_final_chunks(
             user_id=project.owner_id,
             project_id=project.id,

@@ -73,8 +73,10 @@ class ChecklistLink(SQLModel, table=True):
     __tablename__ = "checklist_links"
     __table_args__ = (
         UniqueConstraint("document_id", "checklist_item_id", name="uq_checklist_links_document_item"),
+        # 两种状态分别要求对应的确认或失效事实，避免只改状态而留下不完整的生命周期记录。
         CheckConstraint("status != 'CONFIRMED' OR (confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL)", name="ck_checklist_links_confirmed_requirements"),
         CheckConstraint("status != 'INVALIDATED' OR (invalidated_at IS NOT NULL AND invalidated_reason IS NOT NULL)", name="ck_checklist_links_invalidated_requirements"),
+        # 文档或清单项删除后，失去业务意义的关联也必须一并清理。
         ForeignKeyConstraint(["document_id"], ["archive_documents.document_id"], ondelete="CASCADE"),
         ForeignKeyConstraint(["checklist_item_id"], ["checklist_items.id"], ondelete="CASCADE"),
         Index("ix_checklist_links_item_status", "checklist_item_id", "status"),

@@ -22,7 +22,7 @@ def list_audit_logs(
 ) -> AuditLogPageRead:
     """分页返回当前项目的脱敏业务审计。
 
-    参数:
+    Args:
         project_id: 项目身份。
         page: 从一开始的页码。
         page_size: 单页数量。

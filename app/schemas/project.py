@@ -27,7 +27,11 @@ class ProjectCreate(BaseModel):
     @field_validator("name")
     @classmethod
     def normalize_name(cls, value: str) -> str:
-        """去除项目名称首尾空格，防止空白名称和伪重复名称。"""
+        """去除项目名称首尾空格，防止空白名称和伪重复名称。
+
+        Args:
+            value: 待规范化的项目名称。
+        """
         normalized_name = value.strip()
         if not normalized_name:
             raise ValueError("项目名称不能为空。")
@@ -52,7 +56,11 @@ class ProjectUpdate(BaseModel):
     @field_validator("name")
     @classmethod
     def normalize_optional_name(cls, value: str | None) -> str | None:
-        """规范化传入的新名称；未传入时保留 `None` 表示不修改。"""
+        """规范化传入的新名称；未传入时保留 `None` 表示不修改。
+
+        Args:
+            value: 待规范化的新项目名称；未提交时为 ``None``。
+        """
         if value is None:
             return None
         normalized_name = value.strip()
@@ -63,6 +71,8 @@ class ProjectUpdate(BaseModel):
     @model_validator(mode="after")
     def require_mutable_field(self) -> "ProjectUpdate":
         """拒绝只携带版本号的空更新，避免无意义地增加版本。"""
+        # 必须依据 model_fields_set 判断客户端是否提交 description，因为 None 是清空说明的
+        # 有效操作，不能用字段值本身区分“未提交”和“显式传 null”。
         if not ({"name", "description"} & self.model_fields_set):
             raise ValueError("至少提交项目名称或项目说明之一。")
         return self

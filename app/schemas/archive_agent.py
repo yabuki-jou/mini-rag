@@ -24,7 +24,14 @@ class ArchiveAgentSessionCreate(BaseModel):
 
 
 class ArchiveAgentSessionRead(BaseModel):
-    """返回项目档案助手会话的最小公开信息。"""
+    """返回项目档案助手会话的最小公开信息。
+
+    Attributes:
+        id: 项目档案助手会话的全局唯一标识。
+        project_id: 会话固定绑定的项目标识。
+        created_at: 会话创建时间。
+        updated_at: 会话最近一次成功更新时间。
+    """
 
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -35,7 +42,11 @@ class ArchiveAgentSessionRead(BaseModel):
 
 
 class ArchiveAgentMessageCreate(BaseModel):
-    """接收一条规范化后的项目档案助手用户消息。"""
+    """接收一条规范化后的项目档案助手用户消息。
+
+    Attributes:
+        message: 规范化后的用户消息正文。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -44,14 +55,27 @@ class ArchiveAgentMessageCreate(BaseModel):
     @field_validator("message", mode="before")
     @classmethod
     def normalize_message(cls, value: Any) -> Any:
-        """先统一换行和首尾 Unicode 空白，再执行字符串长度校验。"""
+        """先统一换行和首尾 Unicode 空白，再执行字符串长度校验。
+
+        Args:
+            value: 待规范化的用户消息原始值。
+        """
         if not isinstance(value, str):
+            # 非字符串保持原值，交给 Pydantic 的字段类型校验产生客户端错误。
             return value
         return value.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 class ArchiveAgentCitationRead(BaseModel):
-    """返回不含持久化标识和检索分数的当前回答引用。"""
+    """返回不含持久化标识和检索分数的当前回答引用。
+
+    Attributes:
+        filename: 引用所属的原文件名。
+        location_type: 引用位置的类型。
+        location_start: 引用位置的起始值，从 1 开始。
+        location_end: 引用位置的结束值，从 1 开始。
+        excerpt: 可供用户核对的原文摘录。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -70,7 +94,13 @@ class ArchiveAgentCitationRead(BaseModel):
 
 
 class ArchiveAgentMessageRead(BaseModel):
-    """返回一个不含工具消息和内部标识的可见历史消息。"""
+    """返回一个不含工具消息和内部标识的可见历史消息。
+
+    Attributes:
+        role: 消息发送角色。
+        content: 对用户可见的消息正文。
+        citations: 当前助手消息关联的脱敏引用列表。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -80,7 +110,15 @@ class ArchiveAgentMessageRead(BaseModel):
 
 
 class ArchiveAgentResponse(BaseModel):
-    """返回项目档案助手当前轮次的可信最终投影。"""
+    """返回项目档案助手当前轮次的可信最终投影。
+
+    Attributes:
+        session_id: 当前项目档案助手会话标识。
+        answer_status: 当前回答的公开状态。
+        answer: 面向用户的最终回答正文。
+        citations: 当前回答关联的脱敏引用列表。
+        request_id: 当前请求的追踪标识。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,7 +130,20 @@ class ArchiveAgentResponse(BaseModel):
 
 
 class AgentToolCallLogRead(BaseModel):
-    """返回给会话所有者的脱敏档案工具调用记录。"""
+    """返回给会话所有者的脱敏档案工具调用记录。
+
+    Attributes:
+        id: 工具调用日志的全局唯一标识。
+        tool_call_id: 模型生成的工具调用标识。
+        tool_name: 被调用的正式工具名称。
+        status: 工具调用的完成或失败状态。
+        arguments_summary: 不包含身份字段的参数摘要。
+        result_summary: 不包含内部原文和异常细节的结果摘要。
+        duration_ms: 工具调用耗时；未知时为空。
+        error_code: 可安全展示的错误代码；成功时为空。
+        created_at: 日志创建时间。
+        updated_at: 日志最近更新时间。
+    """
 
     id: UUID
     tool_call_id: str

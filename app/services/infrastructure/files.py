@@ -61,7 +61,11 @@ def validate_filename(filename: str | None) -> str:
 
 
 def _validate_project_upload_filename(filename: str | None) -> str:
-    """校验项目上传文件名，并映射为智慧档案 API 的稳定格式错误。"""
+    """校验项目上传文件名，并映射为智慧档案 API 的稳定格式错误。
+
+    Args:
+        filename: UploadFile 提供的客户端文件名。
+    """
     try:
         return validate_filename(filename)
     except AppError as exc:
@@ -210,7 +214,13 @@ def _remove_empty_document_storage_directories(
     relative_path: Path,
     document_directory: Path,
 ) -> None:
-    """在文件删除后依次清理空文档目录和空知识库目录。"""
+    """在文件删除后依次清理空文档目录和空知识库目录。
+
+    Args:
+        storage_root: 配置的文件存储根目录。
+        relative_path: 目标文件相对于存储根目录的路径。
+        document_directory: 目标文件所在的文档目录。
+    """
     try:
         document_directory.rmdir()
     except OSError:

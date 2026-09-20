@@ -45,7 +45,12 @@ ARCHIVE_FIELD_UPDATED = "ARCHIVE_FIELD_UPDATED"
 
 
 def _get_archive_document(document_id: UUID, session: Session) -> ArchiveDocument:
-    """读取归档扩展记录，统一处理内部数据不完整。"""
+    """读取归档扩展记录，统一处理内部数据不完整。
+
+    Args:
+        document_id: 要读取档案扩展记录的文档身份。
+        session: 当前数据库会话。
+    """
     archive_document = session.get(ArchiveDocument, document_id)
     if archive_document is None:
         raise AppError(500, "ARCHIVE_DOCUMENT_NOT_FOUND", "归档文档记录不存在。")
@@ -58,7 +63,13 @@ def create_manual_draft(
     actor_id: UUID,
     session: Session,
 ) -> ArchiveDraftRead:
-    """从已解析文档创建七字段空白人工草稿。"""
+    """从已解析文档创建七字段空白人工草稿。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        actor_id: 已认证执行草稿创建的用户身份。
+        session: 当前数据库会话。
+    """
     # PostgreSQL 行锁使“状态检查 + 七字段创建 + 版本递增”成为一个原子操作。
     archive_document = session.exec(
         select(ArchiveDocument)
@@ -122,7 +133,12 @@ def create_manual_draft(
 
 
 def read_document_draft(*, document: Document, session: Session) -> ArchiveDraftRead:
-    """读取已解析文档的字段草稿和当前快照。"""
+    """读取已解析文档的字段草稿和当前快照。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        session: 当前数据库会话。
+    """
     archive_document = _get_archive_document(document.id, session)
     if archive_document.status in {
         ArchiveDocumentStatus.UPLOADED,
@@ -141,7 +157,12 @@ def read_document_draft(*, document: Document, session: Session) -> ArchiveDraft
 
 
 def _canonical_value(payload: ArchiveFieldUpdate, field_name: ArchiveFieldName):
-    """校验字段只使用其对应的值列，并返回规范化值。"""
+    """校验字段只使用其对应的值列，并返回规范化值。
+
+    Args:
+        payload: 客户端提交的字段更新值。
+        field_name: 当前正在更新的档案字段名称。
+    """
     if field_name == ArchiveFieldName.DOCUMENT_DATE:
         if payload.text_value is not None or payload.json_value is not None:
             raise AppError(422, "FIELD_VALUE_SHAPE_INVALID", "资料日期只能使用 date_value。")
@@ -171,7 +192,13 @@ def _validate_review_value(
     review_status: FieldReviewStatus,
     value,
 ) -> None:
-    """执行数据库约束之外的人工检查业务规则。"""
+    """执行数据库约束之外的人工检查业务规则。
+
+    Args:
+        field_name: 当前正在检查的档案字段名称。
+        review_status: 客户端提交的人工检查状态。
+        value: 规范化后的字段值。
+    """
     nonempty = value is not None and (not isinstance(value, str) or bool(value.strip()))
     if review_status == FieldReviewStatus.EMPTY_ACCEPTED:
         if nonempty and not (isinstance(value, list) and len(value) == 0):
@@ -191,7 +218,15 @@ def update_field(
     payload: ArchiveFieldUpdate,
     session: Session,
 ) -> ArchiveDraftRead:
-    """保存单字段人工值、检查状态和快照证据，并执行乐观锁。"""
+    """保存单字段人工值、检查状态和快照证据，并执行乐观锁。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        actor_id: 已认证执行字段更新的用户身份。
+        field_name: 要更新的档案字段名称。
+        payload: 包含字段值、检查状态和证据定位的请求。
+        session: 当前数据库会话。
+    """
     archive_document = _get_archive_document(document.id, session)
     if not list_archive_field_values(document.id, session) and archive_document.status in {
         ArchiveDocumentStatus.PARSED,

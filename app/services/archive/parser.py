@@ -94,6 +94,7 @@ def parse_archive_document(file_path: Path) -> ParsedArchiveDocument:
 
     extension = file_path.suffix.lower()
     fragments = _parse_fragments(file_path, extension)
+    # 有效字符数在归一化片段上计算，确保“空壳文档”判断与后续快照内容使用同一口径。
     effective_text_characters = sum(len(fragment.content) for fragment in fragments)
     _validate_effective_text(
         extension,
@@ -101,6 +102,8 @@ def parse_archive_document(file_path: Path) -> ParsedArchiveDocument:
         effective_text_characters,
     )
 
+    # 快照只由解析片段派生；文件路径和文件系统时间不参与哈希，重试或换机器后
+    # 仍能用同一内容得到同一身份，并让下游确认/索引明确绑定这次解析结果。
     return ParsedArchiveDocument(
         fragments=tuple(fragments),
         effective_text_characters=effective_text_characters,
@@ -112,7 +115,12 @@ def _parse_fragments(
     file_path: Path,
     extension: str,
 ) -> list[ParsedFragment]:
-    """按扩展名选择定位适配器，避免调用方自行猜测定位语义。"""
+    """按扩展名选择定位适配器，避免调用方自行猜测定位语义。
+
+    Args:
+        file_path: 已保存的原文件路径。
+        extension: 已规范化的文件扩展名。
+    """
     if extension == ".pdf":
         return _parse_pdf_fragments(file_path)
     if extension == ".docx":
@@ -128,7 +136,11 @@ def _parse_fragments(
 
 
 def _parse_pdf_fragments(file_path: Path) -> list[ParsedFragment]:
-    """按 PDF 原始页序号提取非空文本页。"""
+    """按 PDF 原始页序号提取非空文本页。
+
+    Args:
+        file_path: 待读取的 PDF 文件路径。
+    """
     try:
         reader = PdfReader(file_path)
         fragments = []
@@ -155,7 +167,11 @@ def _parse_pdf_fragments(file_path: Path) -> list[ParsedFragment]:
 
 
 def _parse_docx_fragments(file_path: Path) -> list[ParsedFragment]:
-    """按非空逻辑块顺序提取 DOCX 段落、列表项和表格行。"""
+    """按非空逻辑块顺序提取 DOCX 段落、列表项和表格行。
+
+    Args:
+        file_path: 待读取的 DOCX 文件路径。
+    """
     try:
         document = DocxDocument(file_path)
         fragments: list[ParsedFragment] = []
@@ -167,6 +183,8 @@ def _parse_docx_fragments(file_path: Path) -> list[ParsedFragment]:
                 )
             elif child.tag == qn("w:tbl"):
                 table = Table(child, document)
+                # 直接遍历正文 XML 保留段落与表格的混合顺序；若分别读取，会使
+                # 证据段落号与用户看到的文档顺序失配。
                 for row in table.rows:
                     row_text = " | ".join(_distinct_table_cell_texts(row))
                     _append_docx_text_block(fragments, row_text)
@@ -182,7 +200,11 @@ def _parse_docx_fragments(file_path: Path) -> list[ParsedFragment]:
 
 
 def _distinct_table_cell_texts(row: object) -> list[str]:
-    """按从左到右顺序读取表格行，并跳过横向合并单元格的重复引用。"""
+    """按从左到右顺序读取表格行，并跳过横向合并单元格的重复引用。
+
+    Args:
+        row: python-docx 提供的表格行对象。
+    """
     cell_texts: list[str] = []
     seen_cell_elements: set[int] = set()
     for cell in row.cells:
@@ -198,7 +220,12 @@ def _append_docx_text_block(
     fragments: list[ParsedFragment],
     raw_text: str,
 ) -> None:
-    """把非空 DOCX 逻辑块追加为从 1 开始的稳定段落序号。"""
+    """把非空 DOCX 逻辑块追加为从 1 开始的稳定段落序号。
+
+    Args:
+        fragments: 当前正在构建的解析片段列表。
+        raw_text: 待归一化并追加的 DOCX 逻辑块文本。
+    """
     content = _normalize_text(raw_text)
     if not content:
         return
@@ -216,7 +243,11 @@ def _append_docx_text_block(
 
 
 def _parse_text_fragments(file_path: Path) -> list[ParsedFragment]:
-    """将 TXT/MD 的每个非空原始行保留为带行号的可引用片段。"""
+    """将 TXT/MD 的每个非空原始行保留为带行号的可引用片段。
+
+    Args:
+        file_path: 待读取的 TXT 或 Markdown 文件路径。
+    """
     try:
         raw_text = file_path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -232,6 +263,8 @@ def _parse_text_fragments(file_path: Path) -> list[ParsedFragment]:
             message="文档文本解析失败。",
         ) from exc
 
+    # 先统一换行，再按原始行号生成片段；空行被过滤，但后续内容仍保留原文件行号，
+    # 这样引用定位不会因去掉空行而发生漂移。
     normalized_newlines = raw_text.replace("\r\n", "\n").replace("\r", "\n")
     fragments = []
     for line_number, raw_line in enumerate(normalized_newlines.split("\n"), start=1):
@@ -249,7 +282,13 @@ def _parse_text_fragments(file_path: Path) -> list[ParsedFragment]:
 
 
 def _normalize_text(raw_text: str) -> str:
-    """按冻结的空白规则把任意空白序列压缩为一个半角空格。"""
+    """按冻结的空白规则把任意空白序列压缩为一个半角空格。
+
+    Args:
+        raw_text: 待归一化的原始文本。
+    """
+    # 归一化规则属于快照契约的一部分；先统一换行再压缩空白，避免同一正文因平台
+    # 换行差异生成不同 Chunk 或证据摘录。
     normalized_newlines = raw_text.replace("\r\n", "\n").replace("\r", "\n")
     return re.sub(r"\s+", " ", normalized_newlines).strip()
 
@@ -259,7 +298,13 @@ def _validate_effective_text(
     fragment_count: int,
     effective_text_characters: int,
 ) -> None:
-    """用统一阈值拒绝空壳、扫描件和过大的解析快照。"""
+    """用统一阈值拒绝空壳、扫描件和过大的解析快照。
+
+    Args:
+        extension: 当前文件扩展名。
+        fragment_count: 解析得到的非空片段数量。
+        effective_text_characters: 归一化后的有效字符数。
+    """
     if effective_text_characters < MIN_EFFECTIVE_TEXT_CHARACTERS:
         if extension == ".pdf" and fragment_count == 0:
             raise AppError(
@@ -281,7 +326,12 @@ def _validate_effective_text(
 
 
 def _build_snapshot_hash(fragments: list[ParsedFragment]) -> str:
-    """对固定顺序、固定字段的归一化片段计算 SHA-256 快照哈希。"""
+    """对固定顺序、固定字段的归一化片段计算 SHA-256 快照哈希。
+
+    Args:
+        fragments: 按原文顺序排列的归一化解析片段。
+    """
+    # 明确字段顺序和 JSON 分隔符，避免 Python 字典实现细节或序列化空格改变快照身份。
     canonical_fragments = [
         {
             "anchor_text": fragment.anchor_text,

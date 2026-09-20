@@ -22,6 +22,9 @@ class Settings(BaseSettings):
         log_file: 应用日志基准路径；其父目录和后缀用于生成日期路径。
         log_max_bytes: 单个日志文件允许的最大字节数。
         log_backup_count: 每个日期日志按大小轮转后保留的备份文件数量。
+        postgres_db: PostgreSQL 数据库名称。
+        postgres_user: PostgreSQL 登录用户名。
+        postgres_password: PostgreSQL 登录密码；仅用于构造本地默认连接地址。
         database_url: SQLModel 数据库连接地址。
         agent_checkpoint_file: LangGraph 执行状态使用的独立 SQLite 文件。
         file_storage_dir: 上传原文件的本地存储目录。
@@ -112,7 +115,17 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def validate_postgres_database_url(cls, value: str) -> str:
-        """拒绝旧 SQLite 配置，确保业务数据库只能使用 Psycopg。"""
+        """拒绝旧 SQLite 配置，确保业务数据库只能使用 Psycopg。
+
+        Args:
+            value: 从环境变量或 ``.env`` 读取的数据库连接 URL。
+
+        Returns:
+            去除首尾空白后的 PostgreSQL Psycopg URL。
+
+        Raises:
+            ValueError: URL 不是 ``postgresql+psycopg://`` 方案。
+        """
         normalized = value.strip()
         if not normalized.startswith("postgresql+psycopg://"):
             raise ValueError(

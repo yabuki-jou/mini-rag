@@ -46,12 +46,20 @@ _RerankedArchiveCandidate = tuple[float, float, ArchiveRetrievalItemRead]
 
 
 def _build_archive_query_expression(query: str) -> str:
-    """构造 C4-A 基线查询表达，供 BGE 召回侧保持稳定。"""
+    """构造 C4-A 基线查询表达，供 BGE 召回侧保持稳定。
+
+    Args:
+        query: 用户的档案检索问题。
+    """
     return f"{_ARCHIVE_QUERY_EXPRESSION_PREFIX}{query.strip()}"
 
 
 def _build_archive_reranker_query_expression(query: str) -> str:
-    """按受控实验模式构造 Reranker 查询，不改变 BGE 的召回表达。"""
+    """按受控实验模式构造 Reranker 查询，不改变 BGE 的召回表达。
+
+    Args:
+        query: 用户的档案检索问题。
+    """
     normalized_query = query.strip()
     if settings.archive_reranker_query_mode == "c4_b":
         return f"{_C4B_RERANKER_QUERY_EXPRESSION_PREFIX}{normalized_query}"
@@ -59,7 +67,12 @@ def _build_archive_reranker_query_expression(query: str) -> str:
 
 
 def _query_values(result: dict[str, Any], name: str) -> list[Any]:
-    """读取 Chroma 单查询返回的第一组列式值。"""
+    """读取 Chroma 单查询返回的第一组列式值。
+
+    Args:
+        result: Chroma 查询返回的列式结果。
+        name: 要读取的结果列名称。
+    """
     value = result.get(name)
     if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], list):
         raise AppError(500, "VECTOR_RESULT_INVALID", "Chroma 检索结果缺少必要字段。")
@@ -67,7 +80,14 @@ def _query_values(result: dict[str, Any], name: str) -> list[Any]:
 
 
 def _formal_document_ids(*, user_id: UUID, project_id: UUID, kb_id: UUID, session: Session) -> list[UUID]:
-    """从 PostgreSQL 取得当前用户项目的正式且未阻断文档集合。"""
+    """从 PostgreSQL 取得当前用户项目的正式且未阻断文档集合。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        session: 当前数据库会话。
+    """
     # 注释 1：PostgreSQL 仍是确认和删除可见性的事实来源；只有通过该业务状态
     # 闸门后才查询 Chroma。
     blocked_ids = list_visibility_blocked_document_ids(project_id, session)
@@ -94,7 +114,15 @@ def _build_validated_candidates(
     distances: list[Any],
     formal_ids: list[UUID],
 ) -> list[_ArchiveCandidate]:
-    """将通过正式范围复核的 Chroma 列式响应投影为可重排候选。"""
+    """将通过正式范围复核的 Chroma 列式响应投影为可重排候选。
+
+    Args:
+        chunk_ids: Chroma 返回的 Chunk 身份列表。
+        documents: Chroma 返回的原文片段列表。
+        metadatas: Chroma 返回的范围和定位元数据列表。
+        distances: Chroma 返回的距离列表。
+        formal_ids: PostgreSQL 已确认的正式文档身份集合。
+    """
     formal_id_set = set(formal_ids)
     candidates: list[_ArchiveCandidate] = []
     # 注释 4：再次校验 Chroma 元数据，而非将向量库作为访问控制事实来源；
@@ -132,7 +160,12 @@ def _build_validated_candidates(
 
 
 def _rerank_candidates(*, query: str, candidates: list[_ArchiveCandidate]) -> list[_RerankedArchiveCandidate]:
-    """按本地重排分数筛选并生成可复现的候选顺序。"""
+    """按本地重排分数筛选并生成可复现的候选顺序。
+
+    Args:
+        query: 用于重排的检索问题。
+        candidates: 已通过范围校验的 Chroma 候选列表。
+    """
     scored_candidates = _score_and_order_candidates(query=query, candidates=candidates)
     rerank_threshold = settings.archive_reranker_score_threshold
     return [
@@ -145,7 +178,12 @@ def _rerank_candidates(*, query: str, candidates: list[_ArchiveCandidate]) -> li
 def _score_and_order_candidates(
     *, query: str, candidates: list[_ArchiveCandidate]
 ) -> list[_RerankedArchiveCandidate]:
-    """为所有已校验候选评分并排序，供公开检索和诊断共用。"""
+    """为所有已校验候选评分并排序，供公开检索和诊断共用。
+
+    Args:
+        query: 用于计算候选相关性的检索问题。
+        candidates: 已通过范围校验的候选列表。
+    """
     rerank_scores = score_archive_candidates(
         query=_build_archive_reranker_query_expression(query),
         contents=[item.excerpt for _, item in candidates],
@@ -167,7 +205,14 @@ def _score_and_order_candidates(
 def _scope_filter(
     *, user_id: UUID, project_id: UUID, kb_id: UUID, formal_ids: list[UUID]
 ) -> dict[str, Any]:
-    """构造只允许当前用户项目正式文档的 Chroma 过滤条件。"""
+    """构造只允许当前用户项目正式文档的 Chroma 过滤条件。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        formal_ids: 当前项目正式文档身份集合。
+    """
     return {
         "$and": [
             {"user_id": str(user_id)},
@@ -186,7 +231,15 @@ def _query_validated_candidates(
     query: str,
     formal_ids: list[UUID],
 ) -> tuple[int, list[_ArchiveCandidate]]:
-    """执行一次 Top-30 Chroma 查询并返回原始数与范围校验后的候选。"""
+    """执行一次 Top-30 Chroma 查询并返回原始数与范围校验后的候选。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        query: 用户的档案检索问题。
+        formal_ids: PostgreSQL 已确认的正式文档身份集合。
+    """
     scope_filter = _scope_filter(
         user_id=user_id,
         project_id=project_id,
@@ -232,7 +285,12 @@ def _query_validated_candidates(
 def _candidate_matches_expected_evidence(
     *, item: ArchiveRetrievalItemRead, expected_evidence: object
 ) -> bool:
-    """在服务端比较标准证据，只把布尔结果交给开发诊断客户端。"""
+    """在服务端比较标准证据，只把布尔结果交给开发诊断客户端。
+
+    Args:
+        item: 待比较的检索候选。
+        expected_evidence: 固定集中的标准证据标注。
+    """
     if not isinstance(expected_evidence, dict):
         return False
     relative_path = expected_evidence.get("relative_path")
@@ -283,7 +341,12 @@ def _diagnostic_candidate_key(*, chunk_id: str) -> str:
 def _diagnostic_candidate_kind(
     *, item: ArchiveRetrievalItemRead, expected_evidence: object | None
 ) -> str:
-    """把候选归为安全类别，不向诊断响应暴露文件或文档标识。"""
+    """把候选归为安全类别，不向诊断响应暴露文件或文档标识。
+
+    Args:
+        item: 待分类的检索候选。
+        expected_evidence: 当前题目的标准证据标注。
+    """
     if not isinstance(expected_evidence, dict):
         return "UNKNOWN"
     relative_path = expected_evidence.get("relative_path")
@@ -300,7 +363,16 @@ def retrieve_archive_diagnostics(
     expected_evidence: object | None,
     session: Session,
 ) -> ArchiveRetrievalDiagnosticResponse:
-    """返回开发环境固定集所需的完整 Top-30 双排序脱敏诊断。"""
+    """返回开发环境固定集所需的完整 Top-30 双排序脱敏诊断。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        query: 用户的档案检索问题。
+        expected_evidence: 固定集中的标准证据标注。
+        session: 当前数据库会话。
+    """
     if not query or not query.strip():
         raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
     formal_ids = _formal_document_ids(
@@ -382,7 +454,18 @@ def _retrieve_archive_items(
     apply_score_threshold: bool,
     observe_result: bool,
 ) -> ArchiveRetrievalResponse:
-    """复用正式范围和 Chroma 查询，按调用方策略生成有序证据。"""
+    """复用正式范围和 Chroma 查询，按调用方策略生成有序证据。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        query: 用户的档案检索问题。
+        top_k: 返回的最大候选数量。
+        session: 当前数据库会话。
+        apply_score_threshold: 是否应用公开检索分数阈值。
+        observe_result: 是否记录脱敏评测观测结果。
+    """
     if not query or not query.strip():
         raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
     if top_k < 1 or top_k > 10:
@@ -469,7 +552,16 @@ def retrieve_archive_chunks(
     top_k: int,
     session: Session,
 ) -> ArchiveRetrievalResponse:
-    """检索当前项目正式档案，并保留公开接口的可选分数阈值行为。"""
+    """检索当前项目正式档案，并保留公开接口的可选分数阈值行为。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        query: 用户的档案检索问题。
+        top_k: 返回的最大候选数量。
+        session: 当前数据库会话。
+    """
     return _retrieve_archive_items(
         user_id=user_id,
         project_id=project_id,

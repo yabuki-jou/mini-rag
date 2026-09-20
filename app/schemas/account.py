@@ -28,8 +28,14 @@ class AuthRegisterRequest(BaseModel):
     @field_validator("username", mode="before")
     @classmethod
     def normalize_username(cls, value: object) -> str:
-        """去除首尾空格并将用户名统一为小写，保证唯一索引语义稳定。"""
+        """去除首尾空格并将用户名统一为小写，保证唯一索引语义稳定。
+
+        Args:
+            value: 待规范化的用户名原始值。
+        """
         if not isinstance(value, str):
+            # 非字符串交回 Pydantic 做类型校验；这里不提前调用字符串方法，避免
+            # 把本应返回 422 的类型错误变成服务端异常。
             return value  # type: ignore[return-value]
         normalized = value.strip().lower()
         if not USERNAME_PATTERN.fullmatch(normalized):
@@ -39,14 +45,24 @@ class AuthRegisterRequest(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def normalize_display_name(cls, value: object) -> str:
-        """显示名称不允许只包含首尾空格。"""
+        """显示名称不允许只包含首尾空格。
+
+        Args:
+            value: 待规范化的显示名称原始值。
+        """
         if not isinstance(value, str):
+            # 保留原始类型，让字段定义负责报告客户端类型错误。
             return value  # type: ignore[return-value]
         return value.strip()
 
 
 class AuthLoginRequest(BaseModel):
-    """登录时客户端提交的账号密码。"""
+    """登录时客户端提交的账号密码。
+
+    Attributes:
+        username: 登录账号；校验前会去除首尾空格并统一为小写。
+        password: 本次登录使用的密码。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -56,14 +72,23 @@ class AuthLoginRequest(BaseModel):
     @field_validator("username", mode="before")
     @classmethod
     def normalize_username(cls, value: object) -> str:
-        """与注册使用相同的大小写规范，避免相同账号产生不同查询。"""
+        """与注册使用相同的大小写规范，避免相同账号产生不同查询。
+
+        Args:
+            value: 待规范化的登录账号原始值。
+        """
         if not isinstance(value, str):
+            # 规范化只处理字符串；其他类型必须由 Pydantic 统一拒绝。
             return value  # type: ignore[return-value]
         return value.strip().lower()
 
 
 class AuthRefreshRequest(BaseModel):
-    """刷新 Access Token 时提交的 Refresh Token。"""
+    """刷新 Access Token 时提交的 Refresh Token。
+
+    Attributes:
+        refresh_token: 用于换取新 Access Token 的 Refresh Token。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -71,7 +96,13 @@ class AuthRefreshRequest(BaseModel):
 
 
 class AuthAccessTokenRead(BaseModel):
-    """刷新成功时返回的短期 Access Token，不回显 Refresh Token。"""
+    """刷新成功时返回的短期 Access Token，不回显 Refresh Token。
+
+    Attributes:
+        access_token: 短期访问令牌。
+        token_type: 访问令牌类型，通常为 ``Bearer``。
+        access_expires_in: Access Token 的剩余有效秒数。
+    """
 
     access_token: str
     token_type: str
@@ -79,7 +110,12 @@ class AuthAccessTokenRead(BaseModel):
 
 
 class AuthTokenPairRead(AuthAccessTokenRead):
-    """首次登录成功时返回的 Access/Refresh Token 对。"""
+    """首次登录成功时返回的 Access/Refresh Token 对。
+
+    Attributes:
+        refresh_token: 用于刷新 Access Token 的长期令牌。
+        refresh_expires_in: Refresh Token 的剩余有效秒数。
+    """
 
     refresh_token: str
     refresh_expires_in: int

@@ -22,7 +22,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ArchiveFinalChunk:
-    """表示由当前解析快照规范化得到的、尚未向量化的 Final Chunk。"""
+    """表示由当前解析快照规范化得到的、尚未向量化的 Final Chunk。
+
+    Attributes:
+        chunk_id: 由文档、定位和正文内容计算的稳定 Chunk 身份。
+        content: 归一化后的原文片段。
+        location_type: 原文定位类型。
+        location_start: 定位范围起点。
+        location_end: 定位范围终点。
+        normalized_anchor: 可选的定位锚点文本。
+        snapshot_hash: 生成该 Chunk 的解析快照哈希。
+        parser_version: 生成该 Chunk 的解析器版本。
+    """
 
     chunk_id: str
     content: str
@@ -36,7 +47,11 @@ class ArchiveFinalChunk:
 
 @dataclass(frozen=True, slots=True)
 class ArchiveEmbeddedChunk(ArchiveFinalChunk):
-    """表示已经生成向量、可写入 Final Collection 的 Chunk。"""
+    """表示已经生成向量、可写入 Final Collection 的 Chunk。
+
+    Attributes:
+        embedding: 与当前配置维度一致的向量值。
+    """
 
     embedding: list[float]
 
@@ -47,7 +62,13 @@ def _invalid_snapshot() -> AppError:
 
 
 def _read_snapshot_payload(snapshot: ParsedSnapshot) -> dict:
-    """读取并检查快照 JSON 的顶层结构。"""
+    """读取并检查快照 JSON 的顶层结构。
+
+    Args:
+        snapshot: 待读取并校验的解析快照记录。
+    """
+    # 数据库记录和快照文件是两份存储事实；调用方核对文档归属后，这里继续核对
+    # 哈希、解析版本和片段容器，避免用被替换的 JSON 生成正式向量。
     try:
         payload = json.loads(
             Path(snapshot.snapshot_storage_path).read_text(encoding="utf-8")
@@ -70,7 +91,18 @@ def build_final_chunks(
     document_id: UUID,
     snapshot: ParsedSnapshot,
 ) -> tuple[ArchiveFinalChunk, ...]:
-    """从当前解析快照构建稳定、可追溯的 Final Chunk。"""
+    """从当前解析快照构建稳定、可追溯的 Final Chunk。
+
+    Args:
+        document_id: 该快照所属的文档身份。
+        snapshot: 已从数据库读取的当前解析快照记录。
+
+    Returns:
+        按快照片段顺序排列、尚未生成向量的 Final Chunk。
+
+    Raises:
+        AppError: 快照所属文档、内容结构或定位范围不符合契约。
+    """
     if snapshot.document_id != document_id:
         raise _invalid_snapshot()
 
@@ -100,6 +132,8 @@ def build_final_chunks(
         ):
             raise _invalid_snapshot()
 
+        # Chunk 身份绑定文档、定位和归一化正文，而不是绑定临时数组下标；重跑解析时
+        # 未变化的片段可以被 Chroma 幂等 upsert，snapshot_hash 则留在元数据中追踪版本。
         identity = (
             f"{document_id}|{location_type.value}|{location_start}|"
             f"{location_end}|{content}"
@@ -130,7 +164,21 @@ def embed_final_chunks(
     embedding_context: str = "",
     embedding_contexts: Mapping[str, str] | None = None,
 ) -> list[ArchiveEmbeddedChunk]:
-    """使用确认字段上下文和原文片段生成 Final Chunk 向量。"""
+    """使用确认字段上下文和原文片段生成 Final Chunk 向量。
+
+    Args:
+        document_id: 用于日志和错误定位的文档身份。
+        chunks: 当前解析快照构建出的原文 Chunk。
+        embedding_context: 应用于全部 Chunk 的已确认字段上下文。
+        embedding_contexts: 按 Chunk 身份提供的已确认字段上下文。
+
+    Returns:
+        保留原 Chunk 身份和定位元数据、并附加向量的 Chunk 列表。
+
+    Raises:
+        AppError: Embedding 服务不可用或返回维度不符合配置。
+        ValueError: 同时提供全局和按 Chunk 的上下文。
+    """
     if not chunks:
         return []
     normalized_context = embedding_context.strip()
@@ -194,6 +242,8 @@ def get_final_collection():
             settings.chroma_final_collection,
         )
         raise AppError(503, "VECTOR_UNAVAILABLE", "无法连接 Chroma 向量服务。") from exc
+    # 距离度量是检索分数语义的一部分；发现已有 Collection 配置不一致时必须失败，
+    # 不能静默复用并让后续排序与既有基线失去可比性。
     if metric != "cosine":
         raise AppError(
             500,
@@ -218,7 +268,23 @@ def insert_final_chunks(
     chunks: list[ArchiveEmbeddedChunk],
     collection: Any | None = None,
 ) -> int:
-    """将带服务端范围和快照元数据的 Chunk 写入指定 Final Collection。"""
+    """将带服务端范围和快照元数据的 Chunk 写入指定 Final Collection。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        document_id: 当前档案文档身份。
+        filename: 用于公开检索引用的文件名。
+        chunks: 已完成向量化的 Final Chunk。
+        collection: 可选的测试或调用方注入 Collection。
+
+    Returns:
+        实际提交的 Chunk 数量。
+
+    Raises:
+        AppError: 向量无效、Collection 不可用或写入失败。
+    """
     if not chunks:
         return 0
     if any(not chunk.embedding for chunk in chunks):
@@ -226,6 +292,8 @@ def insert_final_chunks(
 
     try:
         target_collection = collection if collection is not None else get_final_collection()
+        # 归属字段随每个向量一起写入，删除和检索都必须带完整范围，避免同名文档或
+        # 其他用户的向量被跨项目误读、误删。
         target_collection.upsert(
             ids=[chunk.chunk_id for chunk in chunks],
             documents=[chunk.content for chunk in chunks],
@@ -267,7 +335,20 @@ def delete_final_chunks(
     kb_id: UUID,
     document_id: UUID,
 ) -> int:
-    """按完整服务端归属范围删除一份档案的 Final Chunk。"""
+    """按完整服务端归属范围删除一份档案的 Final Chunk。
+
+    Args:
+        user_id: 服务端验证的项目所有者身份。
+        project_id: 服务端验证的项目身份。
+        kb_id: 项目绑定的知识库身份。
+        document_id: 要清理的档案文档身份。
+
+    Returns:
+        删除前匹配到的向量数量；已清理的目标可安全重试并返回零。
+
+    Raises:
+        AppError: Collection 不可用或删除失败。
+    """
     delete_filter = {
         "$and": [
             {"user_id": str(user_id)},
@@ -276,6 +357,7 @@ def delete_final_chunks(
             {"document_id": str(document_id)},
         ]
     }
+    # 四个范围条件必须同时存在；document_id 单独并不能证明调用方拥有该向量。
     try:
         collection = get_final_collection()
         existing = collection.get(where=delete_filter, include=[])

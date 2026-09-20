@@ -57,6 +57,7 @@ class AgentSession(SQLModel, table=True):
 
     __tablename__ = "agent_sessions"
     __table_args__ = (
+        # 会话类型和项目绑定关系必须在数据库层同时成立，避免制度会话误进入项目范围。
         CheckConstraint(
             "agent_type IN ('POLICY', 'ARCHIVE')",
             name="ck_agent_sessions_agent_type",
@@ -73,6 +74,7 @@ class AgentSession(SQLModel, table=True):
             ondelete="CASCADE",
             match="SIMPLE",
         ),
+        # 上述复合外键固定项目与知识库绑定并负责级联删除；索引只优化项目维度查询。
         Index("ix_agent_sessions_project_id", "project_id"),
     )
 
@@ -118,11 +120,13 @@ class AgentToolCallLog(SQLModel, table=True):
 
     __tablename__ = "agent_tool_call_logs"
     __table_args__ = (
+        # 同一会话中的同一个 Tool Call 只允许有一条记录，便于重试或恢复时幂等更新。
         UniqueConstraint(
             "agent_session_id",
             "tool_call_id",
             name="uq_agent_tool_logs_session_call",
         ),
+        # 日志不应脱离会话残留，项目删除导致会话删除时由外键级联清理。
         ForeignKeyConstraint(
             ["agent_session_id"],
             ["agent_sessions.id"],

@@ -34,7 +34,7 @@ def list_archive_field_values(
 ) -> list[ArchiveFieldValue]:
     """按固定七字段顺序读取档案字段值。
 
-    参数:
+    Args:
         document_id: 要读取的文档身份。
         session: 当前数据库会话。
     """
@@ -45,6 +45,8 @@ def list_archive_field_values(
             )
         ).all()
     )
+    # 数据库查询不依赖枚举声明顺序；显式按固定七字段顺序重排，保证各响应和校验
+    # 在字段缺失或数据库返回顺序变化时仍保持同一结构口径。
     by_name = {value.field_name: value for value in values}
     return [by_name[name] for name in _FIELD_NAMES if name in by_name]
 
@@ -52,7 +54,7 @@ def list_archive_field_values(
 def archive_field_value(field: ArchiveFieldValue | None) -> object:
     """投影字段当前实际使用的值列。
 
-    参数:
+    Args:
         field: 数据库中的档案字段值，允许为空。
     """
     if field is None:
@@ -73,11 +75,14 @@ def build_process_document_read(
 ) -> ProcessDocumentRead:
     """组合项目文档处理响应，集中维护字段检查统计口径。
 
-    参数:
+    Args:
         document: 原始文档记录。
         archive_document: 档案生命周期扩展记录。
         field_values: 当前文档的字段值。
         index_context_chunk_count: 索引上下文 Chunk 数量。
+
+    Returns:
+        不包含原文正文的项目文档处理状态投影。
     """
     return ProcessDocumentRead(
         id=document.id,
@@ -112,7 +117,7 @@ def build_archive_draft_read(
 ) -> ArchiveDraftRead:
     """构造草稿详情及字段证据嵌套响应。
 
-    参数:
+    Args:
         document: 原始文档记录。
         archive_document: 档案生命周期扩展记录。
         field_values: 当前文档字段值。
@@ -120,6 +125,8 @@ def build_archive_draft_read(
     """
     evidence_by_field: dict[UUID, list[FieldEvidence]] = {}
     if field_values:
+        # 一次按字段批量读取证据，避免为每个字段单独查询；证据原样挂在字段下，
+        # 当前快照是否可用于正式索引由确认服务在写入前再次校验。
         evidences = session.exec(
             select(FieldEvidence).where(
                 FieldEvidence.field_value_id.in_([value.id for value in field_values])
@@ -133,6 +140,8 @@ def build_archive_draft_read(
         if archive_document.current_snapshot_id is not None
         else None
     )
+    # snapshot 只表示当前解析版本；字段下的 evidence 仍保留其历史关联，供人工检查
+    # 回看，正式确认不会把旧快照证据误当作当前快照证据。
     return ArchiveDraftRead(
         document=build_process_document_read(
             document=document,
@@ -170,10 +179,15 @@ def list_visibility_blocked_document_ids(
 ) -> set[UUID]:
     """读取项目内存在可见性阻断操作的文档集合。
 
-    参数:
+    Args:
         project_id: 项目身份。
         session: 当前数据库会话。
+
+    Returns:
+        正在运行或上次失败但尚未恢复的操作所涉及的文档 ID 集合。
     """
+    # RUNNING 和 FAILED 都必须阻断公开读取：前者可能只完成了部分外部步骤，后者
+    # 明确表示跨存储事实不完整；只有成功或已清理的操作才可重新进入可见投影。
     rows = session.exec(
         select(ArchiveOperation.document_id)
         .join(Document, Document.id == ArchiveOperation.document_id)

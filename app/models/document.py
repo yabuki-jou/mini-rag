@@ -49,11 +49,13 @@ class Document(SQLModel, table=True):
 
     __tablename__ = "documents"
     __table_args__ = (
+        # 项目文档必须同时匹配项目和其知识库，防止把其他项目的文档挂入当前项目。
         ForeignKeyConstraint(
             ["project_id", "kb_id"],
             ["projects.id", "projects.kb_id"],
             name="fk_documents_project_kb",
         ),
+        # project_id 可为空以兼容历史知识库文档；项目文档仍按项目和内容哈希去重。
         Index("uq_documents_project_file_hash", "project_id", "file_hash", unique=True),
         Index("ix_documents_project_created_id", "project_id", "created_at", "id"),
     )

@@ -38,7 +38,11 @@ _REQUIRED_FIELDS = {ArchiveFieldName.TITLE, ArchiveFieldName.DOCUMENT_TYPE}
 
 
 def _field_value(value: ArchiveFieldValue):
-    """读取字段实际使用的值列。"""
+    """读取字段实际使用的值列。
+
+    Args:
+        value: 数据库中的档案字段值记录。
+    """
     if value.field_name == ArchiveFieldName.DOCUMENT_DATE:
         return value.date_value
     if value.field_name == ArchiveFieldName.KEYWORDS:
@@ -47,7 +51,11 @@ def _field_value(value: ArchiveFieldValue):
 
 
 def _is_nonempty(value) -> bool:
-    """判断字段是否有可确认的非空值。"""
+    """判断字段是否有可确认的非空值。
+
+    Args:
+        value: 待检查的字段实际值。
+    """
     if value is None:
         return False
     if isinstance(value, str):
@@ -58,7 +66,11 @@ def _is_nonempty(value) -> bool:
 
 
 def _raise_confirmation_not_allowed(field_names: Sequence[ArchiveFieldName]) -> None:
-    """返回不暴露字段正文的确认前置条件错误。"""
+    """返回不暴露字段正文的确认前置条件错误。
+
+    Args:
+        field_names: 未通过确认前置检查的字段名称集合。
+    """
     details = None
     if field_names:
         details = {"pending_fields": [field_name.value for field_name in field_names]}
@@ -71,7 +83,13 @@ def _validate_confirmation_fields(
     snapshot: ParsedSnapshot,
     session: Session,
 ) -> None:
-    """校验七字段检查、必要字段值和 AI 当前快照证据。"""
+    """校验七字段检查、必要字段值和 AI 当前快照证据。
+
+    Args:
+        fields: 当前文档的七个档案字段值。
+        snapshot: 当前解析快照记录。
+        session: 当前数据库会话。
+    """
     by_name = {field.field_name: field for field in fields}
     missing = [field_name for field_name in ArchiveFieldName if field_name not in by_name]
     if missing:
@@ -125,6 +143,12 @@ def confirm_document(
 
     确认事实和脱敏审计先提交到 PostgreSQL；随后由 INDEX 服务生成 Final Chunk 并写入
     向量集合。外部依赖失败会透传稳定错误，保留已确认但待恢复索引的状态。
+
+    Args:
+        document: 已通过项目范围校验的档案文档。
+        actor_id: 已认证执行确认的用户身份。
+        payload: 包含预期文档版本和字段检查结果的请求。
+        session: 当前数据库会话。
     """
     archive_document = session.exec(
         select(ArchiveDocument)
