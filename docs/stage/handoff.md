@@ -24,11 +24,13 @@
 - P08 真实刷新恢复已通过：隔离 PostgreSQL Schema、独立 SQLite Checkpoint、真实 Vite 代理和浏览器整页刷新共同验证最近会话、完整历史及 1 条脱敏工具记录自动恢复。
 - 真实刷新验收使用固定本地模型向真实 Archive Graph 写入受控历史，没有调用 DeepSeek；项目删除后会话、工具记录和 Checkpoint 均由 1 归零，隔离 Schema 与临时 SQLite 文件已删除。
 - P08 收口：后端 `main` 已包含功能和注释完善提交，Vue `main` 已包含自动恢复提交；两个 `main` 均已推送到各自 origin。
+- 新增公开世界银行 P153548 smoke 数据集，完成真实 DeepSeek Pixie 评测收口；结果仅作为注入证据回答层的质量证据，不把被忽略的运行目录作为 Git 产物。
 
 ## 3. 验证证据
 
-- 后端全量：`492 passed, 2 skipped, 179 warnings`，退出码 0。
-- 后端 `compileall -q app tests scripts evals`：通过。
+- 后端全量：`496 passed, 2 skipped, 179 warnings`，退出码 0。
+- 后端 `compileall -q app tests scripts evals pixie_qa`：通过。
+- 本轮确定性评估相关测试：`19 passed`；P153548 Pixie 评测为 5 个条目、6 轮、21/21 个 evaluations 得分 `1.0`，`pending=0`，Step 6 已完成。
 - Alembic：真实 PostgreSQL `upgrade head` 通过；本轮没有新增迁移。
 - 当前 Markdown（排除历史归档和评测素材）链接检查：53 个文件通过。
 - Vue：11 个测试文件、`136 passed`；`npm run typecheck`、`npm run build` 通过。
@@ -40,6 +42,7 @@
 
 - 本轮没有重跑 FR-039/FR-042 真实固定集；语义算法未改变，既有固定集只作为质量基线，确定性回归不能替代真实模型质量结论。
 - P08 已有真实 PostgreSQL + Checkpoint + Vite 浏览器刷新恢复证据，但该证据不测试 DeepSeek 语义质量；模型质量仍以既有固定集为准。
+- P153548 Pixie 评测使用外部检索输入注入，不经过 PostgreSQL、Chroma、Embedding 或 Reranker；因此不证明真实索引/向量召回、数据库范围控制或 OCR。
 - 历史恢复仍固定返回空引用，未完成轮次仍隐藏；这是既有 MVP 边界，不是 P08 遗漏。
 - SQLite Checkpoint 与 PostgreSQL 仍不具备跨存储原子提交；并发消息与项目删除强一致性不属于当前 MVP。
 - 历史与工具日志接口不分页且没有独立条数上限，只适用于本地短会话演示。
@@ -51,6 +54,7 @@
 
 - FR-042 P08 已完成并进入两个仓库的 `main`；无需再重复实现最近会话恢复。
 - 如继续扩展任意旧会话选择、历史引用恢复或并发一致性，先按 DEC-023 重新确认范围和验收方案；当前 MVP 不含这些能力。
+- 如继续进行质量验证，先在隔离 PostgreSQL/Chroma 环境导入 P153548，验证解析、人工确认、正式索引、Top-8 召回和清理；任何持久层写入都必须单独获得授权。
 - 后续部署形态与资源规格仍待单独评估，不将本地联动验收表述为云端部署结论。
 
 ## 6. 当前导航

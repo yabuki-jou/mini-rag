@@ -67,7 +67,7 @@
       }
     },
     {
-      "description": "Top-8 决策：从当前 README 事实中回答候选保留范围，并忽略架构说明干扰项",
+      "description": "Top-8 决策：根据已确认决策台账回答候选保留范围，并忽略架构说明干扰项",
       "input_data": {
         "question": "P14-D6-B 对档案问答内部候选数量做了什么调整？"
       },
@@ -85,11 +85,11 @@
                       "__dict__": {
                         "chunk_id": "2222222222222222222222222222222222222222222222222222222222222222",
                         "document_id": {"py/object": "uuid.UUID", "hex": "10000000000040008000000000000002"},
-                        "filename": "README.md",
+                        "filename": "decisions.md",
                         "location_type": {"py/reduce": [{"py/type": "app.models.archive.EvidenceLocationType"}, {"py/tuple": ["TEXT_LINE_RANGE"]}]},
-                        "location_start": 21,
-                        "location_end": 21,
-                        "excerpt": "D6-B 经独立授权只把 `archive-questions` 的内部候选从 Top-5 扩至 Top-8，外部响应形状保持不变。",
+                        "location_start": 107,
+                        "location_end": 107,
+                        "excerpt": "- 决策：档案问答内部候选从 Top-5 扩至 Top-8，沿用可信文档绑定；公开检索仍保持 `top_k≤10`，问答响应只返回模型实际选择的引用。该决策不改变 Prompt 指令、模型、Embedding、Reranker、Top-30、Chunk、查询表达、固定集或质量门。",
                         "score": 0.95,
                         "reranker_score": 0.93
                       }
@@ -126,18 +126,18 @@
         "retrieval_latency_ms": 0,
         "expected_answer": "内部候选从 Top-5 扩至 Top-8",
         "expected_evidence": {
-          "relative_path": "README.md",
+          "relative_path": "docs/decisions.md",
           "items": [
             {
               "location_type": "TEXT_LINE_RANGE",
-              "location_start": 21,
-              "location_end": 21,
+              "location_start": 107,
+              "location_end": 107,
               "excerpt": "内部候选从 Top-5 扩至 Top-8"
             }
           ]
         },
         "difficulty": "intermediate",
-        "source_document": "README.md",
+        "source_document": "docs/decisions.md",
         "distractor_source_document": "AGENTS.md"
       }
     },
