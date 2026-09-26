@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Iterator
 from uuid import UUID
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +48,7 @@ def _retrieve_archive_agent_evidence(
     project_id: UUID,
     kb_id: UUID,
     query: str,
+    gate_question: str = "",
     session: Any,
 ) -> list[dict[str, object]]:
     """执行正式检索并在评测边界前移除持久化标识和分数。
@@ -57,6 +58,7 @@ def _retrieve_archive_agent_evidence(
         project_id: 服务端验证后的项目 UUID。
         kb_id: 项目绑定知识库的 UUID。
         query: 已规范化的档案检索问题。
+        gate_question: 当前轮用户原始问题，仅用于补充召回门控。
         session: 当前工具调用使用的业务数据库会话。
 
     参数中的三个 UUID 均来自已验证的服务端上下文，不能由模型输入覆盖。
@@ -66,6 +68,7 @@ def _retrieve_archive_agent_evidence(
         project_id=project_id,
         kb_id=kb_id,
         query=query,
+        gate_question=gate_question,
         session=session,
         observe_result=False,
     )
@@ -91,6 +94,31 @@ def _retrieve_archive_agent_evidence(
         for item in response.items
         if item.document_id in titles
     ]
+
+
+def _current_gate_question(state: dict[str, Any]) -> str:
+    """仅从 State 末尾的文本用户消息取得当前轮门控意图。
+
+    Args:
+        state: LangGraph 注入的当前轮状态。
+
+    Returns:
+        当前轮用户问题；支持原始 HumanMessage 或 type 标记为 ``human`` 且 content
+        为字符串的 Pydantic 序列化字典。不符合条件时返回空串，不回退到旧消息。
+    """
+    messages = state.get("messages")
+    if not isinstance(messages, (list, tuple)) or not messages:
+        return ""
+    current = messages[-1]
+    if isinstance(current, BaseMessage):
+        if current.type != "human" or not isinstance(current.content, str):
+            return ""
+        return current.content
+    if isinstance(current, dict):
+        content = current.get("content")
+        if current.get("type") == "human" and isinstance(content, str):
+            return content
+    return ""
 
 
 @dataclass
@@ -416,11 +444,37 @@ def build_archive_tools(*, runtime: ArchiveToolRuntime) -> tuple[Any, Any]:
         Returns:
             当前授权范围内不含持久化标识和分数的安全证据结果。
         """
-        del state
         normalized_query = _normalize_query(query)
+        gate_question = _current_gate_question(state)
         try:
+            def retrieve_for_current_turn(
+                *,
+                user_id: UUID,
+                project_id: UUID,
+                kb_id: UUID,
+                query: str,
+                session: Any,
+            ) -> list[dict[str, object]]:
+                """在注入边界之外绑定当前轮原话，避免新增原话采集字段。
+
+                Args:
+                    user_id: 已验证的用户范围。
+                    project_id: 已验证的项目范围。
+                    kb_id: 项目绑定的知识库范围。
+                    query: 模型生成的检索词。
+                    session: 当前业务数据库会话。
+                """
+                return _retrieve_archive_agent_evidence(
+                    user_id=user_id,
+                    project_id=project_id,
+                    kb_id=kb_id,
+                    query=query,
+                    gate_question=gate_question,
+                    session=session,
+                )
+
             retrieval_call = eval_wrap(
-                _retrieve_archive_agent_evidence,
+                retrieve_for_current_turn,
                 purpose="input",
                 name="archive_agent_evidence_retrieval",
                 description="当前授权范围返回给档案助手的请求内 Top-8 安全证据候选。",

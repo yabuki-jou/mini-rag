@@ -167,7 +167,12 @@ class FakeCollection:
 
     def query(self, **kwargs):
         self.calls.append(kwargs)
-        return self.result
+        result = self.result
+        if isinstance(result, list):
+            result = result[len(self.calls) - 1]
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
 
 @pytest.fixture(autouse=True)
@@ -842,3 +847,354 @@ def test_answer_candidates_return_fixed_top_eight_without_public_threshold(
         "候选-4",
         "候选-3",
     ]
+
+
+def _candidate_result(document_id: UUID, chunk_ids: list[str], label: str) -> dict:
+    """构造一组合法的 Chroma 候选列式响应。"""
+    return {
+        "ids": [chunk_ids],
+        "documents": [[f"{label}-{index}" for index in range(len(chunk_ids))]],
+        "metadatas": [[
+            {
+                "document_id": str(document_id),
+                "filename": f"{label}.pdf",
+                "location_type": "PDF_PAGE",
+                "location_start": index + 1,
+                "location_end": index + 1,
+            }
+            for index in range(len(chunk_ids))
+        ]],
+        "distances": [[index / 100 for index in range(len(chunk_ids))]],
+    }
+
+
+@pytest.mark.parametrize(
+    ("gate_question", "expected_query_count"),
+    [
+        ("世界银行贷款有哪些？", 2),
+        ("世行 financing terms", 2),
+        ("WORLD BANK lending terms", 2),
+        ("World Bank loans", 1),
+        ("世界银行项目背景是什么？", 1),
+        ("IFC loan terms", 1),
+        ("funding from the World Bank", 1),
+    ],
+)
+def test_answer_candidate_supplement_gate_uses_world_bank_and_loan_whitelist(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_question: str,
+    expected_query_count: int,
+) -> None:
+    """补充召回必须同时满足白名单机构称谓和贷款意图。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection([
+        _candidate_result(document_id, ["a" * 64], "原始"),
+        _candidate_result(document_id, ["b" * 64], "补充"),
+    ])
+    embeddings = FakeEmbeddings()
+    reranker_queries: list[str] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        reranker_queries.append(query)
+        return [0.5] * len(contents)
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="模型生成的检索词 loan",
+            gate_question=gate_question,
+            session=session,
+        )
+
+    assert len(collection.calls) == expected_query_count
+    assert len(embeddings.queries) == expected_query_count
+    assert len(reranker_queries) == 1
+    if expected_query_count == 1:
+        assert embeddings.queries == [
+            "为这个句子生成表示以用于检索相关文章：档案证据检索问题：模型生成的检索词 loan"
+        ]
+        assert reranker_queries == ["档案证据检索问题：模型生成的检索词 loan"]
+    else:
+        assert embeddings.queries == [
+            "为这个句子生成表示以用于检索相关文章：档案证据检索问题：模型生成的检索词 loan",
+            "为这个句子生成表示以用于检索相关文章：档案证据检索问题：IBRD IDA",
+        ]
+        assert reranker_queries == ["档案证据检索问题：IBRD IDA"]
+        assert collection.calls[0]["where"] == collection.calls[1]["where"]
+        assert [call["n_results"] for call in collection.calls] == [30, 30]
+
+
+def test_answer_candidate_defaults_gate_question_to_query(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未提供门控文本时 FR-039 以原问题决定是否执行补充召回。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection([
+        _candidate_result(document_id, ["a" * 64], "原始"),
+        _candidate_result(document_id, ["b" * 64], "补充"),
+    ])
+    embeddings = FakeEmbeddings()
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: [0.5] * len(contents),
+    )
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="世界银行贷款条件",
+            session=session,
+        )
+
+    assert len(collection.calls) == 2
+    assert embeddings.queries[-1] == (
+        "为这个句子生成表示以用于检索相关文章：档案证据检索问题：IBRD IDA"
+    )
+
+
+@pytest.mark.parametrize(
+    ("query_mode", "expected_reranker_query"),
+    [
+        ("c4_a", "档案证据检索问题：IBRD IDA"),
+        ("c4_b", "请从项目档案中查找与问题直接匹配的原文证据：IBRD IDA"),
+    ],
+)
+def test_answer_candidate_dual_query_unions_stably_reranks_once_and_returns_top_eight(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+    query_mode: str,
+    expected_reranker_query: str,
+) -> None:
+    """双路合并稳定保留首个重复项，并按当前重排模式构造补充表达。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    original_ids = [f"{index:064d}" for index in range(30)]
+    original_ids[1] = original_ids[0]
+    supplemental_ids = [original_ids[0], *[f"{index + 30:064d}" for index in range(29)]]
+    collection = FakeCollection([
+        _candidate_result(document_id, original_ids, "原始"),
+        _candidate_result(document_id, supplemental_ids, "补充"),
+    ])
+    embeddings = FakeEmbeddings()
+    reranker_calls: list[tuple[str, list[str]]] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        reranker_calls.append((query, contents))
+        return [index / 60 for index in range(len(contents))]
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: embeddings)
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
+    monkeypatch.setattr(settings, "archive_reranker_query_mode", query_mode, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="原始问题",
+            gate_question="世界银行贷款条件",
+            session=session,
+        )
+
+    assert len(collection.calls) == 2
+    assert collection.calls[0]["where"] == collection.calls[1]["where"]
+    assert [call["n_results"] for call in collection.calls] == [30, 30]
+    assert embeddings.queries == [
+        "为这个句子生成表示以用于检索相关文章：档案证据检索问题：原始问题",
+        "为这个句子生成表示以用于检索相关文章：档案证据检索问题：IBRD IDA",
+    ]
+    assert len(reranker_calls) == 1
+    assert len(reranker_calls[0][1]) == 58
+    assert reranker_calls[0][1][0] == "原始-0"
+    assert reranker_calls[0][1].count("原始-0") == 1
+    assert "原始-1" not in reranker_calls[0][1]
+    assert reranker_calls[0][0] == expected_reranker_query
+    assert response.returned_count == 8
+    assert response.items[0].excerpt == "补充-29"
+    assert response.items[-1].excerpt == "补充-22"
+
+
+@pytest.mark.parametrize(
+    ("query_mode", "expected_reranker_query"),
+    [
+        ("c4_a", "档案证据检索问题：IBRD IDA"),
+        ("c4_b", "请从项目档案中查找与问题直接匹配的原文证据：IBRD IDA"),
+    ],
+)
+def test_answer_candidate_dual_query_reranks_all_sixty_disjoint_candidates(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+    query_mode: str,
+    expected_reranker_query: str,
+) -> None:
+    """两路各返回 30 个互异候选时，完整 60 项均进入一次重排。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    original_ids = [f"{index:064d}" for index in range(30)]
+    supplemental_ids = [f"{index + 30:064d}" for index in range(30)]
+    collection = FakeCollection([
+        _candidate_result(document_id, original_ids, "原始"),
+        _candidate_result(document_id, supplemental_ids, "补充"),
+    ])
+    reranker_calls: list[tuple[str, list[str]]] = []
+
+    def fake_score(*, query: str, contents: list[str]) -> list[float]:
+        reranker_calls.append((query, contents))
+        return [0.5] * len(contents)
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fake_score)
+    monkeypatch.setattr(settings, "archive_reranker_query_mode", query_mode, raising=False)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="原始问题",
+            gate_question="世界银行贷款条件",
+            session=session,
+        )
+
+    assert [call["n_results"] for call in collection.calls] == [30, 30]
+    assert len(reranker_calls) == 1
+    assert reranker_calls[0][0] == expected_reranker_query
+    assert len(reranker_calls[0][1]) == 60
+    assert reranker_calls[0][1][:30] == [f"原始-{index}" for index in range(30)]
+    assert reranker_calls[0][1][30:] == [f"补充-{index}" for index in range(30)]
+
+
+def test_answer_candidate_empty_supplement_keeps_original_candidates(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """补充路无结果时仍以补充表达重排原始候选。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection([
+        _candidate_result(document_id, ["a" * 64], "原始"),
+        {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]},
+    ])
+    reranker_queries: list[str] = []
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(
+        archive_retrieval_service,
+        "score_archive_candidates",
+        lambda *, query, contents: reranker_queries.append(query) or [0.7] * len(contents),
+    )
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        response = archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="原始问题",
+            gate_question="世界银行贷款",
+            session=session,
+        )
+
+    assert response.returned_count == 1
+    assert response.items[0].excerpt == "原始-0"
+    assert reranker_queries == ["档案证据检索问题：IBRD IDA"]
+
+
+def test_answer_candidate_supplement_failure_is_atomic(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """补充 Chroma 路径失败时整次回答候选检索必须失败。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection([
+        _candidate_result(document_id, ["a" * 64], "原始"),
+        RuntimeError("supplement unavailable"),
+    ])
+    reranker_called = False
+
+    def fail_if_reranked(*, query: str, contents: list[str]) -> list[float]:
+        nonlocal reranker_called
+        reranker_called = True
+        return [0.5] * len(contents)
+
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+    monkeypatch.setattr(archive_retrieval_service, "score_archive_candidates", fail_if_reranked)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        with pytest.raises(AppError) as error:
+            archive_retrieval_service.retrieve_archive_answer_candidates(
+                user_id=user_id,
+                project_id=project_id,
+                kb_id=project.kb_id,
+                query="原始问题",
+                gate_question="世界银行贷款",
+                session=session,
+            )
+
+    assert error.value.code == "VECTOR_UNAVAILABLE"
+    assert reranker_called is False
+
+
+def test_answer_candidate_logs_never_include_raw_question(
+    project_document_api,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """完成日志只能记录脱敏检索摘要，不能记录用户问题原文。"""
+    client, engine, _ = project_document_api
+    user_id = create_user(engine)
+    project_id, document_id, _ = _confirmed_document(client, engine, user_id)
+    collection = FakeCollection(_candidate_result(document_id, ["a" * 64], "资料"))
+    monkeypatch.setattr(archive_retrieval_service, "get_embeddings", lambda: FakeEmbeddings())
+    monkeypatch.setattr(archive_retrieval_service, "get_final_collection", lambda: collection)
+
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        assert project is not None
+        archive_retrieval_service.retrieve_archive_answer_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=project.kb_id,
+            query="私密原始问题-unique-71c24",
+            gate_question="私密门控问题-unique-a51d9 世界银行贷款",
+            session=session,
+        )
+
+    assert "私密原始问题-unique-71c24" not in caplog.text
+    assert "私密门控问题-unique-a51d9" not in caplog.text

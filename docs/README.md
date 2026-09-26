@@ -19,6 +19,7 @@
 - [项目档案助手 MVP 实施计划](implementation/FR042-项目档案助手MVP实施计划.md)
 - [制度 Agent 历史资料](archive/legacy-policy-agent/既有检索与智能体实施计划.md)
 - [P14 检索质量改进](review/P14-rag检索质量改进/检索质量问题分析与改进策略.md)
+- [FR-042 项目档案助手专题文档索引](review/FR-042-项目档案助手/README.md)
 - [FR-042 真实模型质量评测](review/FR-042-项目档案助手/真实模型质量评测/评测复盘.md)
 - [FR-042 本地后端闭环验收](review/FR-042-项目档案助手/本地后端闭环验收/验收复盘.md)
 

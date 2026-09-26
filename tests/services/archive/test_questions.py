@@ -247,14 +247,99 @@ def test_judge_archive_answer_invalid_json_raises_neutral_error() -> None:
     assert not isinstance(exc_info.value, AppError)
 
 
+def test_judgment_transport_failure_has_safe_failure_kind_and_retry_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模型调用故障只输出固定分类，并保留连接/超时重试标记。"""
+    observed: list[tuple[object, dict[str, object]]] = []
+
+    def capture(value: object, **kwargs: object) -> object:
+        observed.append((value, kwargs))
+        return value
+
+    class FailingModel:
+        def invoke(self, _prompt: str) -> None:
+            raise TimeoutError("provider detail must not escape")
+
+    monkeypatch.setattr(archive_question_service, "eval_wrap", capture)
+
+    with pytest.raises(archive_question_service.ArchiveAnswerJudgmentError) as exc_info:
+        archive_question_service.judge_archive_answer(
+            question="截至指定日期的提款额是多少？",
+            candidates=_retrieval_response().items,
+            model=FailingModel(),
+        )
+
+    assert exc_info.value.failure_kind == "MODEL_CALL_FAILED"
+    assert exc_info.value.retryable is True
+    assert str(exc_info.value) == "档案证据判定失败。"
+    assert observed[0][0] == {"failure_kind": "MODEL_CALL_FAILED"}
+
+
+def test_judgment_invalid_output_has_safe_failure_kind_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模型响应不符合 JSON 契约时与传输故障分开分类且不重试。"""
+    observed: list[tuple[object, dict[str, object]]] = []
+
+    def capture(value: object, **kwargs: object) -> object:
+        observed.append((value, kwargs))
+        return value
+
+    monkeypatch.setattr(archive_question_service, "eval_wrap", capture)
+
+    with pytest.raises(archive_question_service.ArchiveAnswerJudgmentError) as exc_info:
+        archive_question_service.judge_archive_answer(
+            question="截至指定日期的提款额是多少？",
+            candidates=_retrieval_response().items,
+            model=FakeModel("provider response must not escape"),
+        )
+
+    assert exc_info.value.failure_kind == "MODEL_OUTPUT_INVALID"
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "档案证据判定失败。"
+    assert observed[0][0] == {"failure_kind": "MODEL_OUTPUT_INVALID"}
+
+
+def test_judgment_prompt_input_failure_has_separate_safe_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """提示输入构造失败不得误记为模型调用或模型响应故障。"""
+    observed: list[tuple[object, dict[str, object]]] = []
+
+    def capture(value: object, **kwargs: object) -> object:
+        observed.append((value, kwargs))
+        return value
+
+    class UnusedModel:
+        def invoke(self, _prompt: str) -> None:
+            raise AssertionError("输入构造失败时不得调用模型")
+
+    monkeypatch.setattr(archive_question_service, "eval_wrap", capture)
+
+    with pytest.raises(archive_question_service.ArchiveAnswerJudgmentError) as exc_info:
+        archive_question_service.judge_archive_answer(
+            question="问题",
+            candidates=[object()],
+            model=UnusedModel(),
+        )
+
+    assert exc_info.value.failure_kind == "PROMPT_INPUT_INVALID"
+    assert exc_info.value.retryable is False
+    assert observed[0][0] == {"failure_kind": "PROMPT_INPUT_INVALID"}
+    assert observed[0][1]["purpose"] == "state"
+    assert observed[0][1]["name"] == "archive_answer_judgment_failure"
+
+
 def test_answer_maps_neutral_judgment_error_to_existing_fr039_error(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """FR-039 继续把公共判定中性失败映射为既有稳定 503。"""
     error_type = archive_question_service.ArchiveAnswerJudgmentError
 
     def fail_judge(**_: object) -> object:
-        raise error_type("模型决策格式无效")
+        raise error_type("敏感模型输出不能进入日志", failure_kind="MODEL_OUTPUT_INVALID")
 
     _patch_answer_candidate_retrieval(
         monkeypatch,
@@ -282,6 +367,8 @@ def test_answer_maps_neutral_judgment_error_to_existing_fr039_error(
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.code == "ARCHIVE_ANSWER_UNAVAILABLE"
+    assert "failure_kind=MODEL_OUTPUT_INVALID" in caplog.text
+    assert "敏感模型输出不能进入日志" not in caplog.text
 
 
 def test_shared_judge_matches_fr039_status_answer_and_selected_citations(
@@ -422,6 +509,41 @@ def test_prompt_defines_direct_field_evidence_without_weakening_refusal() -> Non
     assert "其他文件给出不同字段值也不影响该目标文档的直接证据成立" in normalized
     assert "仅有相近主题、其他文件的同名字段或缺少所问字段时" in normalized
     assert "必须选择 REFUSED_NO_EVIDENCE" in normalized
+
+
+def test_prompt_matches_table_field_unit_currency_and_statistical_date() -> None:
+    """表格回答须匹配字段、单位和统计时点，并保留现有回答契约。"""
+    prompt = archive_question_service._build_archive_prompt(
+        "实际提款金额是多少？",
+        _retrieval_response_with_document_binding().items,
+    )
+    normalized = "".join(prompt.splitlines())
+
+    assert "表格问题必须核对问题所问字段、单位或币种，以及统计日期" in normalized
+    assert "Amount、Disbursed、Undisbursed 是不同字段，不可互换" in normalized
+    assert "历史 as-of 值不能证明当前或完工时的值" in normalized
+    assert "证据未覆盖问题所问时间口径时，必须选择 REFUSED_NO_EVIDENCE" in normalized
+    assert "候选摘录直接给出该字段值时，应选择 ANSWERED" in normalized
+    assert 'JSON 必须且只能包含 decision、answer、citation_numbers 三个字段' in normalized
+    assert 'citation_numbers 必须是至少一个唯一的 1-based [S] 编号' in normalized
+    assert "REFUSED_NO_EVIDENCE 时 citation_numbers 必须为空数组" in normalized
+
+
+def test_prompt_treats_matching_historical_as_of_date_as_answerable() -> None:
+    """同一字段和同一历史日期应可回答，当前/完工时点仍须单独覆盖。"""
+    candidate = _retrieval_response().items[0].model_copy(
+        update={"excerpt": "Disbursed: USD 0 as of 2026-09-26."}
+    )
+    prompt = archive_question_service._build_archive_prompt(
+        "截至 2026-09-26 的 Disbursed 是多少？",
+        [candidate],
+    )
+    normalized = "".join(prompt.splitlines())
+
+    assert "问题询问截至日期且证据对同一字段明确标注同一日期时，该历史值直接支持该历史问题" in normalized
+    assert "回答时应注明证据日期，不得仅因证据属于历史数据而拒答" in normalized
+    assert "问题询问当前或完工时，而证据只有更早的历史日期时，必须选择 REFUSED_NO_EVIDENCE" in normalized
+    assert "Amount、Disbursed、Undisbursed 是不同字段，不可互换" in normalized
 
 
 def test_prompt_uses_confirmed_document_title_only_for_same_document_identity() -> None:

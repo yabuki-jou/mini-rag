@@ -6,12 +6,13 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import ValidationError
 
 from app.agents.tools.archive_tools import (
     ArchiveEvidenceRegistry,
     ArchiveToolRuntime,
+    _ArchiveEvidenceToolInput,
     build_archive_tools,
     archive_evidence_registry_scope,
     serialize_tool_message,
@@ -134,6 +135,164 @@ def test_archive_evidence_tool_injects_scope_normalizes_query_and_fixes_top8(
         assert candidate.chunk_id not in serialized
         assert str(candidate.score) not in serialized
         assert str(candidate.reranker_score) not in serialized
+
+
+@pytest.mark.parametrize(
+    ("messages", "expected_question"),
+    [
+        (
+            [HumanMessage(content="旧轮世界银行贷款"), AIMessage(content="已回答"), HumanMessage(content="当前问题")],
+            "当前问题",
+        ),
+        ([HumanMessage(content="本轮世界银行贷款金额？")], "本轮世界银行贷款金额？"),
+        ([HumanMessage(content="旧轮世界银行贷款"), HumanMessage(content=[{"type": "text", "text": "非字符串"}])], ""),
+        ([HumanMessage(content="旧轮世界银行贷款"), AIMessage(content="没有当前用户消息")], ""),
+        ([], ""),
+    ],
+)
+def test_archive_evidence_gate_uses_latest_text_human_message_only(
+    monkeypatch: pytest.MonkeyPatch,
+    messages: list,
+    expected_question: str,
+) -> None:
+    """门控意图仅来自最新当前轮文本，模型工具查询仍独立传入检索。"""
+    captured: dict = {}
+
+    def fake_retrieve(**kwargs):
+        captured.update(kwargs)
+        return ArchiveRetrievalResponse(items=[], requested_top_k=8, returned_count=0)
+
+    monkeypatch.setattr(retrieval_service, "retrieve_archive_answer_candidates", fake_retrieve)
+    _, evidence_tool = build_archive_tools(runtime=_runtime())
+    result = evidence_tool.func(
+        query="模型自拟的检索词",
+        state={"messages": messages},
+        tool_call_id="gate-check",
+    )
+    assert captured["query"] == "模型自拟的检索词"
+    assert captured["gate_question"] == expected_question
+    assert result["results"] == []
+
+
+def test_archive_evidence_gate_reads_current_question_after_graph_state_dump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Graph 同形 Pydantic dump 后仍从末尾 HumanMessage 读取门控问题。
+
+    Args:
+        monkeypatch: 临时替换检索服务，捕获实际传入的门控问题。
+    """
+    captured: dict = {}
+    current_question = "World Bank loan gate sentinel"
+    dumped_state = _ArchiveEvidenceToolInput.model_validate(
+        {
+            "query": "model generated retrieval phrase",
+            "state": {"messages": [HumanMessage(content=current_question)]},
+            "tool_call_id": "serialized-gate-check",
+        }
+    ).model_dump(mode="python")["state"]
+    serialized_message = dumped_state["messages"][-1]
+    serialized_message["future_metadata"] = {"marker": "ignored"}
+    assert serialized_message["type"] == "human", "serialized role marker changed"
+    serialized_content_is_text = isinstance(serialized_message["content"], str)
+    assert serialized_content_is_text, "serialized content type changed"
+
+    def fake_retrieve(**kwargs):
+        captured.update(kwargs)
+        return ArchiveRetrievalResponse(items=[], requested_top_k=8, returned_count=0)
+
+    monkeypatch.setattr(retrieval_service, "retrieve_archive_answer_candidates", fake_retrieve)
+    _, evidence_tool = build_archive_tools(runtime=_runtime())
+    evidence_tool.func(
+        query="model generated retrieval phrase",
+        state=dumped_state,
+        tool_call_id="serialized-gate-check",
+    )
+
+    gate_question_preserved = captured["gate_question"] == current_question
+    assert gate_question_preserved, "current question was not preserved"
+    assert retrieval_service._should_supplement_archive_candidates(
+        captured["gate_question"]
+    ), "loan-context gate did not trigger"
+
+
+@pytest.mark.parametrize(
+    "last_message",
+    [
+        AIMessage(content="assistant ending"),
+        HumanMessage(content=[{"type": "text", "text": "non-string ending"}]),
+    ],
+)
+def test_archive_evidence_gate_does_not_fall_back_after_serialized_non_user_ending(
+    monkeypatch: pytest.MonkeyPatch,
+    last_message: AIMessage | HumanMessage,
+) -> None:
+    """序列化 State 末尾不是文本用户消息时不得回退到上一条问题。
+
+    Args:
+        monkeypatch: 临时替换检索服务，捕获实际传入的门控问题。
+        last_message: 作为末条状态消息的 AI 或 Human 消息。
+    """
+    captured: dict = {}
+    dumped_state = _ArchiveEvidenceToolInput.model_validate(
+        {
+            "query": "model phrase",
+            "state": {
+                "messages": [
+                    HumanMessage(content="World Bank loan old-question sentinel"),
+                    last_message,
+                ]
+            },
+            "tool_call_id": "serialized-no-fallback",
+        }
+    ).model_dump(mode="python")["state"]
+
+    def fake_retrieve(**kwargs):
+        captured.update(kwargs)
+        return ArchiveRetrievalResponse(items=[], requested_top_k=8, returned_count=0)
+
+    monkeypatch.setattr(retrieval_service, "retrieve_archive_answer_candidates", fake_retrieve)
+    _, evidence_tool = build_archive_tools(runtime=_runtime())
+    evidence_tool.func(
+        query="model phrase",
+        state=dumped_state,
+        tool_call_id="serialized-no-fallback",
+    )
+
+    assert captured["gate_question"] == "", "gate reused an earlier message"
+
+
+def test_archive_evidence_eval_input_does_not_capture_current_user_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真实用户原话只送检索门控，不新增到 Pixie 数据边界参数。"""
+    wrapped_args: list[dict] = []
+
+    def fake_wrap(data, *, purpose, name, description):
+        if purpose != "input":
+            return data
+
+        def invoke(**kwargs):
+            wrapped_args.append(kwargs)
+            return data(**kwargs)
+
+        return invoke
+
+    monkeypatch.setattr(
+        retrieval_service,
+        "retrieve_archive_answer_candidates",
+        lambda **_: ArchiveRetrievalResponse(items=[], requested_top_k=8, returned_count=0),
+    )
+    monkeypatch.setattr("app.agents.tools.archive_tools.eval_wrap", fake_wrap)
+    _, evidence_tool = build_archive_tools(runtime=_runtime())
+    evidence_tool.func(
+        query="模型检索词",
+        state={"messages": [HumanMessage(content="本轮世界银行贷款敏感问题")]},
+        tool_call_id="eval-gate-check",
+    )
+    assert len(wrapped_args) == 1
+    assert "gate_question" not in wrapped_args[0]
+    assert "本轮世界银行贷款敏感问题" not in repr(wrapped_args[0])
 
 
 def test_archive_catalog_tool_calls_service_with_injected_project_and_safe_page(

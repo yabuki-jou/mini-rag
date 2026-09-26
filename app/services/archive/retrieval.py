@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 from time import perf_counter
 from typing import Any
 from uuid import UUID
@@ -39,6 +40,11 @@ logger = logging.getLogger(__name__)
 _BGE_ZH_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章："
 _ARCHIVE_QUERY_EXPRESSION_PREFIX = "档案证据检索问题："
 _C4B_RERANKER_QUERY_EXPRESSION_PREFIX = "请从项目档案中查找与问题直接匹配的原文证据："
+_WORLD_BANK_QUERY_PATTERN = re.compile(r"世界银行|世行|\bworld\s+bank\b", re.IGNORECASE)
+_LOAN_INTENT_QUERY_PATTERN = re.compile(
+    r"贷款|融资|\b(?:loan|lending|financing)\b", re.IGNORECASE
+)
+_WORLD_BANK_SUPPLEMENTAL_QUERY = "IBRD IDA"
 _DIAGNOSTIC_CANDIDATE_KEY_DOMAIN = "mini-rag.archive-retrieval-diagnostic.candidate.v1"
 _ARCHIVE_ANSWER_TOP_K = 8
 _ArchiveCandidate = tuple[float, ArchiveRetrievalItemRead]
@@ -64,6 +70,18 @@ def _build_archive_reranker_query_expression(query: str) -> str:
     if settings.archive_reranker_query_mode == "c4_b":
         return f"{_C4B_RERANKER_QUERY_EXPRESSION_PREFIX}{normalized_query}"
     return _build_archive_query_expression(normalized_query)
+
+
+def _should_supplement_archive_candidates(gate_question: str) -> bool:
+    """仅对当前问题中同时出现的世界银行指称和贷款意图启用补充召回。
+
+    Args:
+        gate_question: 当前轮用户问题，不是模型生成的检索词。
+    """
+    return bool(
+        _WORLD_BANK_QUERY_PATTERN.search(gate_question)
+        and _LOAN_INTENT_QUERY_PATTERN.search(gate_question)
+    )
 
 
 def _query_values(result: dict[str, Any], name: str) -> list[Any]:
@@ -176,7 +194,9 @@ def _rerank_candidates(*, query: str, candidates: list[_ArchiveCandidate]) -> li
 
 
 def _score_and_order_candidates(
-    *, query: str, candidates: list[_ArchiveCandidate]
+    *,
+    query: str,
+    candidates: list[_ArchiveCandidate],
 ) -> list[_RerankedArchiveCandidate]:
     """为所有已校验候选评分并排序，供公开检索和诊断共用。
 
@@ -453,6 +473,7 @@ def _retrieve_archive_items(
     session: Session,
     apply_score_threshold: bool,
     observe_result: bool,
+    gate_question: str | None = None,
 ) -> ArchiveRetrievalResponse:
     """复用正式范围和 Chroma 查询，按调用方策略生成有序证据。
 
@@ -465,6 +486,7 @@ def _retrieve_archive_items(
         session: 当前数据库会话。
         apply_score_threshold: 是否应用公开检索分数阈值。
         observe_result: 是否记录脱敏评测观测结果。
+        gate_question: 可选的当前轮用户问题，仅回答候选检索使用。
     """
     if not query or not query.strip():
         raise AppError(422, "VALIDATION_ERROR", "检索问题不能为空。")
@@ -507,6 +529,21 @@ def _retrieve_archive_items(
         query=query,
         formal_ids=formal_ids,
     )
+    reranker_query = query
+    if gate_question is not None and _should_supplement_archive_candidates(gate_question):
+        _, supplemental_candidates = _query_validated_candidates(
+            user_id=user_id,
+            project_id=project_id,
+            kb_id=kb_id,
+            query=_WORLD_BANK_SUPPLEMENTAL_QUERY,
+            formal_ids=formal_ids,
+        )
+        # 原路先进入并集，因此同一 Chunk 重复时保留原问题候选及其元数据。
+        candidates_by_chunk_id: dict[str, _ArchiveCandidate] = {}
+        for candidate in [*candidates, *supplemental_candidates]:
+            candidates_by_chunk_id.setdefault(candidate[1].chunk_id, candidate)
+        candidates = list(candidates_by_chunk_id.values())
+        reranker_query = _WORLD_BANK_SUPPLEMENTAL_QUERY
     rerank_threshold = (
         settings.archive_reranker_score_threshold
         if apply_score_threshold
@@ -515,7 +552,10 @@ def _retrieve_archive_items(
     reranked_candidates = (
         _rerank_candidates(query=query, candidates=candidates)
         if apply_score_threshold
-        else _score_and_order_candidates(query=query, candidates=candidates)
+        else _score_and_order_candidates(
+            query=reranker_query,
+            candidates=candidates,
+        )
     )
     items = [item for _, _, item in reranked_candidates[:top_k]]
     logger.info(
@@ -582,6 +622,7 @@ def retrieve_archive_answer_candidates(
     query: str,
     session: Session,
     observe_result: bool = True,
+    gate_question: str | None = None,
 ) -> ArchiveRetrievalResponse:
     """返回当前项目固定 Top-8 回答候选，不应用公开检索分数阈值。
 
@@ -592,6 +633,7 @@ def retrieve_archive_answer_candidates(
         query: 用于取得回答证据候选的问题文本。
         session: 当前业务数据库会话。
         observe_result: 是否保留 FR-039 使用的原始候选评测观测。
+        gate_question: 当前轮门控文本；缺省时使用 query，以保持 FR-039 调用方式。
 
     Returns:
         保留既有重排稳定顺序的前八条正式档案候选。
@@ -605,4 +647,5 @@ def retrieve_archive_answer_candidates(
         session=session,
         apply_score_threshold=False,
         observe_result=observe_result,
+        gate_question=query if gate_question is None else gate_question,
     )

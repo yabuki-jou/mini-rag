@@ -109,6 +109,9 @@ class P14Api:
                 error_body = None
             if isinstance(error_body, dict):
                 candidate = error_body.get("code")
+                nested_error = error_body.get("error")
+                if candidate is None and isinstance(nested_error, dict):
+                    candidate = nested_error.get("code")
                 if isinstance(candidate, str) and re.fullmatch(r"[A-Z_]{1,80}", candidate):
                     api_code = candidate
             raise AcceptanceError(

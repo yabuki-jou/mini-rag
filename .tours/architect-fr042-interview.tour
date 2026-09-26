@@ -1,0 +1,97 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "FR-042 面试讲稿：从请求到可信回答",
+  "description": "面向项目作者的口述导览：用真实代码解释档案助手的授权、工具协议、证据判定、持久化与质量边界。",
+  "ref": "main",
+  "isPrimary": false,
+  "steps": [
+    {
+      "title": "开场：只讲一条业务主线",
+      "file": "README.md",
+      "line": 8,
+      "description": "面试开场先说：这是本地智慧档案工作台，不是通用聊天框。文档经解析和人工确认后进入正式索引，FR-039 做单轮证据问答，FR-042 做项目范围内的跨轮只读助手。这个定位能解释为什么工具不具备写权限。别把历史制度 Agent 或云部署算进当前交付。"
+    },
+    {
+      "title": "请求入口：路径不是授权",
+      "file": "app/routers/archive_agent.py",
+      "line": 179,
+      "description": "面试题：一次消息从哪里进入？`POST /projects/{project_id}/agent-sessions/{session_id}/messages` 先经过请求 Schema 和 `ProjectContextDep`，再用五要素查会话，最后把可信会话交给 Service。URL 里的项目和会话 ID 都只是待验证输入；不能说知道 ID 就能读会话。"
+    },
+    {
+      "title": "第一道边界：认证和项目归属",
+      "file": "app/dependencies/project_context.py",
+      "line": 31,
+      "description": "面试题：模型能指定别人的项目吗？Bearer 身份依赖给出当前用户，`get_project_context` 查项目并核对 `owner_id`，再从项目取 `kb_id`，形成不可由请求体替换的上下文。这里是 HTTP 入口的授权边界；它不是 Chroma 过滤的替代品。"
+    },
+    {
+      "title": "第二道边界：会话五要素",
+      "file": "app/services/agent/archive_sessions.py",
+      "line": 79,
+      "description": "面试题：拿到旧 `session_id` 为什么还不能越权？查询同时限定会话 ID、用户、项目、知识库和 `ARCHIVE` 类型；任一不匹配返回不存在。这样也拒绝历史 `POLICY` 行。注意这是业务库会话元数据校验，不代表 Checkpoint 与 PostgreSQL 有原子事务。"
+    },
+    {
+      "title": "应用流程：两种持久化职责",
+      "file": "app/services/agent/archive_execution.py",
+      "line": 283,
+      "description": "面试题：一轮消息如何落地？Service 规范化用户输入，把可信范围和线程 ID 交给 Runtime；Graph 成功后再保存脱敏工具事件与会话时间，最后构造公开响应。Checkpoint 可能先于 PostgreSQL 写入，失败时只返回稳定错误并处理可记录事件；MVP 不承诺跨存储原子提交。"
+    },
+    {
+      "title": "模型分工不是两个部署模型",
+      "file": "app/agents/archive/runtime.py",
+      "line": 160,
+      "description": "面试题：主模型与 judge 为什么分开？路由调用决定用哪种只读工具，证据判定调用只消费已取回的候选，避免把检索与回答混成一次不受控输出。默认 `judge_model` 直接复用 `model` 实例；正确说法是两种调用职责，而不是部署了两个不同模型。"
+    },
+    {
+      "title": "第三道边界：Graph 与 Runtime 对账",
+      "file": "app/agents/archive/graph.py",
+      "line": 282,
+      "description": "面试题：Router 已校验，Graph 为什么再比对？Graph State 可来自 Checkpoint 或调用方，`_validate_context` 将其中的用户、项目、知识库逐一与服务端 Runtime 闭包对账，防止恢复状态与当前可信范围漂移。它是纵深校验，不应夸成对任何数据库错误都免疫。"
+    },
+    {
+      "title": "受控工具循环的取舍",
+      "file": "app/agents/archive/graph.py",
+      "line": 422,
+      "description": "面试题：为什么不用通用 `ToolNode`？这里要求每次模型决策最多一个工具、单轮最多两个、白名单工具名和唯一 `tool_call_id`；异常输出立即失败。手写循环把这些协议约束和脱敏审计放在一个可测试边界内，代价是编排代码更长、维护责任更重。上限 2 是本地 MVP 的复杂度/成本约束，不是实测最优值。"
+    },
+    {
+      "title": "请求级证据：安全投影",
+      "file": "app/agents/tools/archive_tools.py",
+      "line": 272,
+      "description": "面试题：为什么模型只看到 S 编号和摘录？`_safe_evidence_result` 只暴露文件名、标题、定位、摘录，不给 `document_id`、Chunk 标识或检索分数；原始候选按本轮 `tool_call_id` 留在请求级注册表供服务端引用映射。全局字典会产生跨请求串用与生命周期泄漏风险；Runtime 在 `finally` 清理注册表。"
+    },
+    {
+      "title": "判定层：引用可验证但事实仍需评测",
+      "file": "app/services/archive/questions.py",
+      "line": 140,
+      "description": "面试题：怎样约束模型回答？公共判定层要求固定 JSON 字段、有效状态、非空回答，以及唯一且落在候选范围内的 1-based 引用编号；FR-039 和 FR-042 复用此判定入口。它能拒绝不存在的引用编号，不能数学上保证自然语言的每项事实都被摘录支持，所以仍要真实模型固定集和人工核查。"
+    },
+    {
+      "title": "工具审计：只保留摘要",
+      "file": "app/services/agent/archive_execution.py",
+      "line": 163,
+      "description": "面试题：失败重试会不会重复记日志？事件按会话和 `tool_call_id` 查重，落库前再校验工具名、状态与脱敏摘要。记录的是参数/结果摘要、状态和耗时，不是 query 全文、证据原文或隐藏推理。它帮助排障，但不能替代完整分布式追踪。"
+    },
+    {
+      "title": "历史为什么缺引用卡片",
+      "file": "app/services/agent/archive_execution.py",
+      "line": 420,
+      "description": "面试题：刷新后恢复了什么？历史接口从 SQLite Checkpoint 投影完整 Human/AI 对，过滤 ToolMessage 和未完成轮次；返回正文时 `citations=[]`。当前轮引用只在请求内结果返回，未设计历史引用持久化。因此不能向用户承诺刷新后旧引用卡片仍在。"
+    },
+    {
+      "title": "最近会话发现的最小方案",
+      "file": "app/services/agent/archive_sessions.py",
+      "line": 97,
+      "description": "面试题：为什么不是完整会话列表？服务端在已验证用户、项目、知识库和 `ARCHIVE` 范围内，按更新时间、创建时间和 ID 稳定倒序取一条；无会话返回空，不自动新建。Vue 再读历史和工具记录。它修复刷新后找不到旧会话的体验，但任意旧会话选择仍不在 MVP。"
+    },
+    {
+      "title": "质量数字怎么讲",
+      "file": "docs/review/FR-042-项目档案助手/真实模型质量评测/评测复盘.md",
+      "line": 17,
+      "description": "面试题：17/17 是否过拟合？四轮修正后，第四轮固定集一次完整真实 DeepSeek 运行达到 17/17；这证明该冻结条件下的质量门，不证明跨时间稳定、生产环境或未知资料泛化。主动说明前三轮失败原因、停止继续调 Prompt，以及确定性测试、真实模型评估和真实本地链路各自不同的证据等级。"
+    },
+    {
+      "title": "结束后的练习",
+      "description": "现在尝试不看代码，用 90 秒串起“请求授权 → 五要素会话 → Graph 工具协议 → 请求级证据 → 判定与引用 → 审计/Checkpoint → 最近会话恢复”；再用 30 秒主动说出同模型实例、历史引用缺失和非原子提交三个限制。可继续分别练安全边界、故障恢复或真实模型评估的深入追问。"
+    }
+  ]
+}
