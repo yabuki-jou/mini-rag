@@ -27,9 +27,16 @@ from app.models import (
 from app.agents.archive.runtime import build_archive_runtime as real_build_archive_runtime
 from app.core.errors import AppError
 from app.routers import archive_agent as archive_agent_router
-from app.schemas import ArchiveRetrievalItemRead, ArchiveRetrievalResponse
+from app.schemas import (
+    ArchiveAgentResponse,
+    ArchiveAnswerStatus,
+    ArchiveRetrievalItemRead,
+    ArchiveRetrievalResponse,
+)
 from app.services.archive import catalog as catalog_service
 from app.services.archive import retrieval as retrieval_service
+from app.services.agent import archive_execution as archive_execution_service
+from app.services.infrastructure import ai_models
 from tests.support.auth import auth_headers
 
 
@@ -328,12 +335,18 @@ def test_message_history_and_tool_routes_form_two_round_checkpoint_loop(
     """连续两轮必须复用 thread_id，第二轮看到第一轮完整历史。"""
     client, engine = archive_agent_api
     user_id, project = _create_user_and_project(engine, name="two-round-owner")
+    checkpoint_path = tmp_path / "archive-api.db"
+    monkeypatch.setattr(
+        archive_execution_service.settings,
+        "agent_checkpoint_file",
+        checkpoint_path,
+    )
     model = RecordingChatModel(
         [AIMessage(content="第一轮自由文本"), AIMessage(content="第二轮自由文本")]
     )
     _install_real_archive_runtime(
         monkeypatch,
-        checkpoint_path=tmp_path / "archive-api.db",
+        checkpoint_path=checkpoint_path,
         model=model,
     )
     created = client.post(
@@ -389,6 +402,121 @@ def test_message_history_and_tool_routes_form_two_round_checkpoint_loop(
     ]
     assert tool_calls.status_code == 200
     assert tool_calls.json() == []
+
+
+def test_archive_history_does_not_require_model_factory(
+    archive_agent_api: tuple[TestClient, Engine],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """已有历史必须可读，即使模型客户端工厂不可用。"""
+    client, engine = archive_agent_api
+    user_id, project = _create_user_and_project(engine, name="history-without-model")
+    checkpoint_path = tmp_path / "history-without-model.db"
+    monkeypatch.setattr(
+        archive_execution_service.settings,
+        "agent_checkpoint_file",
+        checkpoint_path,
+    )
+    model = RecordingChatModel([AIMessage(content="已经保存的回答")])
+    _install_real_archive_runtime(
+        monkeypatch,
+        checkpoint_path=checkpoint_path,
+        model=model,
+    )
+    created = client.post(
+        f"/projects/{project.id}/agent-sessions",
+        headers=auth_headers(engine, user_id),
+        json={},
+    ).json()
+    base_path = f"/projects/{project.id}/agent-sessions/{created['id']}"
+    sent = client.post(
+        f"{base_path}/messages",
+        headers=auth_headers(engine, user_id),
+        json={"message": "之前的问题"},
+    )
+    assert sent.status_code == 200
+
+    def build_runtime_without_injected_model(**kwargs: Any) -> Any:
+        return real_build_archive_runtime(**kwargs, checkpoint_path=checkpoint_path)
+
+    monkeypatch.setattr(
+        archive_agent_router,
+        "build_archive_runtime",
+        build_runtime_without_injected_model,
+    )
+
+    def fail_model_factory(*_args: Any, **_kwargs: Any) -> None:
+        raise AppError(503, "DEEPSEEK_NOT_CONFIGURED", "模型不可用")
+
+    monkeypatch.setattr(ai_models, "get_chat_model", fail_model_factory)
+    history = client.get(f"{base_path}/messages", headers=auth_headers(engine, user_id))
+
+    assert history.status_code == 200
+    assert history.json() == [
+        {"role": "USER", "content": "之前的问题", "citations": []},
+        {"role": "ASSISTANT", "content": sent.json()["answer"], "citations": []},
+    ]
+
+
+def test_unauthorized_archive_history_is_rejected_before_checkpoint_open(
+    archive_agent_api: tuple[TestClient, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """跨用户历史读取必须在打开 Checkpoint 前被拒绝。"""
+    client, engine = archive_agent_api
+    owner_id, project = _create_user_and_project(engine, name="history-owner")
+    other_id, _ = _create_user_and_project(engine, name="history-other-user")
+    created = client.post(
+        f"/projects/{project.id}/agent-sessions",
+        headers=auth_headers(engine, owner_id),
+        json={},
+    ).json()
+
+    def fail_checkpoint_open(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("未授权历史请求不得打开 Checkpoint")
+
+    monkeypatch.setattr(
+        archive_execution_service,
+        "open_checkpoint_store",
+        fail_checkpoint_open,
+    )
+    response = client.get(
+        f"/projects/{project.id}/agent-sessions/{created['id']}/messages",
+        headers=auth_headers(engine, other_id),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PROJECT_FORBIDDEN"
+
+
+def test_unauthenticated_archive_history_is_rejected_before_checkpoint_open(
+    archive_agent_api: tuple[TestClient, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """无 Bearer Token 的历史请求必须在打开 Checkpoint 前被拒绝。"""
+    client, engine = archive_agent_api
+    owner_id, project = _create_user_and_project(engine, name="unauthenticated-history-owner")
+    created = client.post(
+        f"/projects/{project.id}/agent-sessions",
+        headers=auth_headers(engine, owner_id),
+        json={},
+    ).json()
+
+    def fail_checkpoint_open(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("未认证历史请求不得打开 Checkpoint")
+
+    monkeypatch.setattr(
+        archive_execution_service,
+        "open_checkpoint_store",
+        fail_checkpoint_open,
+    )
+    response = client.get(
+        f"/projects/{project.id}/agent-sessions/{created['id']}/messages"
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
 
 
 def test_evidence_message_returns_safe_citation_and_persists_safe_tool_log(
@@ -524,7 +652,7 @@ def test_invalid_message_stops_before_session_lookup_and_runtime(
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
-def test_runtime_construction_failure_maps_to_archive_dependency_error(
+def test_message_runtime_construction_failure_maps_to_archive_dependency_error(
     archive_agent_api: tuple[TestClient, Engine],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -541,9 +669,10 @@ def test_runtime_construction_failure_maps_to_archive_dependency_error(
         raise ConnectionError("secret checkpoint path")
 
     monkeypatch.setattr(archive_agent_router, "build_archive_runtime", fail_runtime)
-    response = client.get(
+    response = client.post(
         f"/projects/{project.id}/agent-sessions/{created['id']}/messages",
         headers=auth_headers(engine, user_id),
+        json={"message": "需要执行模型"},
     )
 
     assert response.status_code == 503
@@ -551,7 +680,7 @@ def test_runtime_construction_failure_maps_to_archive_dependency_error(
     assert "secret" not in response.text
 
 
-def test_runtime_construction_app_error_maps_to_archive_dependency_error(
+def test_message_model_configuration_error_maps_to_archive_dependency_error(
     archive_agent_api: tuple[TestClient, Engine],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -568,9 +697,10 @@ def test_runtime_construction_app_error_maps_to_archive_dependency_error(
         raise AppError(503, "DEEPSEEK_NOT_CONFIGURED", "内部模型配置细节")
 
     monkeypatch.setattr(archive_agent_router, "build_archive_runtime", fail_runtime)
-    response = client.get(
+    response = client.post(
         f"/projects/{project.id}/agent-sessions/{created['id']}/messages",
         headers=auth_headers(engine, user_id),
+        json={"message": "需要执行模型"},
     )
 
     assert response.status_code == 503
@@ -600,10 +730,11 @@ def test_runtime_scope_preserves_execution_business_error(
     def fail_read(*_args: Any, **_kwargs: Any) -> None:
         raise AppError(503, "ARCHIVE_AGENT_MODEL_OUTPUT_INVALID", "模型输出无效。")
 
-    monkeypatch.setattr(archive_agent_router, "read_archive_agent_messages", fail_read)
-    response = client.get(
+    monkeypatch.setattr(archive_agent_router, "send_archive_agent_message", fail_read)
+    response = client.post(
         f"/projects/{project.id}/agent-sessions/{created['id']}/messages",
         headers=auth_headers(engine, user_id),
+        json={"message": "需要执行模型"},
     )
 
     assert response.status_code == 503
@@ -639,12 +770,19 @@ def test_runtime_close_app_error_maps_to_archive_dependency_error(
     )
     monkeypatch.setattr(
         archive_agent_router,
-        "read_archive_agent_messages",
-        lambda *_args, **_kwargs: [],
+        "send_archive_agent_message",
+        lambda *, agent_session, **_kwargs: ArchiveAgentResponse(
+            session_id=agent_session.id,
+            answer_status=ArchiveAnswerStatus.REFUSED_NO_EVIDENCE,
+            answer="正式档案中没有足够依据。",
+            citations=[],
+            request_id=uuid4(),
+        ),
     )
-    response = client.get(
+    response = client.post(
         f"/projects/{project.id}/agent-sessions/{created['id']}/messages",
         headers=auth_headers(engine, user_id),
+        json={"message": "需要执行模型"},
     )
 
     assert response.status_code == 503
@@ -678,6 +816,12 @@ def test_archive_routes_reject_policy_session_before_runtime_or_log_read(
     monkeypatch.setattr(
         archive_agent_router,
         "build_archive_runtime",
+        fail_runtime,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        archive_execution_service,
+        "open_checkpoint_store",
         fail_runtime,
         raising=False,
     )

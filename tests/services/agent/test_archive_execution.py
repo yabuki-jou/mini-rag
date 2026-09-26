@@ -2,6 +2,7 @@
 
 import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -31,6 +32,7 @@ from app.models import (
     utc_now,
 )
 from app.schemas import ArchiveAgentCitationRead, ArchiveAnswerStatus
+from app.services.agent import archive_execution as archive_execution_service
 from app.services.agent.archive_execution import (
     read_archive_agent_messages,
     read_archive_agent_tool_calls,
@@ -257,27 +259,102 @@ def test_send_archive_message_maps_failures_and_persists_existing_events(
 
 def test_archive_history_keeps_only_complete_rounds_and_never_restores_citations(
     db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """历史与模型投影共用完整轮次规则，历史引用固定为空。"""
     agent_session = _archive_session(db_session)
-    runtime = FakeArchiveRuntime(
-        messages=[
-            HumanMessage(content="孤立问题"),
-            ToolMessage(content="{}", tool_call_id="orphan"),
-            HumanMessage(content="完整问题"),
-            AIMessage(content="", tool_calls=[{"id": "internal", "name": "x", "args": {}}]),
-            ToolMessage(content="{}", tool_call_id="internal"),
-            AIMessage(content="可信回答"),
-            HumanMessage(content="尾部未完成"),
-        ]
+    stored_messages = [
+        HumanMessage(content="孤立问题"),
+        ToolMessage(content="{}", tool_call_id="orphan"),
+        HumanMessage(content="完整问题"),
+        AIMessage(content="", tool_calls=[{"id": "internal", "name": "x", "args": {}}]),
+        ToolMessage(content="{}", tool_call_id="internal"),
+        AIMessage(content="可信回答"),
+        HumanMessage(content="尾部未完成"),
+    ]
+
+    class FakeCheckpointStore:
+        """提供历史读取所需的 Checkpointer 生命周期。"""
+
+        checkpointer = object()
+
+        def __enter__(self) -> "FakeCheckpointStore":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class FakeHistoryGraph:
+        """返回指定线程的 Checkpoint 状态。"""
+
+        def get_state(self, _config: dict[str, object]) -> SimpleNamespace:
+            return SimpleNamespace(values={"messages": stored_messages})
+
+    monkeypatch.setattr(
+        archive_execution_service,
+        "open_checkpoint_store",
+        lambda _path: FakeCheckpointStore(),
+    )
+    monkeypatch.setattr(
+        archive_execution_service,
+        "build_archive_history_graph",
+        lambda _checkpointer: FakeHistoryGraph(),
     )
 
-    messages = read_archive_agent_messages(agent_session, runtime)
+    messages = read_archive_agent_messages(agent_session, Path("history-test.db"))
 
     assert [item.model_dump() for item in messages] == [
         {"role": "USER", "content": "完整问题", "citations": []},
         {"role": "ASSISTANT", "content": "可信回答", "citations": []},
     ]
+
+
+@pytest.mark.parametrize("failure_stage", ["open", "read", "close"])
+def test_archive_history_checkpoint_failures_use_safe_dependency_error(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    """Checkpoint 打开、读取或关闭失败都映射为稳定安全错误。"""
+    agent_session = _archive_session(db_session)
+
+    class FakeCheckpointStore:
+        """按测试阶段模拟读取或关闭失败。"""
+
+        checkpointer = object()
+
+        def __enter__(self) -> "FakeCheckpointStore":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            if failure_stage == "close":
+                raise AppError(503, "CHECKPOINT_CLOSE_FAILED", "关闭细节")
+
+    def open_store(_path: Path) -> FakeCheckpointStore:
+        if failure_stage == "open":
+            raise ConnectionError("数据库路径细节")
+        return FakeCheckpointStore()
+
+    class FailingHistoryGraph:
+        """在状态读取阶段模拟 Checkpoint 异常。"""
+
+        def get_state(self, _config: dict[str, object]) -> SimpleNamespace:
+            if failure_stage == "read":
+                raise RuntimeError("状态读取细节")
+            return SimpleNamespace(values={"messages": []})
+
+    monkeypatch.setattr(archive_execution_service, "open_checkpoint_store", open_store)
+    monkeypatch.setattr(
+        archive_execution_service,
+        "build_archive_history_graph",
+        lambda _checkpointer: FailingHistoryGraph(),
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        read_archive_agent_messages(agent_session, Path("history-failure-test.db"))
+
+    assert exc_info.value.code == "ARCHIVE_AGENT_DEPENDENCY_UNAVAILABLE"
+    assert "细节" not in exc_info.value.message
 
 
 def test_archive_audit_read_is_sorted_and_rejects_non_whitelisted_content(

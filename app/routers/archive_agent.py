@@ -85,7 +85,9 @@ def find_latest_archive_agent_session_endpoint(
     """
     _ = project_id
     return find_latest_archive_agent_session(
-        project_context=project_context,
+        user_id=project_context.user_id,
+        project_id=project_context.project_id,
+        kb_id=project_context.kb_id,
         session=session,
     )
 
@@ -222,7 +224,6 @@ def read_archive_agent_messages_endpoint(
     project_id: UUID,
     session_id: UUID,
     agent_session: ArchiveAgentSessionDep,
-    session: SessionDep,
 ) -> list[ArchiveAgentMessageRead]:
     """返回当前用户可访问会话的完整可见对话轮次。
 
@@ -230,14 +231,12 @@ def read_archive_agent_messages_endpoint(
         project_id: URL 中的项目标识；实际范围由已解析的 agent_session 保证。
         session_id: 要读取的档案助手会话标识。
         agent_session: 已由依赖按用户、项目、知识库和会话类型校验的会话。
-        session: 当前请求的业务数据库会话。
 
     Returns:
         按固定投影规则恢复的完整可见消息列表；未完成异常轮次不对外展示。
     """
     _ = project_id, session_id
-    with _archive_runtime_scope(agent_session, session) as runtime:
-        return read_archive_agent_messages(agent_session, runtime)
+    return read_archive_agent_messages(agent_session)
 
 
 @router.get("/{session_id}/tool-calls", response_model=list[AgentToolCallLogRead])

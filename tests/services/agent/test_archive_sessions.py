@@ -165,7 +165,9 @@ def test_find_latest_archive_session_returns_none_when_project_has_no_session(
     context, _, _ = _project_context(db_session)
 
     latest = archive_session_service.find_latest_archive_agent_session(
-        project_context=context,
+        user_id=context.user_id,
+        project_id=context.project_id,
+        kb_id=context.kb_id,
         session=db_session,
     )
 
@@ -270,7 +272,9 @@ def test_find_latest_archive_session_uses_stable_scope_and_ordering(
     db_session.commit()
 
     latest = archive_session_service.find_latest_archive_agent_session(
-        project_context=context,
+        user_id=context.user_id,
+        project_id=context.project_id,
+        kb_id=context.kb_id,
         session=db_session,
     )
 
@@ -292,7 +296,9 @@ def test_find_latest_archive_session_maps_database_failure_to_stable_error(
 
     with pytest.raises(AppError) as exc_info:
         archive_session_service.find_latest_archive_agent_session(
-            project_context=context,
+            user_id=context.user_id,
+            project_id=context.project_id,
+            kb_id=context.kb_id,
             session=BrokenSession(),  # type: ignore[arg-type]
         )
 

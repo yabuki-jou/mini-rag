@@ -5,7 +5,6 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.core.errors import AppError
-from app.dependencies.project_context import ProjectContext
 from app.models import AgentSession, AgentType, utc_now
 
 
@@ -96,13 +95,17 @@ def find_archive_agent_session(
 
 def find_latest_archive_agent_session(
     *,
-    project_context: ProjectContext,
+    user_id: UUID,
+    project_id: UUID,
+    kb_id: UUID,
     session: Session,
 ) -> AgentSession | None:
     """在已验证项目范围内按稳定顺序查找最近的 ARCHIVE 会话。
 
     Args:
-        project_context: 已验证的用户、项目和知识库范围。
+        user_id: 已验证项目所有者的用户 ID。
+        project_id: 已验证的项目 ID。
+        kb_id: 项目在服务端绑定的知识库 ID。
         session: 当前请求使用的业务数据库会话。
 
     Returns:
@@ -115,9 +118,9 @@ def find_latest_archive_agent_session(
         return session.exec(
             select(AgentSession)
             .where(
-                AgentSession.user_id == project_context.user_id,
-                AgentSession.project_id == project_context.project_id,
-                AgentSession.kb_id == project_context.kb_id,
+                AgentSession.user_id == user_id,
+                AgentSession.project_id == project_id,
+                AgentSession.kb_id == kb_id,
                 AgentSession.agent_type == AgentType.ARCHIVE,
             )
             .order_by(

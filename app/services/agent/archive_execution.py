@@ -2,6 +2,7 @@
 
 import json
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -15,7 +16,10 @@ from app.agents.archive.graph import (
     ArchiveToolEvent,
 )
 from app.agents.archive.history import project_complete_archive_messages
+from app.agents.archive.history_reader import build_archive_history_graph
 from app.agents.archive.runtime import ArchiveAgentRuntime
+from app.agents.checkpoint import build_thread_config, open_checkpoint_store
+from app.core.config import settings
 from app.core.errors import AppError
 from app.core.evaluation import eval_wrap
 from app.core.logging import get_request_id
@@ -397,35 +401,37 @@ def _observe_archive_agent_turn(
 
 def _checkpoint_archive_messages(
     agent_session: AgentSession,
-    runtime: ArchiveAgentRuntime,
+    checkpoint_path: Path | None = None,
 ) -> list[BaseMessage]:
-    """读取并验证 ARCHIVE 线程中的消息列表。
+    """通过轻量 Graph 读取并验证 ARCHIVE 线程中的消息列表。
 
     Args:
         agent_session: 用于确定 Checkpoint 线程的档案助手会话。
-        runtime: 负责读取 Checkpoint 状态的运行时适配器。
+        checkpoint_path: 可选 Checkpoint 文件路径；省略时使用应用配置。
     """
     try:
-        snapshot = runtime.get_state(thread_id=agent_session.thread_id)
-        messages = snapshot.values.get("messages", [])
-        if not isinstance(messages, list) or not all(
-            isinstance(message, BaseMessage) for message in messages
-        ):
-            raise TypeError("archive checkpoint messages are invalid")
-        return messages
+        with open_checkpoint_store(checkpoint_path or settings.agent_checkpoint_path) as store:
+            graph = build_archive_history_graph(store.checkpointer)
+            snapshot = graph.get_state(build_thread_config(agent_session.thread_id))
+            messages = snapshot.values.get("messages", [])
+            if not isinstance(messages, list) or not all(
+                isinstance(message, BaseMessage) for message in messages
+            ):
+                raise TypeError("archive checkpoint messages are invalid")
+            return messages
     except Exception as exc:
         _raise_archive_execution_error(exc)
 
 
 def read_archive_agent_messages(
     agent_session: AgentSession,
-    runtime: ArchiveAgentRuntime,
+    checkpoint_path: Path | None = None,
 ) -> list[ArchiveAgentMessageRead]:
     """返回只含完整用户/助手轮次的可见历史。
 
     Args:
         agent_session: 已通过全部范围字段查找到的档案助手会话。
-        runtime: 读取对应 Checkpoint 线程状态的运行时适配器。
+        checkpoint_path: 可选 Checkpoint 文件路径；省略时使用应用配置。
 
     Returns:
         忽略中间 ToolMessage 和未形成最终助手消息的孤立轮次后的历史投影。
@@ -436,7 +442,7 @@ def read_archive_agent_messages(
     # ToolMessage 只服务当前 Graph 执行；历史接口使用稳定的用户/助手投影，避免
     # 把内部工具参数、原始候选或未完成轮次误展示给普通用户。
     messages = project_complete_archive_messages(
-        _checkpoint_archive_messages(agent_session, runtime)
+        _checkpoint_archive_messages(agent_session, checkpoint_path)
     )
     return [
         ArchiveAgentMessageRead(
